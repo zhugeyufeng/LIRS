@@ -89,6 +89,8 @@ type TenantInput struct {
 
 type Notification struct {
 	ID          string    `json:"id"`
+	TenantID    string    `json:"tenantId"`
+	TenantName  string    `json:"tenantName"`
 	UserID      string    `json:"userId,omitempty"`
 	GroupName   string    `json:"groupName,omitempty"`
 	Department  string    `json:"department,omitempty"`
@@ -98,6 +100,7 @@ type Notification struct {
 	Level       string    `json:"level"`
 	Read        bool      `json:"read"`
 	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 type LedgerEntry struct {

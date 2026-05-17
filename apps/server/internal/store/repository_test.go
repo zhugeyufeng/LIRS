@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -436,6 +437,82 @@ func TestDingTalkWorkNotificationUsesRobotBatchSend(t *testing.T) {
 		if !strings.Contains(notificationBody, fragment) {
 			t.Fatalf("notification body missing %s: %s", fragment, notificationBody)
 		}
+	}
+}
+
+func TestNotificationTargetUserIDsRespectScope(t *testing.T) {
+	t.Parallel()
+
+	repo := &Repository{}
+	personal, err := repo.notificationTargetUserIDs(context.Background(), Notification{
+		TenantID:    defaultTenantID,
+		UserID:      "user-1",
+		TargetScope: "personal",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(personal) != 1 || personal[0] != "user-1" {
+		t.Fatalf("个人通知应该只推送目标用户，得到 %#v", personal)
+	}
+
+	unknown, err := repo.notificationTargetUserIDs(context.Background(), Notification{
+		TenantID:    defaultTenantID,
+		TargetScope: "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unknown) != 0 {
+		t.Fatalf("未知通知范围不应推送，得到 %#v", unknown)
+	}
+}
+
+type notificationScanRow struct {
+	values []any
+}
+
+func (r notificationScanRow) Scan(dest ...any) error {
+	for index, value := range r.values {
+		switch target := dest[index].(type) {
+		case *string:
+			*target = value.(string)
+		case *bool:
+			*target = value.(bool)
+		case *time.Time:
+			*target = value.(time.Time)
+		default:
+			return errors.New("unsupported scan target")
+		}
+	}
+	return nil
+}
+
+func TestScanNotificationIncludesTenantAndUpdatedAt(t *testing.T) {
+	t.Parallel()
+
+	createdAt := time.Date(2026, 5, 17, 1, 2, 3, 0, time.UTC)
+	updatedAt := createdAt.Add(time.Hour)
+	item, err := scanNotification(notificationScanRow{values: []any{
+		"notification-1",
+		"tenant-1",
+		"机构一",
+		"user-1",
+		"团队一",
+		"部门一",
+		"personal",
+		"标题",
+		"正文",
+		"info",
+		true,
+		createdAt,
+		updatedAt,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.TenantID != "tenant-1" || item.TenantName != "机构一" || !item.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("通知机构或更新时间扫描错误：%#v", item)
 	}
 }
 

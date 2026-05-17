@@ -163,6 +163,7 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS group_name text NOT NULL DEFA
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS department text NOT NULL DEFAULT '';
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_scope text NOT NULL DEFAULT 'global';
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS read_at timestamptz;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
 
 CREATE TABLE IF NOT EXISTS notification_reads (
     notification_id uuid NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
@@ -591,6 +592,8 @@ ALTER TABLE reservations ALTER COLUMN tenant_id SET DEFAULT '00000000-0000-0000-
 ALTER TABLE reservations ALTER COLUMN tenant_id SET NOT NULL;
 
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS tenant_id uuid REFERENCES tenants(id);
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+UPDATE notifications SET updated_at = created_at WHERE updated_at IS NULL;
 UPDATE notifications SET tenant_id = '00000000-0000-0000-0000-000000000001' WHERE tenant_id IS NULL;
 ALTER TABLE notifications ALTER COLUMN tenant_id SET DEFAULT '00000000-0000-0000-0000-000000000001';
 ALTER TABLE notifications ALTER COLUMN tenant_id SET NOT NULL;

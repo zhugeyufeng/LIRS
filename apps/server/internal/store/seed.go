@@ -34,10 +34,6 @@ SET phone = EXCLUDED.phone,
     email_verified = true,
     updated_at = now();
 
-INSERT INTO notifications (title, body, level)
-SELECT '系统已初始化', 'PostgreSQL schema 和演示数据已准备完成。', 'success'
-WHERE NOT EXISTS (SELECT 1 FROM notifications WHERE title = '系统已初始化');
-
 INSERT INTO site_settings (setting_key, value, updated_by)
 VALUES (
     'footer',
@@ -152,7 +148,23 @@ func Seed(ctx context.Context, pool *pgxpool.Pool) error {
 	if err := ensureInitialAdmin(ctx, pool); err != nil {
 		return err
 	}
+	if err := ensureInitialNotification(ctx, pool); err != nil {
+		return err
+	}
 	return upgradeDemoUserPasswords(ctx, pool)
+}
+
+func ensureInitialNotification(ctx context.Context, pool *pgxpool.Pool) error {
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM notifications WHERE title = '系统已初始化')`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	repo := NewRepository(pool, nil)
+	_, err := repo.createNotification(ctx, defaultTenantID, "", "", "", "global", "系统已初始化", "PostgreSQL schema 和演示数据已准备完成。", "success")
+	return err
 }
 
 func ensureInitialAdmin(ctx context.Context, pool *pgxpool.Pool) error {

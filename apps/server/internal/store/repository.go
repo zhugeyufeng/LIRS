@@ -1715,9 +1715,10 @@ WHERE user_id IN (SELECT id FROM users WHERE lower(email) = lower($1))
 func (r *Repository) Notifications(ctx context.Context, actor Actor) ([]Notification, error) {
 	tenant := TenantFromContext(ctx)
 	rows, err := r.db.Query(ctx, `
-SELECT n.id::text, COALESCE(n.user_id::text, ''), n.group_name, n.department, n.target_scope,
-       n.title, n.body, n.level, COALESCE(nr.read_at IS NOT NULL, false), n.created_at
+SELECT n.id::text, n.tenant_id::text, COALESCE(t.name, ''), COALESCE(n.user_id::text, ''), n.group_name, n.department, n.target_scope,
+       n.title, n.body, n.level, COALESCE(nr.read_at IS NOT NULL, false), n.created_at, n.updated_at
 FROM notifications n
+LEFT JOIN tenants t ON t.id = n.tenant_id
 LEFT JOIN notification_reads nr ON nr.notification_id = n.id AND nr.user_id = NULLIF($1, '')::uuid
 WHERE ($4 IN ('tenant_admin', 'lab_admin', 'super_admin')
    OR n.target_scope IN ('', 'global')
@@ -1725,7 +1726,7 @@ WHERE ($4 IN ('tenant_admin', 'lab_admin', 'super_admin')
    OR (n.target_scope = 'group' AND n.group_name <> '' AND n.group_name = $2)
    OR (n.target_scope = 'department' AND n.department <> '' AND n.department = $3))
   AND ($5::boolean OR n.tenant_id = $6::uuid)
-ORDER BY created_at DESC
+ORDER BY n.created_at DESC
 LIMIT 50
 `, actor.UserID, actor.GroupName, actor.Department, actor.Role, tenant.AllTenants, tenant.TenantID)
 	if err != nil {
@@ -1735,8 +1736,8 @@ LIMIT 50
 
 	items := make([]Notification, 0)
 	for rows.Next() {
-		var item Notification
-		if err := rows.Scan(&item.ID, &item.UserID, &item.GroupName, &item.Department, &item.TargetScope, &item.Title, &item.Body, &item.Level, &item.Read, &item.CreatedAt); err != nil {
+		item, err := scanNotification(rows)
+		if err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -1744,10 +1745,29 @@ LIMIT 50
 	return items, rows.Err()
 }
 
+func scanNotification(row scanner) (Notification, error) {
+	var item Notification
+	err := row.Scan(
+		&item.ID,
+		&item.TenantID,
+		&item.TenantName,
+		&item.UserID,
+		&item.GroupName,
+		&item.Department,
+		&item.TargetScope,
+		&item.Title,
+		&item.Body,
+		&item.Level,
+		&item.Read,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	return item, err
+}
+
 func (r *Repository) MarkNotificationRead(ctx context.Context, id string, actor Actor) (Notification, error) {
 	tenant := TenantFromContext(ctx)
-	var item Notification
-	err := r.db.QueryRow(ctx, `
+	item, err := scanNotification(r.db.QueryRow(ctx, `
 WITH accessible AS (
     SELECT n.*
     FROM notifications n
@@ -1764,14 +1784,15 @@ WITH accessible AS (
 marked AS (
     INSERT INTO notification_reads (tenant_id, notification_id, user_id)
     SELECT tenant_id, id, NULLIF($1, '')::uuid FROM accessible
-    ON CONFLICT (notification_id, user_id) DO UPDATE SET read_at = notification_reads.read_at
+    ON CONFLICT (notification_id, user_id) DO UPDATE SET read_at = EXCLUDED.read_at
     RETURNING notification_id
 )
-SELECT a.id::text, COALESCE(a.user_id::text, ''), a.group_name, a.department, a.target_scope,
-       a.title, a.body, a.level, true, a.created_at
+SELECT a.id::text, a.tenant_id::text, COALESCE(t.name, ''), COALESCE(a.user_id::text, ''), a.group_name, a.department, a.target_scope,
+       a.title, a.body, a.level, true, a.created_at, a.updated_at
 FROM accessible a
+LEFT JOIN tenants t ON t.id = a.tenant_id
 JOIN marked m ON m.notification_id = a.id
-`, actor.UserID, id, actor.GroupName, actor.Department, actor.Role, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &item.UserID, &item.GroupName, &item.Department, &item.TargetScope, &item.Title, &item.Body, &item.Level, &item.Read, &item.CreatedAt)
+`, actor.UserID, id, actor.GroupName, actor.Department, actor.Role, tenant.AllTenants, tenant.TenantID))
 	if err != nil {
 		return Notification{}, err
 	}
@@ -1804,7 +1825,7 @@ marked AS (
     INSERT INTO notification_reads (tenant_id, notification_id, user_id)
     SELECT tenant_id, id, NULLIF($1, '')::uuid
     FROM accessible
-    ON CONFLICT (notification_id, user_id) DO NOTHING
+    ON CONFLICT (notification_id, user_id) DO UPDATE SET read_at = EXCLUDED.read_at
     RETURNING 1
 )
 SELECT count(*)::int FROM marked
@@ -1821,14 +1842,18 @@ func (r *Repository) DeleteNotification(ctx context.Context, id string, actor st
 	if actor == "" {
 		actor = "system"
 	}
-	var item Notification
-	err := r.db.QueryRow(ctx, `
-DELETE FROM notifications n
-WHERE n.id = $1
-  AND ($2::boolean OR n.tenant_id = $3::uuid)
-RETURNING n.id::text, COALESCE(n.user_id::text, ''), n.group_name, n.department, n.target_scope,
-       n.title, n.body, n.level, false, n.created_at
-`, id, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &item.UserID, &item.GroupName, &item.Department, &item.TargetScope, &item.Title, &item.Body, &item.Level, &item.Read, &item.CreatedAt)
+	item, err := scanNotification(r.db.QueryRow(ctx, `
+WITH deleted AS (
+    DELETE FROM notifications n
+    WHERE n.id = $1
+      AND ($2::boolean OR n.tenant_id = $3::uuid)
+    RETURNING n.*
+)
+SELECT d.id::text, d.tenant_id::text, COALESCE(t.name, ''), COALESCE(d.user_id::text, ''), d.group_name, d.department, d.target_scope,
+       d.title, d.body, d.level, false, d.created_at, d.updated_at
+FROM deleted d
+LEFT JOIN tenants t ON t.id = d.tenant_id
+`, id, tenant.AllTenants, tenant.TenantID))
 	if err != nil {
 		return Notification{}, err
 	}
@@ -1836,7 +1861,24 @@ RETURNING n.id::text, COALESCE(n.user_id::text, ''), n.group_name, n.department,
 	return item, nil
 }
 
+type notificationWriter interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 func (r *Repository) createNotification(ctx context.Context, tenantID string, userID string, groupName string, department string, targetScope string, title string, body string, level string) (Notification, error) {
+	item, err := r.insertNotification(ctx, r.db, tenantID, userID, groupName, department, targetScope, title, body, level)
+	if err != nil {
+		return Notification{}, err
+	}
+	r.enqueueDingTalkNotification(item)
+	return item, nil
+}
+
+func (r *Repository) createNotificationTx(ctx context.Context, tx pgx.Tx, tenantID string, userID string, groupName string, department string, targetScope string, title string, body string, level string) (Notification, error) {
+	return r.insertNotification(ctx, tx, tenantID, userID, groupName, department, targetScope, title, body, level)
+}
+
+func (r *Repository) insertNotification(ctx context.Context, writer notificationWriter, tenantID string, userID string, groupName string, department string, targetScope string, title string, body string, level string) (Notification, error) {
 	tenantID = strings.TrimSpace(tenantID)
 	if tenantID == "" {
 		tenantID = TenantFromContext(ctx).TenantID
@@ -1854,22 +1896,62 @@ func (r *Repository) createNotification(ctx context.Context, tenantID string, us
 	if level == "" {
 		level = "info"
 	}
-	var item Notification
-	err := r.db.QueryRow(ctx, `
+	item, err := scanNotification(writer.QueryRow(ctx, `
 INSERT INTO notifications (tenant_id, user_id, group_name, department, title, body, level, target_scope)
 VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7, $8)
-RETURNING id::text, COALESCE(user_id::text, ''), group_name, department, target_scope, title, body, level, is_read, created_at
-`, tenantID, userID, groupName, department, title, body, level, targetScope).Scan(&item.ID, &item.UserID, &item.GroupName, &item.Department, &item.TargetScope, &item.Title, &item.Body, &item.Level, &item.Read, &item.CreatedAt)
+RETURNING id::text, tenant_id::text, COALESCE((SELECT name FROM tenants WHERE id = notifications.tenant_id), ''),
+          COALESCE(user_id::text, ''), group_name, department, target_scope, title, body, level, is_read, created_at, updated_at
+`, tenantID, userID, groupName, department, title, body, level, targetScope))
 	if err != nil {
 		return Notification{}, err
-	}
-	if item.TargetScope == "personal" && item.UserID != "" {
-		go r.pushDingTalkNotification(context.Background(), tenantID, item.UserID, item.Title, item.Body)
 	}
 	return item, nil
 }
 
 func (r *Repository) Announce(ctx context.Context, input AnnouncementInput) (Notification, error) {
+	input, err := r.resolveAnnouncementInput(ctx, input)
+	if err != nil {
+		return Notification{}, err
+	}
+	tenant := TenantFromContext(ctx)
+	item, err := r.createNotification(ctx, tenant.TenantID, input.UserID, input.GroupName, input.Department, input.TargetScope, input.Title, input.Body, input.Level)
+	if err != nil {
+		return Notification{}, err
+	}
+	r.audit(ctx, input.Actor, "notification.announce", "notification", item.ID, "", input.TargetScope)
+	return item, nil
+}
+
+func (r *Repository) UpdateNotification(ctx context.Context, id string, input AnnouncementInput) (Notification, error) {
+	tenant := TenantFromContext(ctx)
+	input, err := r.resolveAnnouncementInput(ctx, input)
+	if err != nil {
+		return Notification{}, err
+	}
+	item, err := scanNotification(r.db.QueryRow(ctx, `
+UPDATE notifications
+SET user_id = NULLIF($2, '')::uuid,
+    group_name = $3,
+    department = $4,
+    target_scope = $5,
+    title = $6,
+    body = $7,
+    level = $8,
+    updated_at = now()
+WHERE id = $1
+  AND ($9::boolean OR tenant_id = $10::uuid)
+RETURNING id::text, tenant_id::text, COALESCE((SELECT name FROM tenants WHERE id = notifications.tenant_id), ''),
+          COALESCE(user_id::text, ''), group_name, department, target_scope, title, body, level, is_read, created_at, updated_at
+`, id, input.UserID, input.GroupName, input.Department, input.TargetScope, input.Title, input.Body, input.Level, tenant.AllTenants, tenant.TenantID))
+	if err != nil {
+		return Notification{}, err
+	}
+	r.enqueueDingTalkNotification(item)
+	r.audit(ctx, input.Actor, "notification.update", "notification", item.ID, "", input.TargetScope)
+	return item, nil
+}
+
+func (r *Repository) resolveAnnouncementInput(ctx context.Context, input AnnouncementInput) (AnnouncementInput, error) {
 	tenant := TenantFromContext(ctx)
 	input.Title = strings.TrimSpace(input.Title)
 	input.Body = strings.TrimSpace(input.Body)
@@ -1890,7 +1972,7 @@ func (r *Repository) Announce(ctx context.Context, input AnnouncementInput) (Not
 		input.TargetScope = "global"
 	}
 	if input.Title == "" || input.Body == "" {
-		return Notification{}, errors.New("invalid announcement input")
+		return AnnouncementInput{}, errors.New("invalid announcement input")
 	}
 	userID := input.UserID
 	groupName := input.GroupName
@@ -1901,7 +1983,7 @@ func (r *Repository) Announce(ctx context.Context, input AnnouncementInput) (Not
 	case "personal":
 		target := firstNonEmpty(input.UserID, input.Target)
 		if target == "" {
-			return Notification{}, errors.New("personal announcement requires a target user")
+			return AnnouncementInput{}, errors.New("personal announcement requires a target user")
 		}
 		if err := r.db.QueryRow(ctx, `
 SELECT id::text, group_name, department
@@ -1910,29 +1992,37 @@ WHERE (id::text = $1 OR lower(email) = lower($1))
   AND ($2::boolean OR tenant_id = $3::uuid)
 LIMIT 1
 `, target, tenant.AllTenants, tenant.TenantID).Scan(&userID, &groupName, &department); err != nil {
-			return Notification{}, err
+			return AnnouncementInput{}, err
 		}
 	case "group":
 		groupName = firstNonEmpty(input.GroupName, input.Target)
 		if groupName == "" {
-			return Notification{}, errors.New("group announcement requires a group name")
+			return AnnouncementInput{}, errors.New("group announcement requires a group name")
 		}
 		userID, department = "", ""
 	case "department":
 		department = firstNonEmpty(input.Department, input.Target)
 		if department == "" {
-			return Notification{}, errors.New("department announcement requires a department")
+			return AnnouncementInput{}, errors.New("department announcement requires a department")
 		}
 		userID, groupName = "", ""
 	default:
-		return Notification{}, errors.New("invalid announcement scope")
+		return AnnouncementInput{}, errors.New("invalid announcement scope")
 	}
-	item, err := r.createNotification(ctx, tenant.TenantID, userID, groupName, department, input.TargetScope, input.Title, input.Body, input.Level)
-	if err != nil {
-		return Notification{}, err
+	input.UserID = userID
+	input.GroupName = groupName
+	input.Department = department
+	return input, nil
+}
+
+func (r *Repository) enqueueDingTalkNotification(item Notification) {
+	go r.pushDingTalkNotificationTargets(context.Background(), item)
+}
+
+func (r *Repository) enqueueDingTalkNotifications(items ...Notification) {
+	for _, item := range items {
+		r.enqueueDingTalkNotification(item)
 	}
-	r.audit(ctx, input.Actor, "notification.announce", "notification", item.ID, "", input.TargetScope)
-	return item, nil
 }
 
 func (r *Repository) Ledger(ctx context.Context, actor Actor) ([]LedgerEntry, error) {
@@ -2274,16 +2364,14 @@ RETURNING id::text, tenant_id::text, (SELECT name FROM tenants WHERE id = users.
 		return User{}, err
 	}
 
-	_, err = tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, title, body, level)
-VALUES ($1, $2, $3, 'info')
-`, user.TenantID, "新用户待审核", fmt.Sprintf("%s 已提交%s注册申请，所属机构：%s，等待管理员审核。", user.Name, requestLabel, tenant.Name))
+	notification, err := r.createNotificationTx(ctx, tx, user.TenantID, "", "", "", "global", "新用户待审核", fmt.Sprintf("%s 已提交%s注册申请，所属机构：%s，等待管理员审核。", user.Name, requestLabel, tenant.Name), "info")
 	if err != nil {
 		return User{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return User{}, err
 	}
+	r.enqueueDingTalkNotification(notification)
 	r.invalidateDashboard(ctx)
 	r.enqueueEvent(ctx, "user.registered", map[string]any{
 		"userId":      user.ID,
@@ -2641,13 +2729,15 @@ func (r *Repository) CreateReservation(ctx context.Context, input ReservationInp
 		_ = tx.Rollback(ctx)
 	}()
 
-	reservation, err := r.createReservationInTx(ctx, tx, input)
+	notifications := make([]Notification, 0, 1)
+	reservation, err := r.createReservationInTx(ctx, tx, input, &notifications)
 	if err != nil {
 		return Reservation{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Reservation{}, err
 	}
+	r.enqueueDingTalkNotifications(notifications...)
 	r.invalidateDashboard(ctx)
 	r.enqueueEvent(ctx, "reservation.created", map[string]any{
 		"reservationId": reservation.ID,
@@ -2709,6 +2799,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 	}
 
 	reservations := make([]Reservation, 0, len(normalizedPeriods))
+	notifications := make([]Notification, 0, len(normalizedPeriods))
 	for index, period := range normalizedPeriods {
 		key := input.IdempotencyKey
 		if key != "" {
@@ -2722,7 +2813,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 			StartTime:      period.StartTime,
 			EndTime:        period.EndTime,
 			IdempotencyKey: key,
-		})
+		}, &notifications)
 		if err != nil {
 			return nil, err
 		}
@@ -2732,6 +2823,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 		return nil, err
 	}
 	r.invalidateDashboard(ctx)
+	r.enqueueDingTalkNotifications(notifications...)
 	for _, reservation := range reservations {
 		r.enqueueEvent(ctx, "reservation.created", map[string]any{
 			"reservationId": reservation.ID,
@@ -2744,7 +2836,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 	return reservations, nil
 }
 
-func (r *Repository) createReservationInTx(ctx context.Context, tx pgx.Tx, input ReservationInput) (Reservation, error) {
+func (r *Repository) createReservationInTx(ctx context.Context, tx pgx.Tx, input ReservationInput, notifications *[]Notification) (Reservation, error) {
 	tenant := TenantFromContext(ctx)
 	input.UserID = strings.TrimSpace(input.UserID)
 	input.UserName = strings.TrimSpace(input.UserName)
@@ -2880,12 +2972,12 @@ RETURNING id::text, tenant_id::text, COALESCE(user_id::text, ''), instrument_id:
 	}
 	reservation.InstrumentName = instrumentName
 
-	_, err = tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, user_id, group_name, title, body, level, target_scope)
-VALUES ($1, $2, $3, '预约待审批', $4, 'info', 'group')
-`, tenant.TenantID, userID, groupName, fmt.Sprintf("%s 提交了 %s 的预约申请。", input.UserName, instrumentName))
+	notification, err := r.createNotificationTx(ctx, tx, tenant.TenantID, userID, groupName, "", "group", "预约待审批", fmt.Sprintf("%s 提交了 %s 的预约申请。", input.UserName, instrumentName), "info")
 	if err != nil {
 		return Reservation{}, err
+	}
+	if notifications != nil {
+		*notifications = append(*notifications, notification)
 	}
 	return reservation, nil
 }
@@ -3833,6 +3925,7 @@ func (r *Repository) SaveMaterial(ctx context.Context, id string, input Material
 		defer func() {
 			_ = tx.Rollback(ctx)
 		}()
+		notifications := make([]Notification, 0, 1)
 		item, err := scanMaterial(tx.QueryRow(ctx, fmt.Sprintf(`
 INSERT INTO materials (
     tenant_id, name, product_type, category, subcategory, spec, unit, unit_price, stock, warning_line,
@@ -3926,13 +4019,11 @@ WHERE id = $1 AND tenant_id = $2::uuid
 			}
 		}
 		if item.Stock <= item.WarningLine {
-			_, err = tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, title, body, level, target_scope)
-VALUES ($1, '耗材库存预警', $2, 'warning', 'global')
-`, tenant.TenantID, fmt.Sprintf("%s 当前库存 %d%s，低于预警线 %d%s。", item.Name, item.Stock, item.Unit, item.WarningLine, item.Unit))
+			notification, err := r.createNotificationTx(ctx, tx, tenant.TenantID, "", "", "", "global", "耗材库存预警", fmt.Sprintf("%s 当前库存 %d%s，低于预警线 %d%s。", item.Name, item.Stock, item.Unit, item.WarningLine, item.Unit), "warning")
 			if err != nil {
 				return Material{}, err
 			}
+			notifications = append(notifications, notification)
 		}
 		_, err = tx.Exec(ctx, `
 INSERT INTO inventory_ledger (tenant_id, material_id, change_qty, reason)
@@ -3948,6 +4039,7 @@ VALUES ($1, $2, $3, '初始入库')
 		if err != nil {
 			return Material{}, err
 		}
+		r.enqueueDingTalkNotifications(notifications...)
 		r.audit(ctx, input.Actor, "material.create", "material", item.ID, "", item.Name)
 		return item, nil
 	}
@@ -4092,6 +4184,7 @@ func (r *Repository) AdjustMaterialStock(ctx context.Context, id string, input S
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+	notifications := make([]Notification, 0, 1)
 
 	var stock int
 	var productType, materialTenantID string
@@ -4106,9 +4199,17 @@ func (r *Repository) AdjustMaterialStock(ctx context.Context, id string, input S
 		if err != nil {
 			return Material{}, err
 		}
+		if item.Stock <= item.WarningLine {
+			notification, err := r.createNotificationTx(ctx, tx, materialTenantID, "", "", "", "global", "耗材库存预警", fmt.Sprintf("%s 当前库存 %d%s，低于预警线 %d%s。", item.Name, item.Stock, item.Unit, item.WarningLine, item.Unit), "warning")
+			if err != nil {
+				return Material{}, err
+			}
+			notifications = append(notifications, notification)
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return Material{}, err
 		}
+		r.enqueueDingTalkNotifications(notifications...)
 		item, err = r.Material(ctx, item.ID)
 		if err != nil {
 			return Material{}, err
@@ -4193,16 +4294,16 @@ WHERE id = $1 AND tenant_id = $2::uuid
 		}
 	}
 	if item.Stock <= item.WarningLine {
-		if _, err := tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, title, body, level, target_scope)
-VALUES ($1, '耗材库存预警', $2, 'warning', 'global')
-`, tenant.TenantID, fmt.Sprintf("%s 当前库存 %d%s，低于预警线 %d%s。", item.Name, item.Stock, item.Unit, item.WarningLine, item.Unit)); err != nil {
+		notification, err := r.createNotificationTx(ctx, tx, materialTenantID, "", "", "", "global", "耗材库存预警", fmt.Sprintf("%s 当前库存 %d%s，低于预警线 %d%s。", item.Name, item.Stock, item.Unit, item.WarningLine, item.Unit), "warning")
+		if err != nil {
 			return Material{}, err
 		}
+		notifications = append(notifications, notification)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Material{}, err
 	}
+	r.enqueueDingTalkNotifications(notifications...)
 	r.audit(ctx, input.Actor, "material.stock_adjust", "material", item.ID, fmt.Sprint(stock), fmt.Sprint(item.Stock))
 	return item, nil
 }
@@ -4340,8 +4441,7 @@ WHERE tenant_id = $1::uuid AND material_id = $2 AND batch_no = $3
 			return Material{}, err
 		}
 	}
-	newStock, err := syncMaterialStock(ctx, tx, materialID, materialTenantID)
-	if err != nil {
+	if _, err := syncMaterialStock(ctx, tx, materialID, materialTenantID); err != nil {
 		return Material{}, err
 	}
 	ledgerReason := materialUnitReason(input.Reason, batchNo, unitCode)
@@ -4358,14 +4458,6 @@ WHERE id = $1 AND tenant_id = $2::uuid
 `, materialSelectColumns("materials")), materialID, materialTenantID))
 	if err != nil {
 		return Material{}, err
-	}
-	if newStock <= item.WarningLine {
-		if _, err := tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, title, body, level, target_scope)
-VALUES ($1, '耗材库存预警', $2, 'warning', 'global')
-`, materialTenantID, fmt.Sprintf("%s 当前库存 %d%s，低于预警线 %d%s。", item.Name, newStock, item.Unit, item.WarningLine, item.Unit)); err != nil {
-			return Material{}, err
-		}
 	}
 	return item, nil
 }
@@ -5102,6 +5194,7 @@ WHERE mu.id = $1
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+	notifications := make([]Notification, 0, 1)
 	reserveTag, err := tx.Exec(ctx, `
 UPDATE material_units
 SET status = 'reserved', updated_at = now()
@@ -5134,16 +5227,15 @@ RETURNING id::text, material_id::text, (SELECT name FROM materials WHERE id = ma
 	if err != nil {
 		return MaterialRequest{}, err
 	}
-	_, err = tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, user_id, group_name, title, body, level, target_scope)
-VALUES ($1, $2, $3, $4, $5, 'info', 'group')
-`, materialTenantID, item.RequesterID, item.GroupName, materialRequestNotificationTitle(item.Status), fmt.Sprintf("%s 提交了 %s x%d 的申领。", item.Requester, item.MaterialName, item.Quantity))
+	notification, err := r.createNotificationTx(ctx, tx, materialTenantID, item.RequesterID, item.GroupName, "", "group", materialRequestNotificationTitle(item.Status), fmt.Sprintf("%s 提交了 %s x%d 的申领。", item.Requester, item.MaterialName, item.Quantity), "info")
 	if err != nil {
 		return MaterialRequest{}, err
 	}
+	notifications = append(notifications, notification)
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialRequest{}, err
 	}
+	r.enqueueDingTalkNotifications(notifications...)
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: materialTenantID})
 	r.audit(auditCtx, item.Requester, "material.request", "material_request", item.ID, "", item.Status)
 	return item, nil
@@ -5187,6 +5279,7 @@ func (r *Repository) OutboundMaterialRequest(ctx context.Context, id string, act
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+	notifications := make([]Notification, 0, 2)
 
 	var item MaterialRequest
 	var itemTenantID string
@@ -5245,12 +5338,11 @@ VALUES ($1, $2, $3, $4, $5)
 		return MaterialRequest{}, err
 	}
 	if remainingStock <= warningLine {
-		if _, err := tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, title, body, level, target_scope)
-VALUES ($1, '耗材库存预警', $2, 'warning', 'global')
-`, itemTenantID, fmt.Sprintf("%s 出库后库存 %d%s，低于预警线 %d%s。", item.MaterialName, remainingStock, materialUnit, warningLine, materialUnit)); err != nil {
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, "", "", "", "global", "耗材库存预警", fmt.Sprintf("%s 出库后库存 %d%s，低于预警线 %d%s。", item.MaterialName, remainingStock, materialUnit, warningLine, materialUnit), "warning")
+		if err != nil {
 			return MaterialRequest{}, err
 		}
+		notifications = append(notifications, notification)
 	}
 	err = tx.QueryRow(ctx, `
 UPDATE material_requests mr
@@ -5265,15 +5357,16 @@ RETURNING mr.id::text, mr.material_id::text, (SELECT name FROM materials WHERE i
 		return MaterialRequest{}, err
 	}
 	if item.RequesterID != "" {
-		defer func() {
-			if err == nil {
-				_, err = r.createNotification(ctx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材已出库", fmt.Sprintf("%s x%d 已完成出库。", item.MaterialName, item.Quantity), "success")
-			}
-		}()
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材已出库", fmt.Sprintf("%s x%d 已完成出库。", item.MaterialName, item.Quantity), "success")
+		if err != nil {
+			return MaterialRequest{}, err
+		}
+		notifications = append(notifications, notification)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialRequest{}, err
 	}
+	r.enqueueDingTalkNotifications(notifications...)
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
 	r.audit(auditCtx, actor, "material.outbound", "material_request", item.ID, "approved", item.Status)
 	return item, nil
@@ -5294,6 +5387,7 @@ func (r *Repository) CancelMaterialRequest(ctx context.Context, id string, actor
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+	notifications := make([]Notification, 0, 1)
 	err = tx.QueryRow(ctx, `
 UPDATE material_requests mr
 SET status = 'cancelled'
@@ -5324,15 +5418,16 @@ WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'reserv
 		}
 	}
 	if item.RequesterID != "" {
-		defer func() {
-			if err == nil {
-				_, err = r.createNotification(ctx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申领已取消", fmt.Sprintf("%s x%d 的申领已取消。", item.MaterialName, item.Quantity), "info")
-			}
-		}()
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申领已取消", fmt.Sprintf("%s x%d 的申领已取消。", item.MaterialName, item.Quantity), "info")
+		if err != nil {
+			return MaterialRequest{}, err
+		}
+		notifications = append(notifications, notification)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialRequest{}, err
 	}
+	r.enqueueDingTalkNotifications(notifications...)
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
 	r.audit(auditCtx, actor, "material.cancel", "material_request", item.ID, "", item.Status)
 	return item, nil
@@ -5462,7 +5557,15 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 	}
 
 	var item MaterialPurchase
-	err = r.db.QueryRow(ctx, `
+	notifications := make([]Notification, 0, 1)
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return MaterialPurchase{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+	err = tx.QueryRow(ctx, `
 INSERT INTO material_purchases (tenant_id, material_id, requester_id, requester, group_name, quantity, estimated_unit_price, supplier, reason)
 VALUES ($9, $1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id::text, material_id::text, (SELECT name FROM materials WHERE id = material_id),
@@ -5474,13 +5577,15 @@ RETURNING id::text, material_id::text, (SELECT name FROM materials WHERE id = ma
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
-	_, err = r.db.Exec(ctx, `
-INSERT INTO notifications (tenant_id, user_id, group_name, title, body, level, target_scope)
-VALUES ($1, $2, $3, '耗材申购待审批', $4, 'info', 'group')
-`, materialTenantID, item.RequesterID, item.GroupName, fmt.Sprintf("%s 提交了 %s x%d 的申购。", item.Requester, item.MaterialName, item.Quantity))
+	notification, err := r.createNotificationTx(ctx, tx, materialTenantID, item.RequesterID, item.GroupName, "", "group", "耗材申购待审批", fmt.Sprintf("%s 提交了 %s x%d 的申购。", item.Requester, item.MaterialName, item.Quantity), "info")
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
+	notifications = append(notifications, notification)
+	if err := tx.Commit(ctx); err != nil {
+		return MaterialPurchase{}, err
+	}
+	r.enqueueDingTalkNotifications(notifications...)
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: materialTenantID})
 	r.audit(auditCtx, item.Requester, "material_purchase.create", "material_purchase", item.ID, "", item.Status)
 	return item, nil
@@ -5523,10 +5628,7 @@ VALUES ($1, $2, $3, 'order', '已下单')
 		return MaterialPurchase{}, err
 	}
 	if item.RequesterID != "" {
-		if _, err := r.db.Exec(ctx, `
-INSERT INTO notifications (tenant_id, user_id, group_name, title, body, level, target_scope)
-VALUES ($1, $2, $3, '耗材申购已下单', $4, 'info', 'personal')
-`, itemTenantID, item.RequesterID, item.GroupName, fmt.Sprintf("%s x%d 已进入采购下单。", item.MaterialName, item.Quantity)); err != nil {
+		if _, err := r.createNotification(ctx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申购已下单", fmt.Sprintf("%s x%d 已进入采购下单。", item.MaterialName, item.Quantity), "info"); err != nil {
 			return MaterialPurchase{}, err
 		}
 	}
@@ -5548,6 +5650,7 @@ func (r *Repository) ReceiveMaterialPurchase(ctx context.Context, id string, act
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+	notifications := make([]Notification, 0, 1)
 
 	var item MaterialPurchase
 	var itemTenantID string
@@ -5647,16 +5750,16 @@ VALUES ($1, $2, $3, 'receive', '到货入库')
 		return MaterialPurchase{}, err
 	}
 	if item.RequesterID != "" {
-		if _, err := tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, user_id, group_name, title, body, level, target_scope)
-VALUES ($1, $2, $3, '耗材申购已到货', $4, 'success', 'personal')
-`, itemTenantID, item.RequesterID, item.GroupName, fmt.Sprintf("%s x%d 已到货入库。", item.MaterialName, item.Quantity)); err != nil {
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申购已到货", fmt.Sprintf("%s x%d 已到货入库。", item.MaterialName, item.Quantity), "success")
+		if err != nil {
 			return MaterialPurchase{}, err
 		}
+		notifications = append(notifications, notification)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialPurchase{}, err
 	}
+	r.enqueueDingTalkNotifications(notifications...)
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
 	r.audit(auditCtx, actor, "material_purchase.receive", "material_purchase", item.ID, oldStatus, item.Status)
 	return item, nil
@@ -5691,10 +5794,7 @@ VALUES ($1, $2, $3, 'cancel', '已取消')
 		return MaterialPurchase{}, err
 	}
 	if item.RequesterID != "" {
-		if _, err := r.db.Exec(ctx, `
-INSERT INTO notifications (tenant_id, user_id, group_name, title, body, level, target_scope)
-VALUES ($1, $2, $3, '耗材申购已取消', $4, 'info', 'personal')
-`, itemTenantID, item.RequesterID, item.GroupName, fmt.Sprintf("%s x%d 的申购已取消。", item.MaterialName, item.Quantity)); err != nil {
+		if _, err := r.createNotification(ctx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申购已取消", fmt.Sprintf("%s x%d 的申购已取消。", item.MaterialName, item.Quantity), "info"); err != nil {
 			return MaterialPurchase{}, err
 		}
 	}
@@ -5832,6 +5932,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+	notifications := make([]Notification, 0, 1)
 	var batchID, batchNo, unitID, unitCode string
 	if err := tx.QueryRow(ctx, `
 SELECT mu.id::text, COALESCE(mu.batch_id::text, ''), COALESCE(mb.batch_no, ''), mu.unit_code
@@ -5874,15 +5975,15 @@ RETURNING id::text, material_id::text, (SELECT name FROM materials WHERE id = ma
 	if err != nil {
 		return MaterialDamage{}, err
 	}
-	if _, err := tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, user_id, group_name, title, body, level, target_scope)
-VALUES ($1, $2, $3, '损毁登记待审核', $4, 'warning', 'group')
-`, materialTenantID, item.ReporterID, item.GroupName, fmt.Sprintf("%s 登记了 %s 编号 %s 的损毁。", item.Reporter, item.MaterialName, item.UnitCode)); err != nil {
+	notification, err := r.createNotificationTx(ctx, tx, materialTenantID, item.ReporterID, item.GroupName, "", "group", "损毁登记待审核", fmt.Sprintf("%s 登记了 %s 编号 %s 的损毁。", item.Reporter, item.MaterialName, item.UnitCode), "warning")
+	if err != nil {
 		return MaterialDamage{}, err
 	}
+	notifications = append(notifications, notification)
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialDamage{}, err
 	}
+	r.enqueueDingTalkNotifications(notifications...)
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: materialTenantID})
 	r.audit(auditCtx, item.Reporter, "material_damage.create", "material_damage", item.ID, "", item.Status)
 	return item, nil
@@ -5910,6 +6011,7 @@ func (r *Repository) ApproveMaterialDamage(ctx context.Context, id string, appro
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+	notifications := make([]Notification, 0, 1)
 	item, err := scanMaterialDamage(tx.QueryRow(ctx, `
 UPDATE material_damage_reports mdr
 SET status = $2, reviewer = $3, review_comment = $4, reviewed_at = now()
@@ -5952,16 +6054,16 @@ WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'reserv
 			title = "损毁登记已通过"
 			level = "success"
 		}
-		if _, err := tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, user_id, group_name, title, body, level, target_scope)
-VALUES ($1, $2, $3, $4, $5, $6, 'personal')
-`, itemTenantID, item.ReporterID, item.GroupName, title, fmt.Sprintf("%s 编号 %s 的损毁登记状态已更新为 %s。", item.MaterialName, item.UnitCode, item.Status), level); err != nil {
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.ReporterID, item.GroupName, "", "personal", title, fmt.Sprintf("%s 编号 %s 的损毁登记状态已更新为 %s。", item.MaterialName, item.UnitCode, item.Status), level)
+		if err != nil {
 			return MaterialDamage{}, err
 		}
+		notifications = append(notifications, notification)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialDamage{}, err
 	}
+	r.enqueueDingTalkNotifications(notifications...)
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
 	r.audit(auditCtx, actor, "material_damage."+status, "material_damage", item.ID, "pending", status)
 	return item, nil
@@ -5980,6 +6082,7 @@ func (r *Repository) ProcessMaterialDamage(ctx context.Context, id string, actor
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+	notifications := make([]Notification, 0, 1)
 
 	var item MaterialDamage
 	var itemTenantID string
@@ -6039,16 +6142,16 @@ RETURNING mdr.id::text, mdr.material_id::text, (SELECT name FROM materials WHERE
 		return MaterialDamage{}, err
 	}
 	if item.ReporterID != "" {
-		if _, err := tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, user_id, group_name, title, body, level, target_scope)
-VALUES ($1, $2, $3, '损毁已处理', $4, 'success', 'personal')
-`, itemTenantID, item.ReporterID, item.GroupName, fmt.Sprintf("%s 编号 %s 已完成损毁扣减。", item.MaterialName, item.UnitCode)); err != nil {
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.ReporterID, item.GroupName, "", "personal", "损毁已处理", fmt.Sprintf("%s 编号 %s 已完成损毁扣减。", item.MaterialName, item.UnitCode), "success")
+		if err != nil {
 			return MaterialDamage{}, err
 		}
+		notifications = append(notifications, notification)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialDamage{}, err
 	}
+	r.enqueueDingTalkNotifications(notifications...)
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
 	r.audit(auditCtx, actor, "material_damage.process", "material_damage", item.ID, "approved", item.Status)
 	return item, nil
@@ -6392,6 +6495,7 @@ RETURNING id::text, instrument_id::text, $10::text, type, priority, status, hand
 	if err != nil {
 		return MaintenanceOrder{}, err
 	}
+	notifications := make([]Notification, 0)
 
 	rows, err := tx.Query(ctx, `
 UPDATE reservations
@@ -6417,13 +6521,12 @@ RETURNING id::text, COALESCE(user_id::text, ''), user_name, group_name
 		}
 		cancelled = append(cancelled, fmt.Sprintf("%s/%s", reservationID, userName))
 		if userID != "" {
-			if _, err := tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, user_id, group_name, title, body, level, target_scope)
-VALUES ($1, $2, $3, '预约受维护影响', $4, 'warning', 'personal')
-`, targetTenantID, userID, groupName, fmt.Sprintf("%s 的预约因 %s 维护窗口被取消，请重新安排。", userName, item.InstrumentName)); err != nil {
+			notification, err := r.createNotificationTx(ctx, tx, targetTenantID, userID, groupName, "", "personal", "预约受维护影响", fmt.Sprintf("%s 的预约因 %s 维护窗口被取消，请重新安排。", userName, item.InstrumentName), "warning")
+			if err != nil {
 				rows.Close()
 				return MaintenanceOrder{}, err
 			}
+			notifications = append(notifications, notification)
 		}
 	}
 	rows.Close()
@@ -6434,15 +6537,15 @@ VALUES ($1, $2, $3, '预约受维护影响', $4, 'warning', 'personal')
 	if _, err := tx.Exec(ctx, `UPDATE instruments SET status = 'maintenance', maintenance_summary = $2 WHERE id = $1 AND tenant_id = $3::uuid`, input.InstrumentID, input.Description, targetTenantID); err != nil {
 		return MaintenanceOrder{}, err
 	}
-	if _, err := tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, title, body, level)
-VALUES ($1, '设备维护安排', $2, 'warning')
-`, targetTenantID, fmt.Sprintf("%s 已进入维护，影响预约 %d 条。", item.InstrumentName, len(cancelled))); err != nil {
+	notification, err := r.createNotificationTx(ctx, tx, targetTenantID, "", "", "", "global", "设备维护安排", fmt.Sprintf("%s 已进入维护，影响预约 %d 条。", item.InstrumentName, len(cancelled)), "warning")
+	if err != nil {
 		return MaintenanceOrder{}, err
 	}
+	notifications = append(notifications, notification)
 	if err := tx.Commit(ctx); err != nil {
 		return MaintenanceOrder{}, err
 	}
+	r.enqueueDingTalkNotifications(notifications...)
 	r.invalidateDashboard(ctx)
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: targetTenantID})
 	r.audit(auditCtx, input.Actor, "maintenance.create", "maintenance_order", item.ID, "", strings.Join(cancelled, ","))
@@ -6759,6 +6862,7 @@ func (r *Repository) updateMaterialRequestStatus(ctx context.Context, id string,
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+	notifications := make([]Notification, 0, 1)
 	var itemTenantID string
 	err = tx.QueryRow(ctx, `
 UPDATE material_requests mr
@@ -6806,16 +6910,16 @@ WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'reserv
 		level = "success"
 	}
 	if item.RequesterID != "" {
-		if _, err := tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, user_id, group_name, title, body, level, target_scope)
-VALUES ($1, $2, $3, $4, $5, $6, 'personal')
-`, itemTenantID, item.RequesterID, item.GroupName, title, fmt.Sprintf("%s x%d 的申领状态已更新为 %s。", item.MaterialName, item.Quantity, item.Status), level); err != nil {
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", title, fmt.Sprintf("%s x%d 的申领状态已更新为 %s。", item.MaterialName, item.Quantity, item.Status), level)
+		if err != nil {
 			return MaterialRequest{}, err
 		}
+		notifications = append(notifications, notification)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialRequest{}, err
 	}
+	r.enqueueDingTalkNotifications(notifications...)
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
 	r.audit(auditCtx, actor, "material."+status, "material_request", item.ID, "pending", status)
 	return item, nil
@@ -6839,6 +6943,7 @@ func (r *Repository) updateMaterialPurchaseStatus(ctx context.Context, id string
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+	notifications := make([]Notification, 0, 1)
 	var itemTenantID string
 	err = tx.QueryRow(ctx, `
 UPDATE material_purchases mp
@@ -6869,16 +6974,16 @@ VALUES ($1, $2, $3, $4, $5)
 		level = "success"
 	}
 	if item.RequesterID != "" {
-		if _, err := tx.Exec(ctx, `
-INSERT INTO notifications (tenant_id, user_id, group_name, title, body, level, target_scope)
-VALUES ($1, $2, $3, $4, $5, $6, 'personal')
-`, itemTenantID, item.RequesterID, item.GroupName, title, fmt.Sprintf("%s x%d 的申购状态已更新为 %s。", item.MaterialName, item.Quantity, item.Status), level); err != nil {
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", title, fmt.Sprintf("%s x%d 的申购状态已更新为 %s。", item.MaterialName, item.Quantity, item.Status), level)
+		if err != nil {
 			return MaterialPurchase{}, err
 		}
+		notifications = append(notifications, notification)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialPurchase{}, err
 	}
+	r.enqueueDingTalkNotifications(notifications...)
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
 	r.audit(auditCtx, actor, "material_purchase."+status, "material_purchase", item.ID, "pending", status)
 	return item, nil
@@ -7679,6 +7784,97 @@ func (r *Repository) dingTalkUserMe(ctx context.Context, userAccessToken string)
 }
 
 func (r *Repository) pushDingTalkNotification(ctx context.Context, tenantID string, userID string, title string, body string) {
+	r.pushDingTalkNotificationTargets(ctx, Notification{
+		TenantID:    tenantID,
+		UserID:      userID,
+		TargetScope: "personal",
+		Title:       title,
+		Body:        body,
+	})
+}
+
+func (r *Repository) pushDingTalkNotificationTargets(ctx context.Context, item Notification) {
+	tenantID := strings.TrimSpace(item.TenantID)
+	if tenantID == "" {
+		tenantID = defaultTenantID
+	}
+	item.TenantID = tenantID
+	ctx = WithTenantContext(ctx, TenantContext{TenantID: tenantID})
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	settings, err := r.dingTalkSettingsValue(ctx)
+	if err != nil || !settings.Enabled || settings.ClientID == "" || settings.ClientSecret == "" || settings.RobotCode == "" {
+		return
+	}
+	userIDs, err := r.notificationTargetUserIDs(ctx, item)
+	if err != nil {
+		slog.Warn("load dingtalk notification targets", "notificationId", item.ID, "error", err)
+		return
+	}
+	for _, userID := range userIDs {
+		r.pushDingTalkNotificationToUser(ctx, settings, tenantID, userID, item.Title, item.Body)
+	}
+}
+
+func (r *Repository) notificationTargetUserIDs(ctx context.Context, item Notification) ([]string, error) {
+	scope := strings.TrimSpace(item.TargetScope)
+	if scope == "" {
+		scope = "global"
+	}
+	switch scope {
+	case "personal":
+		userID := strings.TrimSpace(item.UserID)
+		if userID == "" {
+			return nil, nil
+		}
+		return []string{userID}, nil
+	case "group":
+		return r.notificationUsersByFilter(ctx, item.TenantID, "group", item.GroupName)
+	case "department":
+		return r.notificationUsersByFilter(ctx, item.TenantID, "department", item.Department)
+	case "global":
+		return r.notificationUsersByFilter(ctx, item.TenantID, "global", "")
+	default:
+		return nil, nil
+	}
+}
+
+func (r *Repository) notificationUsersByFilter(ctx context.Context, tenantID string, kind string, value string) ([]string, error) {
+	value = strings.TrimSpace(value)
+	rows, err := r.db.Query(ctx, `
+SELECT id::text
+FROM users
+WHERE tenant_id = $1::uuid
+  AND status = 'active'
+  AND dingtalk_user_id <> ''
+  AND (
+      $2 = 'global'
+      OR ($2 = 'group' AND group_name = $3)
+      OR ($2 = 'department' AND department = $3)
+  )
+ORDER BY created_at DESC
+`, tenantID, kind, value)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := make(map[string]struct{})
+	userIDs := make([]string, 0)
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			return nil, err
+		}
+		if _, ok := seen[userID]; ok {
+			continue
+		}
+		seen[userID] = struct{}{}
+		userIDs = append(userIDs, userID)
+	}
+	return userIDs, rows.Err()
+}
+
+func (r *Repository) pushDingTalkNotificationToUser(ctx context.Context, settings dingTalkSettingsValue, tenantID string, userID string, title string, body string) {
 	tenantID = strings.TrimSpace(tenantID)
 	if tenantID == "" {
 		tenantID = defaultTenantID
@@ -7687,15 +7883,8 @@ func (r *Repository) pushDingTalkNotification(ctx context.Context, tenantID stri
 	if userID == "" {
 		return
 	}
-	ctx = WithTenantContext(ctx, TenantContext{TenantID: tenantID})
-	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
-	settings, err := r.dingTalkSettingsValue(ctx)
-	if err != nil || !settings.Enabled || settings.ClientID == "" || settings.ClientSecret == "" || settings.RobotCode == "" {
-		return
-	}
 	var dingTalkUserID string
-	err = r.db.QueryRow(ctx, `
+	err := r.db.QueryRow(ctx, `
 SELECT dingtalk_user_id
 FROM users
 WHERE id = $1

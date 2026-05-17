@@ -85,6 +85,7 @@ type repository interface {
 	MarkAllNotificationsRead(ctx context.Context, actor store.Actor) (int, error)
 	DeleteNotification(ctx context.Context, id string, actor string) (store.Notification, error)
 	Announce(ctx context.Context, input store.AnnouncementInput) (store.Notification, error)
+	UpdateNotification(ctx context.Context, id string, input store.AnnouncementInput) (store.Notification, error)
 	Ledger(ctx context.Context, actor store.Actor) ([]store.LedgerEntry, error)
 	AdjustLedger(ctx context.Context, input store.LedgerAdjustmentInput) (store.LedgerEntry, error)
 	FinancialAccounts(ctx context.Context, actor store.Actor) ([]store.FinancialAccount, error)
@@ -501,7 +502,15 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		if !ok {
 			return
 		}
-		item, err := repo.Notifications(c.Request.Context(), actor)
+		ctx := c.Request.Context()
+		if isAdmin(actor) {
+			var contextOK bool
+			ctx, contextOK = tenantAdminRequestContext(c, repo, actor)
+			if !contextOK {
+				return
+			}
+		}
+		item, err := repo.Notifications(ctx, actor)
 		respond(c, item, err)
 	})
 	api.PATCH("/notifications/read-all", func(c *gin.Context) {
@@ -1660,7 +1669,11 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		if !ok {
 			return
 		}
-		item, err := repo.DeleteNotification(c.Request.Context(), c.Param("id"), actor.Name)
+		ctx, ok := tenantAdminRequestContext(c, repo, actor)
+		if !ok {
+			return
+		}
+		item, err := repo.DeleteNotification(ctx, c.Param("id"), actor.Name)
 		respond(c, item, err)
 	})
 	api.POST("/notifications", func(c *gin.Context) {
@@ -1668,10 +1681,30 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		if !ok {
 			return
 		}
+		ctx, ok := tenantAdminRequestContext(c, repo, actor)
+		if !ok {
+			return
+		}
 		var input store.AnnouncementInput
 		if bindJSON(c, &input) {
 			input.Actor = actor.Name
-			item, err := repo.Announce(c.Request.Context(), input)
+			item, err := repo.Announce(ctx, input)
+			respond(c, item, err)
+		}
+	})
+	api.PATCH("/notifications/:id", func(c *gin.Context) {
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		if !ok {
+			return
+		}
+		ctx, ok := tenantAdminRequestContext(c, repo, actor)
+		if !ok {
+			return
+		}
+		var input store.AnnouncementInput
+		if bindJSON(c, &input) {
+			input.Actor = actor.Name
+			item, err := repo.UpdateNotification(ctx, c.Param("id"), input)
 			respond(c, item, err)
 		}
 	})
@@ -2271,6 +2304,7 @@ func tenantAdminRequestContext(c *gin.Context, repo repository, actor store.Acto
 			TenantID:       actor.TenantID,
 			TenantName:     actor.TenantName,
 			FinanceEnabled: actor.FinanceEnabled,
+			AllTenants:     false,
 			Actor:          actor,
 		}), true
 	}
@@ -2292,6 +2326,7 @@ func tenantAdminRequestContext(c *gin.Context, repo repository, actor store.Acto
 			TenantID:       tenant.ID,
 			TenantName:     tenant.Name,
 			FinanceEnabled: tenant.FinanceEnabled,
+			AllTenants:     false,
 			Actor:          actor,
 		}), true
 	}

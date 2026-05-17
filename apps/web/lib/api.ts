@@ -467,6 +467,8 @@ export type OrganizationUnit = {
 
 export type Notification = {
   id: string;
+  tenantId: string;
+  tenantName: string;
   userId?: string;
   groupName?: string;
   department?: string;
@@ -476,6 +478,7 @@ export type Notification = {
   level: string;
   read: boolean;
   createdAt: string;
+  updatedAt: string;
 };
 
 export type LedgerEntry = {
@@ -1178,7 +1181,7 @@ export const api = {
   assistantQueries: () => businessRequest<AssistantQuery[]>("/api/ai-assistant", "assistant-queries"),
   reservations: () => businessRequest<Reservation[]>("/api/reservations", "reservations"),
   users: () => businessRequest<User[]>("/api/users", "users"),
-  notifications: () => businessRequest<Notification[]>("/api/notifications", "notifications"),
+  notifications: (tenantId?: string) => businessRequest<Notification[]>(withQuery("/api/notifications", { tenantId }), `notifications:${tenantId ?? ""}`),
   ledger: () => businessRequest<LedgerEntry[]>("/api/ledger", "ledger"),
   financialAccounts: () => businessRequest<FinancialAccount[]>("/api/financial-accounts", "financial-accounts"),
   materials: () => businessRequest<Material[]>("/api/materials", "materials"),
@@ -1195,7 +1198,7 @@ export const api = {
   operations: () => businessRequest<Operations>("/api/operations", "operations"),
   me: () => request<User>("/api/me", undefined, { businessCacheKey: "current-user-required", cacheTtlSeconds: currentUserCacheSeconds }),
   currentUserOptional: () => requestOptional<User>("/api/me", undefined, { businessCacheKey: "current-user-optional", cacheTtlSeconds: currentUserCacheSeconds }),
-  organizationUnits: (kind?: "department" | "group", tenantId?: string) => businessRequest<OrganizationUnit[]>(withQuery("/api/organization-units", { kind, tenantId }), "organization-units"),
+  organizationUnits: (kind?: "department" | "group", tenantId?: string) => businessRequest<OrganizationUnit[]>(withQuery("/api/organization-units", { kind, tenantId }), `organization-units:${kind ?? ""}:${tenantId ?? ""}`),
 };
 
 export function createDefaultFooterSettings(): FooterSettings {

@@ -424,6 +424,7 @@ app.post("/api/users/:id/memberships", validateAndProxy(userMembershipSchema));
 app.delete("/api/users/:id", proxyToGo);
 app.post("/api/notifications", validateAndProxy(announcementSchema));
 app.patch("/api/notifications/read-all", validateOptionalJsonAndProxy(emptyJsonObject));
+app.patch("/api/notifications/:id", validateAndProxy(announcementSchema));
 app.patch("/api/notifications/:id/read", validateOptionalJsonAndProxy(emptyJsonObject));
 app.delete("/api/notifications/:id", proxyToGo);
 app.post("/api/ledger/adjustments", validateAndProxy(ledgerAdjustmentSchema));
