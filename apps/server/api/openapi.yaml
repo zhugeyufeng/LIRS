@@ -1,0 +1,543 @@
+openapi: "3.1.0"
+info:
+  title: LIRS API
+  version: "0.1.0"
+servers:
+  - url: http://localhost:8081
+paths:
+  /healthz:
+    get:
+      summary: Check PostgreSQL and Redis connectivity
+      responses:
+        "200":
+          description: Healthy
+        "503":
+          description: Dependency unavailable
+  /api/dashboard:
+    get:
+      summary: Read dashboard metrics
+      responses:
+        "200":
+          description: Dashboard metrics
+  /api/instruments:
+    get:
+      summary: List instruments
+      responses:
+        "200":
+          description: Instrument list
+    post:
+      summary: Create an instrument
+      responses:
+        "200":
+          description: Instrument created
+  /api/instruments/{id}:
+    get:
+      summary: Read instrument detail
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Instrument detail
+    patch:
+      summary: Update an instrument
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Instrument updated
+  /api/instruments/{id}/slots:
+    get:
+      summary: Read bookable and occupied slots
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Slot list
+  /api/register:
+    post:
+      summary: Register a pending user without self-selected role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterInput"
+      responses:
+        "200":
+          description: Created pending user
+  /api/reservations:
+    get:
+      summary: List reservations
+      responses:
+        "200":
+          description: Reservation list
+    post:
+      summary: Create a pending reservation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReservationInput"
+      responses:
+        "200":
+          description: Reservation created
+  /api/reservations/{id}/approve:
+    patch:
+      summary: Approve a pending reservation
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewDecisionInput"
+      responses:
+        "200":
+          description: Reservation approved
+  /api/reservations/{id}/reject:
+    patch:
+      summary: Reject a pending reservation
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewDecisionInput"
+      responses:
+        "200":
+          description: Reservation rejected
+  /api/reservations/{id}/complete:
+    patch:
+      summary: Complete a reservation and create an immutable ledger entry
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Reservation completed
+  /api/reservations/{id}/check-in:
+    patch:
+      summary: Check in an approved reservation
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Reservation marked in use
+  /api/reservations/{id}/check-out:
+    patch:
+      summary: Check out and complete a reservation
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Reservation completed
+  /api/reservations/{id}/cancel:
+    patch:
+      summary: Cancel a pending or approved reservation
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Reservation cancelled
+  /api/users:
+    get:
+      summary: List users for admin review
+      responses:
+        "200":
+          description: User list
+  /api/users/{id}/review:
+    patch:
+      summary: Review a user and assign role, group and status
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: User reviewed
+  /api/notifications:
+    get:
+      summary: List notifications
+      responses:
+        "200":
+          description: Notification list
+    post:
+      summary: Publish a scoped announcement
+      responses:
+        "200":
+          description: Notification created
+  /api/notifications/{id}/read:
+    patch:
+      summary: Mark a notification as read
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Notification marked read
+  /api/notification-channel-settings:
+    get:
+      summary: Read notification channel settings
+      responses:
+        "200":
+          description: Notification channel settings
+  /api/notification-channel-settings/dingtalk:
+    get:
+      summary: Read current tenant DingTalk application settings
+      parameters:
+        - in: query
+          name: tenantId
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: DingTalk settings
+    patch:
+      summary: Save DingTalk application settings
+      parameters:
+        - in: query
+          name: tenantId
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DingTalkSettingsInput"
+      responses:
+        "200":
+          description: DingTalk settings saved
+  /api/dingtalk/events:
+    post:
+      summary: Receive default-tenant DingTalk encrypted HTTP event callbacks
+      parameters:
+        - in: query
+          name: signature
+          schema: { type: string }
+        - in: query
+          name: timestamp
+          schema: { type: string }
+        - in: query
+          name: nonce
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                encrypt: { type: string }
+      responses:
+        "200":
+          description: Encrypted DingTalk success response
+  /api/dingtalk/events/{tenant}:
+    post:
+      summary: Receive tenant-scoped DingTalk encrypted HTTP event callbacks
+      parameters:
+        - in: path
+          name: tenant
+          required: true
+          schema: { type: string }
+        - in: query
+          name: signature
+          schema: { type: string }
+        - in: query
+          name: timestamp
+          schema: { type: string }
+        - in: query
+          name: nonce
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                encrypt: { type: string }
+      responses:
+        "200":
+          description: Encrypted DingTalk success response
+  /api/ledger:
+    get:
+      summary: List ledger entries
+      responses:
+        "200":
+          description: Ledger entry list
+  /api/ledger/adjustments:
+    post:
+      summary: Create an immutable adjustment ledger entry
+      responses:
+        "200":
+          description: Adjustment created
+  /api/materials:
+    get:
+      summary: List reagent and consumable catalog, lifecycle fields, stock and warnings
+      responses:
+        "200":
+          description: Material list
+  /api/materials/export.csv:
+    get:
+      summary: Export reagent and consumable catalog as CSV
+      responses:
+        "200":
+          description: Material catalog CSV
+  /api/materials/import-template.csv:
+    get:
+      summary: Download CSV import template for reagent and consumable catalog
+      responses:
+        "200":
+          description: Material import template CSV
+  /api/materials/import.csv:
+    post:
+      summary: Import reagent and consumable catalog from CSV
+      responses:
+        "200":
+          description: Material import result
+  /api/materials/analytics:
+    get:
+      summary: Read material dashboard analytics, consumption ranking and damage statistics
+      responses:
+        "200":
+          description: Material analytics
+  /api/materials/categories:
+    get:
+      summary: List material categories
+      responses:
+        "200":
+          description: Material category list
+    post:
+      summary: Create or update a material category
+      responses:
+        "200":
+          description: Material category saved
+  /api/materials/categories/{id}:
+    patch:
+      summary: Update a material category
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Material category updated
+    delete:
+      summary: Disable a material category
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Material category disabled
+  /api/materials/scan/{code}:
+    get:
+      summary: Resolve material by QR code or material ID
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Material detail
+  /api/materials/alert-actions:
+    get:
+      summary: List material alert handling records
+      responses:
+        "200":
+          description: Material alert action list
+  /api/materials/{id}/alert-actions:
+    post:
+      summary: Mark or ignore a material warning
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Material alert action created
+  /api/inventory-ledger:
+    get:
+      summary: List inventory stock movement ledger for administrators
+      responses:
+        "200":
+          description: Inventory ledger list
+  /api/material-requests:
+    get:
+      summary: List material requests
+      responses:
+        "200":
+          description: Material request list
+    post:
+      summary: Create a material request
+      responses:
+        "200":
+          description: Material request created
+  /api/material-requests/export.csv:
+    get:
+      summary: Export material request records as CSV
+      responses:
+        "200":
+          description: Material request CSV
+  /api/material-requests/{id}/approve:
+    patch:
+      summary: Approve a material request with reviewer comment
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Request approved
+  /api/material-requests/{id}/reject:
+    patch:
+      summary: Reject a material request with reviewer comment
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Request rejected
+  /api/material-requests/{id}/outbound:
+    patch:
+      summary: Confirm material outbound and write inventory ledger
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Request outbound
+  /api/material-damages:
+    get:
+      summary: List material damage reports
+      responses:
+        "200":
+          description: Material damage report list
+    post:
+      summary: Create a material damage report
+      responses:
+        "200":
+          description: Material damage report created
+  /api/material-damages/export.csv:
+    get:
+      summary: Export material damage records as CSV
+      responses:
+        "200":
+          description: Material damage CSV
+  /api/material-damages/{id}/approve:
+    patch:
+      summary: Approve a material damage report
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Damage report approved
+  /api/material-damages/{id}/reject:
+    patch:
+      summary: Reject a material damage report
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Damage report rejected
+  /api/material-damages/{id}/process:
+    patch:
+      summary: Process approved damage and deduct stock
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Damage processed
+  /api/maintenance:
+    get:
+      summary: List maintenance orders
+      responses:
+        "200":
+          description: Maintenance order list
+    post:
+      summary: Create a maintenance order and block affected reservations
+      responses:
+        "200":
+          description: Maintenance order created
+  /api/maintenance/{id}/complete:
+    patch:
+      summary: Complete a maintenance order
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Maintenance completed
+  /api/maintenance/{id}/start:
+    patch:
+      summary: Move a maintenance order into in-progress status
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Maintenance started
+  /api/maintenance/{id}/cancel:
+    patch:
+      summary: Cancel a maintenance order
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Maintenance cancelled
+  /api/audit-events:
+    get:
+      summary: List audit events
+      responses:
+        "200":
+          description: Audit event list
+  /api/operations:
+    get:
+      summary: Read operations dashboard metrics
+      responses:
+        "200":
+          description: Operations metrics and alerts
+  /api/operations/export.csv:
+    get:
+      summary: Export operations dashboard metrics as CSV
+      responses:
+        "200":
+          description: CSV export
+          content:
+            text/csv:
+              schema:
+                type: string
+components:
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    RegisterInput:
+      type: object
+      required: [name, phone, email, password, department]
+      properties:
+        name: { type: string }
+        phone: { type: string }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        department: { type: string }
+    ReservationInput:
+      type: object
+      required: [instrumentId, purpose, startTime, endTime]
+      properties:
+        instrumentId: { type: string, format: uuid }
+        purpose: { type: string }
+        startTime: { type: string, format: date-time }
+        endTime: { type: string, format: date-time }
+    ReviewDecisionInput:
+      type: object
+      properties:
+        comment: { type: string }
+    DingTalkSettingsInput:
+      type: object
+      properties:
+        schemaVersion: { type: integer }
+        enabled: { type: boolean }
+        clientId: { type: string }
+        clientSecret: { type: string }
+        corpId: { type: string }
+        robotCode: { type: string }
+        oauthRedirectUri: { type: string, format: uri }
+        eventCallbackUrl: { type: string, format: uri }
+        eventAesKey: { type: string }
+        eventToken: { type: string }

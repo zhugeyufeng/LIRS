@@ -1,0 +1,17 @@
+{
+  "name": "lirs",
+  "private": true,
+  "scripts": {
+    "build": "npm --workspace @lirs/hono run build && npm --prefix apps/web run build",
+    "dev": "npm --prefix apps/web run dev",
+    "lint": "npm --prefix apps/web run lint",
+    "test": "npm --workspace @lirs/hono run build && npm --prefix apps/web run build && cd apps/server && go test ./..."
+  },
+  "workspaces": [
+    "apps/web",
+    "apps/hono"
+  ],
+  "optionalDependencies": {
+    "@next/swc-linux-x64-gnu": "^15.5.15"
+  }
+}
