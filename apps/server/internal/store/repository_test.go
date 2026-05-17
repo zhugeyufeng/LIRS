@@ -17,6 +17,14 @@ func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error)
 	return fn(request)
 }
 
+func jsonResponse(body string) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
 func TestRepositoryRequiresDatabaseForHealth(t *testing.T) {
 	t.Parallel()
 
@@ -252,6 +260,70 @@ func TestDingTalkDefaultHTTPEventCredentialsStayCurrent(t *testing.T) {
 		if strings.Contains(migrationSQL, legacyKey) {
 			t.Fatalf("migration should not keep deprecated DingTalk JSON field %s", legacyKey)
 		}
+	}
+}
+
+func TestDingTalkQuickAuthCodeAcceptsNestedAndFlatUserInfo(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		body     string
+		wantPath []string
+	}{
+		{
+			name: "nested",
+			body: `{"errcode":0,"result":{"userid":"user-1","unionid":"union-1"}}`,
+			wantPath: []string{
+				"/v1.0/oauth2/ding-corp-id/token",
+				"/topapi/v2/user/getuserinfo",
+				"/v1.0/oauth2/ding-corp-id/token",
+				"/topapi/v2/user/get",
+			},
+		},
+		{
+			name: "flat",
+			body: `{"errcode":0,"userid":"user-1","unionid":"union-1"}`,
+			wantPath: []string{
+				"/v1.0/oauth2/ding-corp-id/token",
+				"/topapi/v2/user/getuserinfo",
+				"/v1.0/oauth2/ding-corp-id/token",
+				"/topapi/v2/user/get",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var paths []string
+			repo := NewRepository(nil, nil)
+			repo.http = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				paths = append(paths, request.URL.Path)
+				switch request.URL.Path {
+				case "/v1.0/oauth2/ding-corp-id/token":
+					return jsonResponse(`{"access_token":"app-token","expires_in":7200}`), nil
+				case "/topapi/v2/user/getuserinfo":
+					return jsonResponse(tc.body), nil
+				case "/topapi/v2/user/get":
+					return jsonResponse(`{"errcode":0,"result":{"userid":"user-1","unionid":"union-1","name":"张三","mobile":"13800000000"}}`), nil
+				default:
+					t.Fatalf("unexpected dingtalk path: %s", request.URL.Path)
+					return jsonResponse(`{}`), nil
+				}
+			})}
+			identity, err := repo.dingTalkIdentityByQuickAuthCode(context.Background(), dingTalkSettingsValue{ClientID: "client-id", ClientSecret: "client-secret", CorpID: "ding-corp-id"}, "auth-code")
+			if err != nil {
+				t.Fatalf("quick auth code should resolve identity: %v", err)
+			}
+			if identity.UserID != "user-1" || identity.UnionID != "union-1" || identity.Name != "张三" {
+				t.Fatalf("unexpected identity: %#v", identity)
+			}
+			if strings.Join(paths, ",") != strings.Join(tc.wantPath, ",") {
+				t.Fatalf("unexpected dingtalk paths: %#v", paths)
+			}
+		})
 	}
 }
 

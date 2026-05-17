@@ -326,6 +326,14 @@ type LoginInput struct {
 	Device     string `json:"device"`
 }
 
+type DingTalkQuickLoginInput struct {
+	TenantID   string `json:"tenantId"`
+	TenantCode string `json:"tenantCode"`
+	AuthCode   string `json:"authCode"`
+	CorpID     string `json:"corpId"`
+	Device     string `json:"device"`
+}
+
 type AuthResponse struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expiresAt"`

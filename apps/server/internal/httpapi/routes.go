@@ -138,6 +138,7 @@ type repository interface {
 	AuditEvents(ctx context.Context) ([]store.AuditEvent, error)
 	Operations(ctx context.Context) (store.Operations, error)
 	Login(ctx context.Context, input store.LoginInput) (store.AuthResponse, error)
+	DingTalkQuickLogin(ctx context.Context, input store.DingTalkQuickLoginInput) (store.AuthResponse, error)
 	CurrentUser(ctx context.Context, token string) (store.User, error)
 	Logout(ctx context.Context, token string) error
 	LogoutAll(ctx context.Context, userID string) error
@@ -1397,6 +1398,13 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		var input store.LoginInput
 		if bindJSON(c, &input) {
 			item, err := repo.Login(c.Request.Context(), input)
+			respond(c, item, err)
+		}
+	})
+	api.POST("/dingtalk/quick-login", func(c *gin.Context) {
+		var input store.DingTalkQuickLoginInput
+		if bindJSON(c, &input) {
+			item, err := repo.DingTalkQuickLogin(c.Request.Context(), input)
 			respond(c, item, err)
 		}
 	})

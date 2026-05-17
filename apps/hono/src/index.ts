@@ -76,6 +76,14 @@ app.post("/api/login", rateLimit({ limit: 10, windowMs: 60_000, keyPrefix: "logi
   device: z.string().optional().default("web"),
 })));
 
+app.post("/api/dingtalk/quick-login", rateLimit({ limit: 20, windowMs: 60_000, keyPrefix: "dingtalk-quick-login" }), validateAndProxy(z.object({
+  tenantId: z.string().optional().default(""),
+  tenantCode: z.string().optional().default(""),
+  authCode: z.string().min(1),
+  corpId: z.string().optional().default(""),
+  device: z.string().optional().default("dingtalk"),
+})));
+
 app.post("/api/register", rateLimit({ limit: 5, windowMs: 60_000, keyPrefix: "register" }), validateAndProxy(z.object({
   tenantId: z.string().optional().default(""),
   tenantCode: z.string().optional().default(""),

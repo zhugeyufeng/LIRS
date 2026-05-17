@@ -2425,6 +2425,128 @@ LIMIT 2
 		return AuthResponse{}, errors.New("account is disabled")
 	}
 
+	return r.createUserSession(ctx, user, firstNonEmpty(input.Device, "web"), "auth.login")
+}
+
+func (r *Repository) DingTalkQuickLogin(ctx context.Context, input DingTalkQuickLoginInput) (AuthResponse, error) {
+	input.TenantID = strings.TrimSpace(input.TenantID)
+	input.TenantCode = strings.TrimSpace(strings.ToLower(input.TenantCode))
+	input.AuthCode = strings.TrimSpace(input.AuthCode)
+	input.CorpID = strings.TrimSpace(input.CorpID)
+	input.Device = strings.TrimSpace(input.Device)
+	if input.AuthCode == "" {
+		return AuthResponse{}, errors.New("dingtalk auth code is required")
+	}
+
+	tenant, settings, err := r.dingTalkQuickLoginTenantSettings(ctx, input)
+	if err != nil {
+		return AuthResponse{}, err
+	}
+	if !settings.Enabled || settings.ClientID == "" || settings.ClientSecret == "" || settings.CorpID == "" {
+		return AuthResponse{}, errors.New("dingtalk application is not configured")
+	}
+
+	identity, err := r.dingTalkIdentityByQuickAuthCode(ctx, settings, input.AuthCode)
+	if err != nil {
+		return AuthResponse{}, err
+	}
+	user, err := r.userByDingTalkIdentity(ctx, tenant.ID, identity)
+	if err != nil {
+		return AuthResponse{}, err
+	}
+	if user.Status == "disabled" {
+		return AuthResponse{}, errors.New("account is disabled")
+	}
+	return r.createUserSession(ctx, user, firstNonEmpty(input.Device, "dingtalk"), "auth.dingtalk_quick_login")
+}
+
+func (r *Repository) dingTalkQuickLoginTenantSettings(ctx context.Context, input DingTalkQuickLoginInput) (Tenant, dingTalkSettingsValue, error) {
+	tenants, err := r.Tenants(ctx)
+	if err != nil {
+		return Tenant{}, dingTalkSettingsValue{}, err
+	}
+	candidates := tenants
+	if input.TenantID != "" || input.TenantCode != "" {
+		candidates = make([]Tenant, 0, 1)
+		for _, tenant := range tenants {
+			if input.TenantID != "" && tenant.ID != input.TenantID {
+				continue
+			}
+			if input.TenantCode != "" && strings.ToLower(tenant.Code) != input.TenantCode {
+				continue
+			}
+			candidates = append(candidates, tenant)
+		}
+	}
+	if len(candidates) == 0 {
+		return Tenant{}, dingTalkSettingsValue{}, errors.New("tenant not found")
+	}
+
+	var matchedTenant Tenant
+	var matchedSettings dingTalkSettingsValue
+	matches := 0
+	for _, tenant := range candidates {
+		if tenant.Status != "active" {
+			continue
+		}
+		settings, _, err := r.readDingTalkSettingsByTenantID(ctx, tenant.ID)
+		if err != nil {
+			return Tenant{}, dingTalkSettingsValue{}, err
+		}
+		if !settings.Enabled || settings.ClientID == "" || settings.ClientSecret == "" || settings.CorpID == "" {
+			continue
+		}
+		if input.CorpID != "" && settings.CorpID != input.CorpID {
+			continue
+		}
+		matches++
+		matchedTenant = tenant
+		matchedSettings = settings
+	}
+	if matches == 0 {
+		return Tenant{}, dingTalkSettingsValue{}, errors.New("dingtalk application is not configured")
+	}
+	if matches > 1 {
+		return Tenant{}, dingTalkSettingsValue{}, errors.New("tenant is required when multiple dingtalk applications are configured")
+	}
+	return matchedTenant, matchedSettings, nil
+}
+
+func (r *Repository) userByDingTalkIdentity(ctx context.Context, tenantID string, identity dingTalkIdentity) (User, error) {
+	identity.UserID = strings.TrimSpace(identity.UserID)
+	identity.UnionID = strings.TrimSpace(identity.UnionID)
+	if identity.UserID == "" && identity.UnionID == "" {
+		return User{}, errors.New("dingtalk user id is required")
+	}
+	var user User
+	err := r.db.QueryRow(ctx, `
+SELECT u.id::text, u.tenant_id::text, t.name, t.code, u.name, u.email, u.phone, u.department, u.group_name, u.role, u.status, u.email_verified,
+       u.dingtalk_user_id, u.dingtalk_union_id, u.dingtalk_name, u.dingtalk_user_id <> '',
+       t.finance_enabled, u.auth_epoch
+FROM users u
+JOIN tenants t ON t.id = u.tenant_id
+WHERE u.tenant_id = $1::uuid
+  AND u.dingtalk_user_id <> ''
+  AND (u.dingtalk_user_id = $2 OR ($3 <> '' AND u.dingtalk_union_id = $3))
+  AND t.status = 'active'
+ORDER BY u.updated_at DESC
+LIMIT 1
+`, tenantID, identity.UserID, identity.UnionID).Scan(&user.ID, &user.TenantID, &user.TenantName, &user.TenantCode, &user.Name, &user.Email, &user.Phone, &user.Department, &user.GroupName, &user.Role, &user.Status, &user.EmailVerified, &user.DingTalkUserID, &user.DingTalkUnionID, &user.DingTalkName, &user.DingTalkBound, &user.FinanceEnabled, &user.AuthEpoch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, errors.New("dingtalk account is not bound to a LIRS user")
+	}
+	return user, err
+}
+
+func (r *Repository) createUserSession(ctx context.Context, user User, device string, action string) (AuthResponse, error) {
+	device = strings.TrimSpace(device)
+	if device == "" {
+		device = "web"
+	}
+	action = strings.TrimSpace(action)
+	if action == "" {
+		action = "auth.login"
+	}
 	token, err := randomToken()
 	if err != nil {
 		return AuthResponse{}, err
@@ -2433,12 +2555,12 @@ LIMIT 2
 	_, err = r.db.Exec(ctx, `
 INSERT INTO sessions (user_id, token_hash, auth_epoch, device_info, expires_at)
 VALUES ($1, $2, $3, $4, $5)
-`, user.ID, tokenHash(token), user.AuthEpoch, input.Device, expiresAt)
+`, user.ID, tokenHash(token), user.AuthEpoch, device, expiresAt)
 	if err != nil {
 		return AuthResponse{}, err
 	}
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: user.TenantID, TenantName: user.TenantName, FinanceEnabled: user.FinanceEnabled})
-	r.audit(auditCtx, user.Name, "auth.login", "user", user.ID, "", input.Device)
+	r.audit(auditCtx, user.Name, action, "user", user.ID, "", device)
 	return AuthResponse{Token: token, ExpiresAt: expiresAt, User: user}, nil
 }
 
@@ -7395,6 +7517,47 @@ func (r *Repository) dingTalkIdentityByAuthCode(ctx context.Context, settings di
 		return dingTalkIdentity{}, errors.New("dingtalk union id is required")
 	}
 	return r.dingTalkIdentityByUnionID(ctx, settings, identity)
+}
+
+func (r *Repository) dingTalkIdentityByQuickAuthCode(ctx context.Context, settings dingTalkSettingsValue, code string) (dingTalkIdentity, error) {
+	token, err := r.dingTalkAppAccessToken(ctx, settings)
+	if err != nil {
+		return dingTalkIdentity{}, err
+	}
+	var response struct {
+		ErrCode int    `json:"errcode"`
+		ErrMsg  string `json:"errmsg"`
+		Result  struct {
+			UserID   string `json:"userid"`
+			UnionID  string `json:"unionid"`
+			DeviceID string `json:"device_id"`
+			Sys      bool   `json:"sys"`
+		} `json:"result"`
+		UserID   string `json:"userid"`
+		UnionID  string `json:"unionid"`
+		DeviceID string `json:"device_id"`
+		Sys      bool   `json:"sys"`
+	}
+	payload := map[string]string{"code": strings.TrimSpace(code)}
+	if err := r.dingTalkPost(ctx, "https://oapi.dingtalk.com/topapi/v2/user/getuserinfo?access_token="+url.QueryEscape(token), payload, &response); err != nil {
+		return dingTalkIdentity{}, err
+	}
+	if response.ErrCode != 0 {
+		return dingTalkIdentity{}, fmt.Errorf("dingtalk quick login failed: %s", response.ErrMsg)
+	}
+	userID := firstNonEmpty(response.Result.UserID, response.UserID)
+	unionID := firstNonEmpty(response.Result.UnionID, response.UnionID)
+	if userID == "" {
+		return dingTalkIdentity{}, errors.New("dingtalk user id is required")
+	}
+	identity, err := r.dingTalkIdentityByUserID(ctx, settings, userID)
+	if err != nil {
+		return dingTalkIdentity{UserID: userID, UnionID: unionID}, nil
+	}
+	if identity.UnionID == "" {
+		identity.UnionID = unionID
+	}
+	return identity, nil
 }
 
 func (r *Repository) dingTalkIdentityByUserID(ctx context.Context, settings dingTalkSettingsValue, userID string) (dingTalkIdentity, error) {

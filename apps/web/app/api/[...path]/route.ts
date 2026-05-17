@@ -49,7 +49,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   if (shouldInvalidateBusinessData(method, response)) {
     clearBusinessDataCache();
   }
-  if (method === "POST" && joinedPath === "login" && response.ok) {
+  if (method === "POST" && (joinedPath === "login" || joinedPath === "dingtalk/quick-login") && response.ok) {
     const text = await response.text();
     const auth = JSON.parse(text) as { token?: string };
     if (auth.token) {

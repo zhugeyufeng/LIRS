@@ -1065,6 +1065,14 @@ export type LoginPayload = {
   device?: string;
 };
 
+export type DingTalkQuickLoginPayload = {
+  tenantId?: string;
+  tenantCode?: string;
+  authCode: string;
+  corpId?: string;
+  device?: string;
+};
+
 export type UserProfilePayload = {
   name?: string;
   phone?: string;
@@ -1416,6 +1424,14 @@ export function clearAuth() {
 
 export async function browserLogin(payload: LoginPayload): Promise<AuthResponse> {
   const auth = await browserRequestWithOptions<AuthResponse>("/api/login", "POST", payload, { skipAuth: true });
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(authTokenKey);
+  }
+  return auth;
+}
+
+export async function browserDingTalkQuickLogin(payload: DingTalkQuickLoginPayload): Promise<AuthResponse> {
+  const auth = await browserRequestWithOptions<AuthResponse>("/api/dingtalk/quick-login", "POST", payload, { skipAuth: true });
   if (typeof window !== "undefined") {
     window.localStorage.removeItem(authTokenKey);
   }
