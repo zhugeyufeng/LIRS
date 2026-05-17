@@ -10,6 +10,7 @@ export function ApprovalSectionTabs({ active }: { active: ApprovalSection }) {
           active === "pending" ? "bg-primary text-white" : "text-slate-600 hover:bg-slate-50"
         }`}
         href="/approvals"
+        prefetch={false}
       >
         待处理申请
       </Link>
@@ -18,6 +19,7 @@ export function ApprovalSectionTabs({ active }: { active: ApprovalSection }) {
           active === "processed" ? "bg-primary text-white" : "text-slate-600 hover:bg-slate-50"
         }`}
         href="/approvals/processed"
+        prefetch={false}
       >
         已处理申请
       </Link>

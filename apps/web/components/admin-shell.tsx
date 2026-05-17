@@ -134,6 +134,7 @@ export async function AdminShell({
                     }`}
                     href={item.href}
                     key={`mobile-${item.href}`}
+                    prefetch={false}
                   >
                     <item.MobileIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
                     <span className="min-w-0 truncate">{item.label}</span>

@@ -3,22 +3,8 @@ import type { ReactNode } from "react";
 import {
   Beaker,
   Bell,
-  BarChart3,
   ChevronDown,
-  ClipboardCheck,
-  BookOpen,
-  GraduationCap,
-  LayoutDashboard,
-  MonitorPlay,
-  PackageSearch,
   Search,
-  Settings2,
-  ShieldCheck,
-  ThermometerSun,
-  Wrench,
-  UsersRound,
-  Wallet,
-  type LucideIcon,
 } from "lucide-react";
 import { AccountMenu } from "@/components/account-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -97,56 +83,6 @@ const primaryNavGroups: PrimaryNavGroup[] = [
   },
 ];
 
-const adminNavGroups: { label: string; items: { key: AdminSection; href: string; label: string; icon: LucideIcon }[] }[] = [
-  {
-    label: "运营中心",
-    items: [
-      { key: "overview", href: "/admin", label: "工作概览", icon: LayoutDashboard },
-      { key: "analytics", href: "/admin/analytics", label: "运营分析", icon: BarChart3 },
-      { key: "notifications", href: "/admin/notifications", label: "通知管理", icon: Bell },
-      { key: "operations", href: "/operations", label: "运营看板", icon: MonitorPlay },
-    ],
-  },
-  {
-    label: "实验资源中心",
-    items: [
-      { key: "instruments", href: "/admin/instruments", label: "仪器管理", icon: ThermometerSun },
-      { key: "materials", href: "/admin/materials", label: "资源管理", icon: PackageSearch },
-      { key: "maintenance", href: "/maintenance", label: "设备维护", icon: Wrench },
-    ],
-  },
-  {
-    label: "培训与准入中心",
-    items: [
-      { key: "trainingQuestions", href: "/admin/training/questions", label: "题库管理", icon: BookOpen },
-      { key: "trainingPractical", href: "/admin/training/practical", label: "线下考核", icon: ClipboardCheck },
-      { key: "trainingRules", href: "/admin/training/rules", label: "准入规则", icon: GraduationCap },
-    ],
-  },
-  {
-    label: "业务流程中心",
-    items: [
-      { key: "approvals", href: "/approvals", label: "审批中心", icon: ClipboardCheck },
-    ],
-  },
-  {
-    label: "财务与计费中心",
-    items: [{ key: "finance", href: "/finance", label: "财务管理", icon: Wallet }],
-  },
-  {
-    label: "组织与权限中心",
-    items: [{ key: "users", href: "/admin/users", label: "人员管理", icon: UsersRound }],
-  },
-  {
-    label: "安全审计与合规中心",
-    items: [{ key: "security", href: "/admin/security", label: "安全审计", icon: ShieldCheck }],
-  },
-  {
-    label: "平台配置中心",
-    items: [{ key: "settings", href: "/admin/settings", label: "平台配置", icon: Settings2 }],
-  },
-];
-
 export async function AppShell({
   children,
   mainClassName = "mx-auto w-full max-w-7xl px-4 pt-6 pb-4 sm:px-6 sm:pt-8 sm:pb-4 lg:px-8",
@@ -185,12 +121,6 @@ export async function AppShell({
   const mobilePrimaryNav = visiblePrimaryNavGroups
     .map((group) => (group.href ? { href: group.href, label: group.label } : group.items?.[0] ? { href: group.items[0].href, label: group.label } : null))
     .filter((item): item is PrimaryNavItem => item !== null);
-  const visibleAdminNavGroups = adminNavGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((item) => canAccessAdminSection(currentUser?.role, item.key, currentUser?.financeEnabled === true)),
-    }))
-    .filter((group) => group.items.length > 0);
   const quickCategories: string[] = [];
 
   return (
@@ -221,6 +151,7 @@ export async function AppShell({
                           className="flex h-9 items-center whitespace-nowrap rounded-sm px-3 text-slate-700 transition-colors hover:bg-accent hover:text-primary"
                           href={item.href}
                           key={`${item.href}-${item.label}`}
+                          prefetch={false}
                         >
                           {t(item.label)}
                         </Link>
@@ -233,37 +164,20 @@ export async function AppShell({
                   className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-md px-3 text-sm font-medium leading-none text-muted-foreground transition-colors hover:bg-accent hover:text-primary"
                   href={group.href ?? "/"}
                   key={`${group.href}-${group.label}`}
+                  prefetch={false}
                 >
                   {t(group.label)}
                 </Link>
               ),
             )}
             {showAdminMenu ? (
-              <div className="group relative">
-                <button className="inline-flex h-9 items-center justify-center gap-1 whitespace-nowrap rounded-md px-2 text-sm font-medium leading-none text-muted-foreground transition-colors hover:bg-accent hover:text-primary" type="button">
-                  {t("管理中心")}
-                  <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
-                <div className="absolute left-0 top-full hidden w-56 pt-2 group-hover:block group-focus-within:block">
-                  <div className="space-y-2 rounded-md border bg-white p-2 text-sm shadow-md">
-                    {visibleAdminNavGroups.map((group) => (
-                      <div key={group.label}>
-                        <p className="mb-1 px-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">{t(group.label)}</p>
-                        {group.items.map((item) => (
-                          <Link
-                            className="flex h-8 items-center gap-2 whitespace-nowrap rounded-sm px-2 text-slate-700 transition-colors hover:bg-accent hover:text-primary"
-                            href={item.href}
-                            key={`${item.href}-${item.label}`}
-                          >
-                            <item.icon className="h-4 w-4" aria-hidden="true" />
-                            {t(item.label)}
-                          </Link>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
+              <Link
+                className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-md px-2 text-sm font-medium leading-none text-muted-foreground transition-colors hover:bg-accent hover:text-primary"
+                href="/admin"
+                prefetch={false}
+              >
+                {t("管理中心")}
+              </Link>
             ) : null}
           </nav>
           <div className="ml-auto flex shrink-0 items-center justify-end gap-2 sm:gap-3">
@@ -309,6 +223,7 @@ export async function AppShell({
                 className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-md px-3 text-sm font-medium leading-none text-muted-foreground transition-colors hover:bg-accent hover:text-primary"
                 href={item.href}
                 key={`mobile-${item.href}-${item.label}`}
+                prefetch={false}
               >
                 {t(item.label)}
               </Link>
@@ -317,6 +232,7 @@ export async function AppShell({
               <Link
                 className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-md px-3 text-sm font-medium leading-none text-muted-foreground transition-colors hover:bg-accent hover:text-primary"
                 href="/admin"
+                prefetch={false}
               >
                 {t("管理后台")}
               </Link>

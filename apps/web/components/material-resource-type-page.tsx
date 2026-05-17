@@ -313,7 +313,7 @@ function Metric({ label, value }: { label: string; value: number | string }) {
 
 function SideLink({ count, href, icon: Icon, label }: { count: number; href: string; icon: LucideIcon; label: string }) {
   return (
-    <Link className="inline-flex min-h-11 items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50" href={href}>
+    <Link className="inline-flex min-h-11 items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50" href={href} prefetch={false}>
       <span className="inline-flex min-w-0 items-center gap-2">
         <Icon className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
         <span className="truncate">{label}</span>
@@ -325,7 +325,7 @@ function SideLink({ count, href, icon: Icon, label }: { count: number; href: str
 
 function SideActionCard({ count, href, icon: Icon, title }: { count: number; href: string; icon: LucideIcon; title: string }) {
   return (
-    <Link className="flex min-w-0 items-center justify-between gap-4 rounded-lg border bg-white p-4 transition-colors hover:bg-slate-50" href={href}>
+    <Link className="flex min-w-0 items-center justify-between gap-4 rounded-lg border bg-white p-4 transition-colors hover:bg-slate-50" href={href} prefetch={false}>
       <div className="min-w-0">
         <p className="font-bold text-slate-900">{title}</p>
         <p className="mt-1 text-sm text-slate-500">当前资源类型关联 {count} 条记录。</p>

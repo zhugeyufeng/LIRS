@@ -180,7 +180,7 @@ function ScanResult({ materials, query }: { materials: Material[]; query: string
     return <p className="mt-3 rounded-md border p-3 text-sm text-slate-500">未找到匹配资源。</p>;
   }
   return (
-    <Link className="mt-3 block rounded-md border p-3 text-sm hover:bg-slate-50" href={`/admin/materials/${resourceTypeSections.find((section) => section.type === item.productType)?.slug ?? "consumables"}`}>
+    <Link className="mt-3 block rounded-md border p-3 text-sm hover:bg-slate-50" href={`/admin/materials/${resourceTypeSections.find((section) => section.type === item.productType)?.slug ?? "consumables"}`} prefetch={false}>
       <p className="font-bold text-primary">{item.name}</p>
       <p className="mt-1 text-slate-500">
         {item.category}
@@ -193,7 +193,7 @@ function ScanResult({ materials, query }: { materials: Material[]; query: string
 
 function SideLink({ count, href, icon: Icon, label }: { count: number; href: string; icon: LucideIcon; label: string }) {
   return (
-    <Link className="inline-flex min-h-11 items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50" href={href}>
+    <Link className="inline-flex min-h-11 items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50" href={href} prefetch={false}>
       <span className="inline-flex min-w-0 items-center gap-2">
         <Icon className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
         <span className="truncate">{label}</span>

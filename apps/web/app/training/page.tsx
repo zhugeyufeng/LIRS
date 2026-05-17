@@ -91,7 +91,7 @@ function Metric({ label, value, icon: Icon }: { label: string; value: number | s
 
 function Entry({ href, title, description }: { href: string; title: string; description: string }) {
   return (
-    <Link className="rounded-lg border bg-white p-4 transition hover:border-primary/40 hover:shadow-sm" href={href}>
+    <Link className="rounded-lg border bg-white p-4 transition hover:border-primary/40 hover:shadow-sm" href={href} prefetch={false}>
       <p className="font-semibold text-slate-900">{title}</p>
       <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
     </Link>

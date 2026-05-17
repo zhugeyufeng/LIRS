@@ -443,7 +443,7 @@ function ModuleGroupSection({ group, t }: { group: ModuleGroup; t: CopyTranslato
 function ModuleCard({ entry, t }: { entry: ModuleEntry; t: CopyTranslator }) {
   const Icon = entry.icon;
   return (
-    <Link className="group block min-w-0 rounded-lg border bg-white p-4 transition hover:border-primary/40 hover:shadow-md sm:p-5" href={entry.href}>
+    <Link className="group block min-w-0 rounded-lg border bg-white p-4 transition hover:border-primary/40 hover:shadow-md sm:p-5" href={entry.href} prefetch={false}>
       <div className="flex items-start gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary transition group-hover:bg-primary group-hover:text-white">
           <Icon className="h-5 w-5" aria-hidden="true" />

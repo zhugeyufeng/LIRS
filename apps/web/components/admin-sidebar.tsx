@@ -120,6 +120,7 @@ function AdminSidebarLink({ active, collapsed, href, icon, label }: { active: bo
         active ? "bg-primary/5 font-bold text-primary" : "text-slate-600 hover:bg-slate-50"
       }`}
       href={href}
+      prefetch={false}
       title={collapsed ? label : undefined}
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />

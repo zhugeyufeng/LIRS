@@ -62,6 +62,7 @@ function SettingsLink({ active, href, icon: Icon, label, mobile = false }: { act
         active ? "bg-primary/10 text-primary" : "text-slate-600 hover:bg-slate-50"
       }`}
       href={href}
+      prefetch={false}
     >
       <Icon className="h-4 w-4" aria-hidden="true" />
       {label}

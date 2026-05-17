@@ -206,7 +206,7 @@ function NotificationSummaryCard({ canPublish, total, unread }: { canPublish: bo
 
 function ManagementLinkCard({ description, href, icon: Icon, title }: { description: string; href: string; icon: LucideIcon; title: string }) {
   return (
-    <Link className="rounded-lg border bg-white p-4 transition-colors hover:border-primary/40 hover:bg-primary/5" href={href}>
+    <Link className="rounded-lg border bg-white p-4 transition-colors hover:border-primary/40 hover:bg-primary/5" href={href} prefetch={false}>
       <div className="flex items-center gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
           <Icon className="h-5 w-5" aria-hidden="true" />

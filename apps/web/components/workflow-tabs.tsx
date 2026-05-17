@@ -20,6 +20,7 @@ export function WorkflowTabs({ active }: { active: WorkflowTab }) {
           }`}
           href={tab.href}
           key={tab.key}
+          prefetch={false}
         >
           <span className="min-w-0 truncate">{tab.label}</span>
         </Link>

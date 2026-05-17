@@ -24,6 +24,7 @@ export function MaterialsNav({ active, admin = false }: { active: MaterialsNavKe
             }`}
             href={item.href}
             key={item.key}
+            prefetch={false}
           >
             <item.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span className="min-w-0 truncate">{item.label}</span>
