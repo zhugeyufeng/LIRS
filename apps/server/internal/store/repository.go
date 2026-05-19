@@ -1135,6 +1135,7 @@ SELECT u.id::text, u.tenant_id::text, t.name, t.code, u.name, u.email, u.phone, 
 FROM users u
 JOIN tenants t ON t.id = u.tenant_id
 WHERE ($1::boolean OR u.tenant_id = $2::uuid)
+  AND u.status <> 'deleted'
 ORDER BY u.created_at DESC
 `, tenant.AllTenants, tenant.TenantID)
 	if err != nil {
@@ -1344,6 +1345,9 @@ func (r *Repository) ReviewUser(ctx context.Context, id string, input UserReview
 	if !validRole(input.Role) || !validUserStatus(input.Status) {
 		return User{}, errors.New("invalid user review input")
 	}
+	if input.Status == "deleted" {
+		return User{}, errors.New("user status cannot be changed to deleted")
+	}
 
 	var oldTenantID, oldRole, oldStatus, oldGroup, oldDepartment, oldEmail, oldPhone string
 	if err := r.db.QueryRow(ctx, `SELECT tenant_id::text, role, status, group_name, department, email, phone FROM users WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)`, id, tenant.AllTenants, tenant.TenantID).Scan(&oldTenantID, &oldRole, &oldStatus, &oldGroup, &oldDepartment, &oldEmail, &oldPhone); err != nil {
@@ -1539,6 +1543,94 @@ RETURNING id::text, tenant_id::text, (SELECT name FROM tenants WHERE id = users.
 	return user, nil
 }
 
+func (r *Repository) CreateUser(ctx context.Context, input UserCreateInput) (User, error) {
+	tenant := TenantFromContext(ctx)
+	input.TenantID = strings.TrimSpace(input.TenantID)
+	input.Name = strings.TrimSpace(input.Name)
+	input.Email = strings.TrimSpace(strings.ToLower(input.Email))
+	input.Phone = strings.TrimSpace(input.Phone)
+	input.Department = strings.TrimSpace(input.Department)
+	input.GroupName = strings.TrimSpace(input.GroupName)
+	input.Role = strings.TrimSpace(input.Role)
+	input.Status = strings.TrimSpace(input.Status)
+	input.Actor = strings.TrimSpace(input.Actor)
+	input.ActorRole = strings.TrimSpace(input.ActorRole)
+	if input.Actor == "" {
+		input.Actor = "system"
+	}
+	if input.TenantID == "" {
+		input.TenantID = tenant.TenantID
+	}
+	if input.Status == "" {
+		input.Status = "active"
+	}
+	if input.GroupName == "" {
+		input.GroupName = "未分配归属"
+	}
+	if input.Name == "" || input.Email == "" || input.Phone == "" || input.Department == "" || len(input.Password) < 8 || !validRole(input.Role) || !validUserStatus(input.Status) {
+		return User{}, errors.New("invalid user create input")
+	}
+	if input.Status == "deleted" {
+		return User{}, errors.New("invalid user create status")
+	}
+	if input.ActorRole != "super_admin" && input.TenantID != tenant.TenantID {
+		return User{}, errors.New("only system super admin can create users for another tenant")
+	}
+	if !canActorManageUserRole(input.ActorRole, "unassigned", input.Role) {
+		return User{}, errors.New("only system super admin can manage administrator roles")
+	}
+	if _, err := mail.ParseAddress(input.Email); err != nil {
+		return User{}, errors.New("user email is invalid")
+	}
+	targetTenant, err := r.resolveActiveTenant(ctx, input.TenantID, "")
+	if err != nil {
+		return User{}, err
+	}
+	passwordHash, err := hashPassword(input.Password)
+	if err != nil {
+		return User{}, err
+	}
+
+	var user User
+	err = r.db.QueryRow(ctx, `
+INSERT INTO users (tenant_id, name, email, phone, department, group_name, password_hash, role, status, email_verified)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
+RETURNING id::text, tenant_id::text, (SELECT name FROM tenants WHERE id = users.tenant_id), (SELECT code FROM tenants WHERE id = users.tenant_id), name, email, phone, department, group_name, role, status, email_verified,
+          dingtalk_user_id, dingtalk_union_id, dingtalk_name, dingtalk_user_id <> '',
+          (SELECT finance_enabled FROM tenants WHERE id = users.tenant_id), auth_epoch
+`, targetTenant.ID, input.Name, input.Email, input.Phone, input.Department, input.GroupName, passwordHash, input.Role, input.Status).Scan(
+		&user.ID,
+		&user.TenantID,
+		&user.TenantName,
+		&user.TenantCode,
+		&user.Name,
+		&user.Email,
+		&user.Phone,
+		&user.Department,
+		&user.GroupName,
+		&user.Role,
+		&user.Status,
+		&user.EmailVerified,
+		&user.DingTalkUserID,
+		&user.DingTalkUnionID,
+		&user.DingTalkName,
+		&user.DingTalkBound,
+		&user.FinanceEnabled,
+		&user.AuthEpoch,
+	)
+	if err != nil {
+		return User{}, err
+	}
+	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: user.TenantID, TenantName: user.TenantName, FinanceEnabled: user.FinanceEnabled})
+	r.audit(auditCtx, input.Actor, "user.create", "user", user.ID, "", fmt.Sprintf("%s/%s/%s", user.Email, user.Role, user.Status))
+	_, err = r.createNotification(ctx, user.TenantID, user.ID, user.GroupName, user.Department, "personal", "账号已创建", fmt.Sprintf("%s 的账号已由管理员创建，角色为%s，账号状态为%s。", user.Name, roleName(user.Role), userStatusLabel(user.Status)), notificationLevelForStatus(user.Status))
+	if err != nil {
+		return User{}, err
+	}
+	r.invalidateDashboard(ctx)
+	return user, nil
+}
+
 func (r *Repository) DeleteUser(ctx context.Context, id string, actor string) (User, error) {
 	tenant := TenantFromContext(ctx)
 	actor = strings.TrimSpace(actor)
@@ -1561,7 +1653,13 @@ func (r *Repository) DeleteUser(ctx context.Context, id string, actor string) (U
 	var user User
 	err = tx.QueryRow(ctx, `
 UPDATE users
-SET status = 'disabled', auth_epoch = auth_epoch + 1, updated_at = now()
+SET status = 'deleted',
+    dingtalk_user_id = '',
+    dingtalk_union_id = '',
+    dingtalk_name = '',
+    dingtalk_bound_at = NULL,
+    auth_epoch = auth_epoch + 1,
+    updated_at = now()
 WHERE id = $1
   AND ($2::boolean OR tenant_id = $3::uuid)
 RETURNING id::text, tenant_id::text, (SELECT name FROM tenants WHERE id = users.tenant_id), (SELECT code FROM tenants WHERE id = users.tenant_id), name, email, phone, department, group_name, role, status, email_verified,
@@ -1970,6 +2068,87 @@ func (r *Repository) createNotification(ctx context.Context, tenantID string, us
 
 func (r *Repository) createNotificationTx(ctx context.Context, tx pgx.Tx, tenantID string, userID string, groupName string, department string, targetScope string, title string, body string, level string) (Notification, error) {
 	return r.insertNotification(ctx, tx, tenantID, userID, groupName, department, targetScope, title, body, level, "system", "")
+}
+
+func (r *Repository) createMaterialEventNotificationsTx(ctx context.Context, tx pgx.Tx, tenantID string, requesterID string, requesterGroup string, title string, body string, level string) ([]Notification, error) {
+	seen := make(map[string]struct{})
+	items := make([]Notification, 0, 4)
+	requesterID = strings.TrimSpace(requesterID)
+	if requesterID != "" {
+		notification, err := r.createNotificationTx(ctx, tx, tenantID, requesterID, requesterGroup, "", "personal", title, body, level)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, notification)
+		seen[requesterID] = struct{}{}
+	}
+	admins, err := r.materialAdminRecipientsTx(ctx, tx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	for _, admin := range admins {
+		if _, ok := seen[admin.ID]; ok {
+			continue
+		}
+		notification, err := r.createNotificationTx(ctx, tx, tenantID, admin.ID, admin.GroupName, admin.Department, "personal", title, body, level)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, notification)
+		seen[admin.ID] = struct{}{}
+	}
+	return items, nil
+}
+
+func (r *Repository) materialAdminRecipientsTx(ctx context.Context, tx pgx.Tx, tenantID string) ([]User, error) {
+	rows, err := tx.Query(ctx, `
+SELECT u.id::text, u.tenant_id::text, COALESCE(t.name, ''), COALESCE(t.code, ''),
+       u.name, u.email, u.phone, u.department, u.group_name, u.role, u.status, u.email_verified,
+       u.dingtalk_user_id, u.dingtalk_union_id, u.dingtalk_name, u.dingtalk_user_id <> '',
+       COALESCE(t.finance_enabled, false), u.auth_epoch
+FROM users u
+LEFT JOIN tenants t ON t.id = u.tenant_id
+WHERE u.tenant_id = $1::uuid
+  AND u.status = 'active'
+  AND u.role IN ('material_admin', 'tenant_admin', 'lab_admin', 'super_admin')
+ORDER BY CASE u.role
+    WHEN 'material_admin' THEN 1
+    WHEN 'tenant_admin' THEN 2
+    WHEN 'lab_admin' THEN 3
+    ELSE 4
+END, u.created_at DESC
+`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]User, 0)
+	for rows.Next() {
+		var item User
+		if err := rows.Scan(&item.ID, &item.TenantID, &item.TenantName, &item.TenantCode, &item.Name, &item.Email, &item.Phone, &item.Department, &item.GroupName, &item.Role, &item.Status, &item.EmailVerified, &item.DingTalkUserID, &item.DingTalkUnionID, &item.DingTalkName, &item.DingTalkBound, &item.FinanceEnabled, &item.AuthEpoch); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *Repository) materialRequesterForMaterialTx(ctx context.Context, tx pgx.Tx, tenantID string, materialID string) (string, string, error) {
+	var requesterID, groupName string
+	err := tx.QueryRow(ctx, `
+SELECT COALESCE(requester_id::text, ''), group_name
+FROM material_purchases
+WHERE tenant_id = $1::uuid
+  AND material_id = $2
+  AND requester_id IS NOT NULL
+ORDER BY received_at DESC NULLS LAST, created_at DESC
+LIMIT 1
+`, tenantID, materialID).Scan(&requesterID, &groupName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", nil
+	}
+	return requesterID, groupName, err
 }
 
 func (r *Repository) insertNotification(ctx context.Context, writer notificationWriter, tenantID string, userID string, groupName string, department string, targetScope string, title string, body string, level string, source string, publisher string) (Notification, error) {
@@ -4583,6 +4762,15 @@ func (r *Repository) SaveMaterial(ctx context.Context, id string, input Material
 	if input.Actor == "" {
 		input.Actor = "system"
 	}
+	var purchase MaterialPurchase
+	if id == "" && input.PurchaseSerialNo != "" {
+		var err error
+		purchase, err = r.materialPurchaseBySerial(ctx, input.PurchaseSerialNo)
+		if err != nil {
+			return Material{}, err
+		}
+		input = r.applyMaterialPurchaseToMaterialInput(ctx, input, purchase)
+	}
 	if input.Name == "" || input.Category == "" || input.Spec == "" || input.Unit == "" || input.Stock < 0 || input.WarningLine < 0 || input.UnitPrice < 0 {
 		return Material{}, errors.New("invalid material input")
 	}
@@ -4617,7 +4805,7 @@ func (r *Repository) SaveMaterial(ctx context.Context, id string, input Material
 		defer func() {
 			_ = tx.Rollback(ctx)
 		}()
-		notifications := make([]Notification, 0, 1)
+		notifications := make([]Notification, 0, 4)
 		item, err := scanMaterial(tx.QueryRow(ctx, fmt.Sprintf(`
 INSERT INTO materials (
     tenant_id, name, product_type, category, subcategory, spec, unit, unit_price, stock, warning_line,
@@ -4720,12 +4908,49 @@ WHERE id = $1 AND tenant_id = $2::uuid
 				return Material{}, err
 			}
 		}
-		if item.Stock <= item.WarningLine {
-			notification, err := r.createNotificationTx(ctx, tx, tenant.TenantID, "", "", "", "global", "耗材库存预警", fmt.Sprintf("%s 当前库存 %d%s，低于预警线 %d%s。", item.Name, item.Stock, item.Unit, item.WarningLine, item.Unit), "warning")
+		if purchase.ID != "" {
+			updateTag, err := tx.Exec(ctx, `
+UPDATE material_purchases
+SET material_id = $2,
+    status = 'received',
+    received_at = COALESCE(received_at, now())
+WHERE id = $1
+  AND tenant_id = $3::uuid
+  AND status IN ('pending', 'approved', 'ordered')
+`, purchase.ID, item.ID, tenant.TenantID)
 			if err != nil {
 				return Material{}, err
 			}
-			notifications = append(notifications, notification)
+			if updateTag.RowsAffected() > 0 {
+				if _, err := tx.Exec(ctx, `
+INSERT INTO material_purchase_actions (tenant_id, material_purchase_id, actor, action, comment)
+VALUES ($1, $2, $3, 'receive', '资源入库关联申购流水号')
+`, tenant.TenantID, purchase.ID, input.Actor); err != nil {
+					return Material{}, err
+				}
+				body := fmt.Sprintf("%s x%d 已完成入库，资源名称：%s，储存位置：%s。", firstNonEmpty(purchase.PurchaseItemName, purchase.MaterialName, item.Name), purchase.Quantity, item.Name, firstNonEmpty(materialLocation(item), "未登记"))
+				created, err := r.createMaterialEventNotificationsTx(ctx, tx, tenant.TenantID, purchase.RequesterID, purchase.GroupName, "耗材申购完成入库", body, "success")
+				if err != nil {
+					return Material{}, err
+				}
+				notifications = append(notifications, created...)
+			}
+		}
+		if item.Stock <= item.WarningLine {
+			body := fmt.Sprintf("%s 当前库存 %d%s，低于预警线 %d%s。", item.Name, item.Stock, item.Unit, item.WarningLine, item.Unit)
+			created, err := r.createMaterialEventNotificationsTx(ctx, tx, tenant.TenantID, purchase.RequesterID, purchase.GroupName, "耗材库存预警", body, "warning")
+			if err != nil {
+				return Material{}, err
+			}
+			notifications = append(notifications, created...)
+		}
+		if materialNearExpiry(input.ExpiresAt, input.NearExpiryDays) {
+			body := fmt.Sprintf("%s 有效期为 %s，已进入临期预警范围。", item.Name, input.ExpiresAt)
+			created, err := r.createMaterialEventNotificationsTx(ctx, tx, tenant.TenantID, purchase.RequesterID, purchase.GroupName, "耗材有效期告警", body, "warning")
+			if err != nil {
+				return Material{}, err
+			}
+			notifications = append(notifications, created...)
 		}
 		_, err = tx.Exec(ctx, `
 INSERT INTO inventory_ledger (tenant_id, material_id, change_qty, reason)
@@ -4966,11 +5191,15 @@ func (r *Repository) AdjustMaterialStock(ctx context.Context, id string, input S
 			return Material{}, err
 		}
 		if item.Stock <= item.WarningLine {
-			notification, err := r.createNotificationTx(ctx, tx, materialTenantID, "", "", "", "global", "耗材库存预警", fmt.Sprintf("%s 当前库存 %d%s，低于预警线 %d%s。", item.Name, item.Stock, item.Unit, item.WarningLine, item.Unit), "warning")
+			requesterID, requesterGroup, err := r.materialRequesterForMaterialTx(ctx, tx, materialTenantID, item.ID)
 			if err != nil {
 				return Material{}, err
 			}
-			notifications = append(notifications, notification)
+			created, err := r.createMaterialEventNotificationsTx(ctx, tx, materialTenantID, requesterID, requesterGroup, "耗材库存预警", fmt.Sprintf("%s 当前库存 %d%s，低于预警线 %d%s。", item.Name, item.Stock, item.Unit, item.WarningLine, item.Unit), "warning")
+			if err != nil {
+				return Material{}, err
+			}
+			notifications = append(notifications, created...)
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return Material{}, err
@@ -5060,11 +5289,15 @@ WHERE id = $1 AND tenant_id = $2::uuid
 		}
 	}
 	if item.Stock <= item.WarningLine {
-		notification, err := r.createNotificationTx(ctx, tx, materialTenantID, "", "", "", "global", "耗材库存预警", fmt.Sprintf("%s 当前库存 %d%s，低于预警线 %d%s。", item.Name, item.Stock, item.Unit, item.WarningLine, item.Unit), "warning")
+		requesterID, requesterGroup, err := r.materialRequesterForMaterialTx(ctx, tx, materialTenantID, item.ID)
 		if err != nil {
 			return Material{}, err
 		}
-		notifications = append(notifications, notification)
+		created, err := r.createMaterialEventNotificationsTx(ctx, tx, materialTenantID, requesterID, requesterGroup, "耗材库存预警", fmt.Sprintf("%s 当前库存 %d%s，低于预警线 %d%s。", item.Name, item.Stock, item.Unit, item.WarningLine, item.Unit), "warning")
+		if err != nil {
+			return Material{}, err
+		}
+		notifications = append(notifications, created...)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Material{}, err
@@ -5778,6 +6011,26 @@ func materialInputBatchLocation(input MaterialInput) string {
 	return strings.Join(nonEmptyStrings(input.StorageRoom, input.StorageCabinet, input.StorageLayer, input.StorageSlot), " / ")
 }
 
+func materialLocation(item Material) string {
+	return strings.Join(nonEmptyStrings(item.StorageRoom, item.StorageCabinet, item.StorageLayer, item.StorageSlot), " / ")
+}
+
+func materialNearExpiry(expiresAt string, nearExpiryDays int) bool {
+	expiresAt = strings.TrimSpace(expiresAt)
+	if expiresAt == "" {
+		return false
+	}
+	if nearExpiryDays < 0 {
+		nearExpiryDays = 0
+	}
+	expiry, err := time.Parse("2006-01-02", expiresAt)
+	if err != nil {
+		return false
+	}
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	return !expiry.Before(today) && !expiry.After(today.AddDate(0, 0, nearExpiryDays))
+}
+
 func nonEmptyStrings(values ...string) []string {
 	items := make([]string, 0, len(values))
 	for _, value := range values {
@@ -6099,11 +6352,11 @@ VALUES ($1, $2, $3, $4, $5)
 		return MaterialRequest{}, err
 	}
 	if remainingStock <= warningLine {
-		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, "", "", "", "global", "耗材库存预警", fmt.Sprintf("%s 出库后库存 %d%s，低于预警线 %d%s。", item.MaterialName, remainingStock, materialUnit, warningLine, materialUnit), "warning")
+		created, err := r.createMaterialEventNotificationsTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "耗材库存预警", fmt.Sprintf("%s 出库后库存 %d%s，低于预警线 %d%s。", item.MaterialName, remainingStock, materialUnit, warningLine, materialUnit), "warning")
 		if err != nil {
 			return MaterialRequest{}, err
 		}
-		notifications = append(notifications, notification)
+		notifications = append(notifications, created...)
 	}
 	err = tx.QueryRow(ctx, `
 UPDATE material_requests mr
@@ -6251,6 +6504,8 @@ func scanMaterialPurchase(row scanner) (MaterialPurchase, error) {
 		&item.PurchaseMinSpec,
 		&item.RequesterID,
 		&item.Requester,
+		&item.RequesterPhone,
+		&item.RequesterEmail,
 		&item.GroupName,
 		&item.Quantity,
 		&item.EstimatedUnitPrice,
@@ -6279,6 +6534,8 @@ func materialPurchaseSelectColumns() string {
        mp.purchase_min_spec,
        COALESCE(mp.requester_id::text, ''),
        mp.requester,
+       COALESCE(mp.requester_phone, ''),
+       COALESCE(mp.requester_email, ''),
        mp.group_name,
        mp.quantity,
        mp.estimated_unit_price::float8,
@@ -6288,14 +6545,94 @@ func materialPurchaseSelectColumns() string {
        mp.created_at`
 }
 
+func (r *Repository) materialPurchaseBySerial(ctx context.Context, serial string) (MaterialPurchase, error) {
+	tenant := TenantFromContext(ctx)
+	serial = strings.TrimSpace(serial)
+	if serial == "" {
+		return MaterialPurchase{}, errors.New("material purchase serial no is required")
+	}
+	item, err := scanMaterialPurchase(r.db.QueryRow(ctx, fmt.Sprintf(`
+SELECT %s
+FROM material_purchases mp
+LEFT JOIN materials m ON m.id = mp.material_id
+WHERE mp.tenant_id = $2::uuid
+  AND (
+      mp.id::text = $1
+      OR lower(mp.purchase_id_no) = lower($1)
+      OR lower(mp.purchase_sequence_no) = lower($1)
+  )
+ORDER BY mp.created_at DESC
+LIMIT 1
+`, materialPurchaseSelectColumns()), serial, tenant.TenantID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return MaterialPurchase{}, errors.New("material purchase serial no not found")
+		}
+		return MaterialPurchase{}, err
+	}
+	return item, nil
+}
+
+func (r *Repository) applyMaterialPurchaseToMaterialInput(ctx context.Context, input MaterialInput, purchase MaterialPurchase) MaterialInput {
+	if purchase.ID == "" {
+		return normalizeMaterial(input)
+	}
+	if input.Name == "" {
+		input.Name = firstNonEmpty(purchase.PurchaseItemName, purchase.MaterialName, purchase.PurchaseProjectName)
+	}
+	input.Spec = firstNonEmpty(input.Spec, purchase.PurchaseSpec)
+	input.Unit = firstNonEmpty(input.Unit, purchase.PurchaseUnit)
+	if input.UnitPrice <= 0 {
+		input.UnitPrice = purchase.EstimatedUnitPrice
+	}
+	if input.Stock <= 0 && purchase.Quantity > 0 {
+		input.Stock = purchase.Quantity
+	}
+	input.Supplier = firstNonEmpty(input.Supplier, purchase.Supplier, purchase.PurchaseBrand)
+	input.Manufacturer = firstNonEmpty(input.Manufacturer, purchase.PurchaseBrand)
+	input.CatalogNo = firstNonEmpty(input.CatalogNo, purchase.PurchaseIDNo)
+	input.TenderContract = firstNonEmpty(input.TenderContract, purchase.PurchaseProjectName)
+	input.ContractNo = firstNonEmpty(input.ContractNo, purchase.PurchaseProjectName)
+	input.Remark = firstNonEmpty(input.Remark, purchase.PurchaseRemark)
+	if input.BatchNo == "" {
+		input.BatchNo = firstNonEmpty(purchase.PurchaseSequenceNo, purchase.PurchaseIDNo)
+	}
+	return normalizeMaterial(input)
+}
+
 func (r *Repository) CreateMaterialPurchase(ctx context.Context, input MaterialPurchaseInput) (MaterialPurchase, error) {
 	tenant := TenantFromContext(ctx)
 	input.MaterialID = strings.TrimSpace(input.MaterialID)
 	input.PurchasableMaterialID = strings.TrimSpace(input.PurchasableMaterialID)
+	input.PurchaseSerialNo = strings.TrimSpace(input.PurchaseSerialNo)
 	input.RequesterID = strings.TrimSpace(input.RequesterID)
 	input.Requester = strings.TrimSpace(input.Requester)
 	input.Supplier = strings.TrimSpace(input.Supplier)
 	input.Reason = strings.TrimSpace(input.Reason)
+	if input.PurchaseSerialNo != "" {
+		purchase, err := r.materialPurchaseBySerial(ctx, input.PurchaseSerialNo)
+		if err != nil {
+			return MaterialPurchase{}, err
+		}
+		if input.PurchasableMaterialID == "" {
+			input.PurchasableMaterialID = purchase.PurchasableMaterialID
+		}
+		if input.MaterialID == "" {
+			input.MaterialID = purchase.MaterialID
+		}
+		if input.RequesterID == "" {
+			input.RequesterID = purchase.RequesterID
+		}
+		if input.Requester == "" {
+			input.Requester = purchase.Requester
+		}
+		if input.EstimatedUnitPrice == 0 {
+			input.EstimatedUnitPrice = purchase.EstimatedUnitPrice
+		}
+		if input.Supplier == "" {
+			input.Supplier = purchase.Supplier
+		}
+	}
 	if input.RequesterID == "" {
 		input.RequesterID = strings.TrimSpace(tenant.Actor.UserID)
 	}
@@ -6306,23 +6643,23 @@ func (r *Repository) CreateMaterialPurchase(ctx context.Context, input MaterialP
 		return MaterialPurchase{}, errors.New("invalid material purchase input")
 	}
 
-	var requesterID, requesterTenantID, requesterName, requesterStatus, groupName string
+	var requesterID, requesterTenantID, requesterName, requesterStatus, requesterPhone, requesterEmail, groupName string
 	var emailVerified bool
 	var err error
 	if input.RequesterID != "" {
 		err = r.db.QueryRow(ctx, `
-SELECT id::text, tenant_id::text, name, status, group_name, email_verified
+SELECT id::text, tenant_id::text, name, status, phone, email, group_name, email_verified
 FROM users
-WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
-`, input.RequesterID, tenant.AllTenants, tenant.TenantID).Scan(&requesterID, &requesterTenantID, &requesterName, &requesterStatus, &groupName, &emailVerified)
+WHERE id = $1 AND status <> 'deleted' AND ($2::boolean OR tenant_id = $3::uuid)
+`, input.RequesterID, tenant.AllTenants, tenant.TenantID).Scan(&requesterID, &requesterTenantID, &requesterName, &requesterStatus, &requesterPhone, &requesterEmail, &groupName, &emailVerified)
 	} else {
 		err = r.db.QueryRow(ctx, `
-SELECT id::text, tenant_id::text, name, status, group_name, email_verified
+SELECT id::text, tenant_id::text, name, status, phone, email, group_name, email_verified
 FROM users
-WHERE name = $1 AND ($2::boolean OR tenant_id = $3::uuid)
+WHERE name = $1 AND status <> 'deleted' AND ($2::boolean OR tenant_id = $3::uuid)
 ORDER BY created_at DESC
 LIMIT 1
-`, input.Requester, tenant.AllTenants, tenant.TenantID).Scan(&requesterID, &requesterTenantID, &requesterName, &requesterStatus, &groupName, &emailVerified)
+`, input.Requester, tenant.AllTenants, tenant.TenantID).Scan(&requesterID, &requesterTenantID, &requesterName, &requesterStatus, &requesterPhone, &requesterEmail, &groupName, &emailVerified)
 	}
 	if err != nil {
 		return MaterialPurchase{}, err
@@ -6411,16 +6748,16 @@ WITH inserted AS (
     tenant_id, material_id, purchasable_material_id,
     purchase_id_no, purchase_sequence_no, purchase_project_name, purchase_item_name, purchase_brand, purchase_spec, purchase_unit,
     purchase_remark, purchase_technical_requirement, purchase_min_spec,
-    requester_id, requester, group_name, quantity, estimated_unit_price, supplier, reason
+    requester_id, requester, requester_phone, requester_email, group_name, quantity, estimated_unit_price, supplier, reason
   )
-  VALUES ($1, NULLIF($2, '')::uuid, NULLIF($3, '')::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+  VALUES ($1, NULLIF($2, '')::uuid, NULLIF($3, '')::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
   RETURNING *
 )
 SELECT %s
 FROM inserted mp
 LEFT JOIN materials m ON m.id = mp.material_id
-`, materialPurchaseSelectColumns()), materialTenantID, input.MaterialID, item.PurchasableMaterialID, item.PurchaseIDNo, item.PurchaseSequenceNo, item.PurchaseProjectName, item.PurchaseItemName, item.PurchaseBrand, item.PurchaseSpec, item.PurchaseUnit, item.PurchaseRemark, item.PurchaseTechnicalRequirement, item.PurchaseMinSpec, requesterID, requesterName, groupName, input.Quantity, input.EstimatedUnitPrice, input.Supplier, input.Reason).Scan(
-		&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt,
+`, materialPurchaseSelectColumns()), materialTenantID, input.MaterialID, item.PurchasableMaterialID, item.PurchaseIDNo, item.PurchaseSequenceNo, item.PurchaseProjectName, item.PurchaseItemName, item.PurchaseBrand, item.PurchaseSpec, item.PurchaseUnit, item.PurchaseRemark, item.PurchaseTechnicalRequirement, item.PurchaseMinSpec, requesterID, requesterName, requesterPhone, requesterEmail, groupName, input.Quantity, input.EstimatedUnitPrice, input.Supplier, input.Reason).Scan(
+		&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt,
 	)
 	if err != nil {
 		return MaterialPurchase{}, err
@@ -6467,7 +6804,7 @@ SELECT %s, mp.tenant_id::text
 FROM updated mp
 LEFT JOIN materials m ON m.id = mp.material_id
 `, materialPurchaseSelectColumns()), id, tenant.AllTenants, tenant.TenantID).Scan(
-		&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &itemTenantID,
+		&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &itemTenantID,
 	)
 	if err != nil {
 		return MaterialPurchase{}, err
@@ -6508,7 +6845,7 @@ func (r *Repository) ReceiveMaterialPurchase(ctx context.Context, id string, act
 	var productType, defaultBatchNo, defaultExpiresAt, defaultLocation string
 	err = tx.QueryRow(ctx, `
 SELECT mp.id::text, mp.tenant_id::text, mp.material_id::text, m.name, COALESCE(mp.requester_id::text, ''),
-       mp.requester, mp.group_name, mp.quantity, mp.estimated_unit_price::float8,
+       mp.requester, COALESCE(mp.requester_phone, ''), COALESCE(mp.requester_email, ''), mp.group_name, mp.quantity, mp.estimated_unit_price::float8,
        mp.supplier, mp.reason, mp.status, mp.created_at, m.product_type, m.batch_no, COALESCE(m.expires_at::text, ''),
        concat_ws(' / ', NULLIF(m.storage_room, ''), NULLIF(m.storage_cabinet, ''), NULLIF(m.storage_layer, ''), NULLIF(m.storage_slot, ''))
 FROM material_purchases mp
@@ -6516,7 +6853,7 @@ JOIN materials m ON m.id = mp.material_id
 WHERE mp.id = $1 AND mp.status IN ('approved', 'ordered')
   AND ($2::boolean OR mp.tenant_id = $3::uuid)
 FOR UPDATE
-`, id, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &itemTenantID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &productType, &defaultBatchNo, &defaultExpiresAt, &defaultLocation)
+`, id, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &itemTenantID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &productType, &defaultBatchNo, &defaultExpiresAt, &defaultLocation)
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
@@ -6596,7 +6933,7 @@ WITH updated AS (
 SELECT %s
 FROM updated mp
 LEFT JOIN materials m ON m.id = mp.material_id
-`, materialPurchaseSelectColumns()), id, itemTenantID).Scan(&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt)
+`, materialPurchaseSelectColumns()), id, itemTenantID).Scan(&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt)
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
@@ -6612,6 +6949,18 @@ VALUES ($1, $2, $3, 'receive', '到货入库')
 			return MaterialPurchase{}, err
 		}
 		notifications = append(notifications, notification)
+	}
+	created, err := r.createMaterialEventNotificationsTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "耗材申购完成入库", fmt.Sprintf("%s x%d 已完成入库，储存位置：%s。", item.MaterialName, item.Quantity, firstNonEmpty(defaultLocation, "未登记")), "success")
+	if err != nil {
+		return MaterialPurchase{}, err
+	}
+	notifications = append(notifications, created...)
+	if materialNearExpiry(defaultExpiresAt, 30) {
+		created, err := r.createMaterialEventNotificationsTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "耗材有效期告警", fmt.Sprintf("%s 有效期为 %s，已进入临期预警范围。", item.MaterialName, defaultExpiresAt), "warning")
+		if err != nil {
+			return MaterialPurchase{}, err
+		}
+		notifications = append(notifications, created...)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialPurchase{}, err
@@ -6642,7 +6991,7 @@ SELECT %s, mp.tenant_id::text
 FROM updated mp
 LEFT JOIN materials m ON m.id = mp.material_id
 `, materialPurchaseSelectColumns()), id, tenant.AllTenants, tenant.TenantID).Scan(
-		&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &itemTenantID,
+		&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &itemTenantID,
 	)
 	if err != nil {
 		return MaterialPurchase{}, err
@@ -7809,7 +8158,7 @@ WITH updated AS (
 SELECT %s, mp.tenant_id::text
 FROM updated mp
 LEFT JOIN materials m ON m.id = mp.material_id
-`, materialPurchaseSelectColumns()), id, status, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &itemTenantID)
+`, materialPurchaseSelectColumns()), id, status, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &itemTenantID)
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
@@ -9556,6 +9905,7 @@ func normalizeMaterial(input MaterialInput) MaterialInput {
 	input.StandardCertificateURL = strings.TrimSpace(input.StandardCertificateURL)
 	input.AttachmentURL = strings.TrimSpace(input.AttachmentURL)
 	input.QRCode = strings.TrimSpace(input.QRCode)
+	input.PurchaseSerialNo = strings.TrimSpace(input.PurchaseSerialNo)
 	input.ExpiresAt = strings.TrimSpace(input.ExpiresAt)
 	input.OpenedAt = strings.TrimSpace(input.OpenedAt)
 	input.Status = strings.TrimSpace(input.Status)
@@ -10094,7 +10444,7 @@ func validRegisterAccountType(accountType string) bool {
 
 func validUserStatus(status string) bool {
 	switch status {
-	case "pending_approval", "active", "disabled":
+	case "pending_approval", "active", "disabled", "deleted":
 		return true
 	default:
 		return false
@@ -10292,6 +10642,7 @@ func userStatusLabel(status string) string {
 		"pending_approval": "待审核",
 		"active":           "已通过",
 		"disabled":         "已停用",
+		"deleted":          "已删除",
 	}
 	if label, ok := labels[status]; ok {
 		return label

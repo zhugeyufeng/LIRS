@@ -754,6 +754,18 @@ export type UserReviewPayload = {
   actor?: string;
 };
 
+export type UserCreatePayload = {
+  tenantId?: string;
+  name: string;
+  phone: string;
+  email: string;
+  password: string;
+  department: string;
+  groupName?: string;
+  role: string;
+  status: string;
+};
+
 export type OrganizationUnitPayload = {
   kind: "department" | "group";
   name: string;
@@ -841,7 +853,9 @@ export type MaterialUnit = {
   updatedAt: string;
 };
 
-export type MaterialPayload = Omit<Material, "id" | "parentMaterialName" | "openExpiresAt" | "damagedQuantity" | "batches" | "units">;
+export type MaterialPayload = Omit<Material, "id" | "parentMaterialName" | "openExpiresAt" | "damagedQuantity" | "batches" | "units"> & {
+  purchaseSerialNo?: string;
+};
 
 export type MaterialImportResult = {
   created: number;
@@ -955,6 +969,8 @@ export type MaterialPurchase = {
   purchaseMinSpec: string;
   requesterId?: string;
   requester: string;
+  requesterPhone: string;
+  requesterEmail: string;
   groupName: string;
   quantity: number;
   estimatedUnitPrice: number;
@@ -988,6 +1004,7 @@ export type MaterialRequestPayload = {
 export type MaterialPurchasePayload = {
   materialId?: string;
   purchasableMaterialId?: string;
+  purchaseSerialNo?: string;
   requester?: string;
   quantity: number;
   estimatedUnitPrice: number;

@@ -76,6 +76,7 @@ type repository interface {
 	SaveInstrument(ctx context.Context, id string, input store.InstrumentInput) (store.Instrument, error)
 	Reservations(ctx context.Context) ([]store.Reservation, error)
 	Users(ctx context.Context) ([]store.User, error)
+	CreateUser(ctx context.Context, input store.UserCreateInput) (store.User, error)
 	ReviewUser(ctx context.Context, id string, input store.UserReviewInput) (store.User, error)
 	SaveUserMembership(ctx context.Context, id string, input store.UserMembershipInput) (store.User, error)
 	DeleteUser(ctx context.Context, id string, actor string) (store.User, error)
@@ -439,6 +440,23 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 		item, err := repo.Users(c.Request.Context())
 		respond(c, item, err)
+	})
+	api.POST("/users", func(c *gin.Context) {
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		if !ok {
+			return
+		}
+		var input store.UserCreateInput
+		if bindJSON(c, &input) {
+			if actor.Role != "super_admin" && strings.TrimSpace(input.TenantID) != "" && strings.TrimSpace(input.TenantID) != actor.TenantID {
+				c.JSON(http.StatusForbidden, gin.H{"error": "only system super admin can create users for another tenant"})
+				return
+			}
+			input.Actor = actor.Name
+			input.ActorRole = actor.Role
+			item, err := repo.CreateUser(c.Request.Context(), input)
+			respond(c, item, err)
+		}
 	})
 	api.GET("/organization-units", func(c *gin.Context) {
 		ctx := c.Request.Context()

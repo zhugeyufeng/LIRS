@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS users (
     group_name text NOT NULL DEFAULT '未分配归属',
     password_hash text NOT NULL,
     role text NOT NULL DEFAULT 'unassigned',
-    status text NOT NULL DEFAULT 'pending_approval' CHECK (status IN ('pending_approval', 'active', 'disabled')),
+    status text NOT NULL DEFAULT 'pending_approval' CHECK (status IN ('pending_approval', 'active', 'disabled', 'deleted')),
     email_verified boolean NOT NULL DEFAULT false,
     email_verification_token text NOT NULL DEFAULT '',
     dingtalk_user_id text NOT NULL DEFAULT '',
@@ -106,7 +106,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS dingtalk_bound_at timestamptz;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_epoch integer NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE users ALTER COLUMN group_name SET DEFAULT '未分配归属';
-CREATE UNIQUE INDEX IF NOT EXISTS users_tenant_dingtalk_user_unique ON users (tenant_id, dingtalk_user_id) WHERE dingtalk_user_id <> '';
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_status_check;
+UPDATE users SET status = 'disabled' WHERE status NOT IN ('pending_approval', 'active', 'disabled', 'deleted');
+ALTER TABLE users ADD CONSTRAINT users_status_check CHECK (status IN ('pending_approval', 'active', 'disabled', 'deleted'));
 
 CREATE TABLE IF NOT EXISTS reservations (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -584,6 +586,8 @@ FROM purchasable_materials pm
 WHERE mp.purchasable_material_id = pm.id
   AND (mp.purchase_project_name = '' OR mp.purchase_item_name = '' OR mp.purchase_project_name = pm.project_name);
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS requester_id uuid REFERENCES users(id);
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS requester_phone text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS requester_email text NOT NULL DEFAULT '';
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS group_name text NOT NULL DEFAULT '默认归属';
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS estimated_unit_price numeric(12,2) NOT NULL DEFAULT 0;
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS supplier text NOT NULL DEFAULT '';
@@ -672,7 +676,9 @@ UPDATE users SET tenant_id = '00000000-0000-0000-0000-000000000001' WHERE tenant
 ALTER TABLE users ALTER COLUMN tenant_id SET DEFAULT '00000000-0000-0000-0000-000000000001';
 ALTER TABLE users ALTER COLUMN tenant_id SET NOT NULL;
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;
+DROP INDEX IF EXISTS users_tenant_email_unique;
 CREATE UNIQUE INDEX IF NOT EXISTS users_tenant_email_unique ON users (tenant_id, lower(email));
+CREATE UNIQUE INDEX IF NOT EXISTS users_tenant_dingtalk_user_unique ON users (tenant_id, dingtalk_user_id) WHERE dingtalk_user_id <> '';
 
 ALTER TABLE instruments ADD COLUMN IF NOT EXISTS tenant_id uuid REFERENCES tenants(id);
 UPDATE instruments SET tenant_id = '00000000-0000-0000-0000-000000000001' WHERE tenant_id IS NULL;
@@ -1109,6 +1115,14 @@ UPDATE material_purchases mp SET tenant_id = m.tenant_id FROM materials m WHERE 
 UPDATE material_purchases SET tenant_id = '00000000-0000-0000-0000-000000000001' WHERE tenant_id IS NULL;
 ALTER TABLE material_purchases ALTER COLUMN tenant_id SET DEFAULT '00000000-0000-0000-0000-000000000001';
 ALTER TABLE material_purchases ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS requester_phone text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS requester_email text NOT NULL DEFAULT '';
+UPDATE material_purchases mp
+SET requester_phone = COALESCE(NULLIF(mp.requester_phone, ''), u.phone),
+    requester_email = COALESCE(NULLIF(mp.requester_email, ''), u.email)
+FROM users u
+WHERE mp.requester_id = u.id
+  AND (mp.requester_phone = '' OR mp.requester_email = '');
 UPDATE material_purchases mp
 SET purchase_project_name = COALESCE(NULLIF(purchase_project_name, ''), m.name),
     purchase_item_name = COALESCE(NULLIF(purchase_item_name, ''), NULLIF(purchase_project_name, ''), m.name),

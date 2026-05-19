@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Building2, UsersRound } from "lucide-react";
 import { AdminShell, requireAdminSection } from "@/components/admin-shell";
-import { UserReviewActions } from "@/components/user-review-actions";
+import { UserCreateForm, UserReviewActions } from "@/components/user-review-actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { roleLabel } from "@/lib/permissions";
@@ -57,10 +57,13 @@ export default async function AdminUsersPage({
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
         <Card className="min-w-0">
           <CardHeader>
-            <CardTitle className="flex min-w-0 items-center gap-2">
-              <UsersRound className="h-5 w-5 text-primary" />
-              <span className="min-w-0 break-words">用户审核与角色分配</span>
-            </CardTitle>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle className="flex min-w-0 items-center gap-2">
+                <UsersRound className="h-5 w-5 text-primary" />
+                <span className="min-w-0 break-words">用户审核与角色分配</span>
+              </CardTitle>
+              <UserCreateForm currentUser={currentUser} departments={departments.map((item) => item.name)} tenants={tenants} />
+            </div>
           </CardHeader>
           <CardContent>
             <form action="/admin/users" className="mb-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_180px_auto]">

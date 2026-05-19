@@ -838,10 +838,15 @@ function MaterialFields({ material, categories, productType, purchasableMaterial
   const [selectedCategory, setSelectedCategory] = useState(material?.category ?? "");
   const [selectedSubcategory, setSelectedSubcategory] = useState(material?.subcategory ?? "");
   const [selectedPurchasableId, setSelectedPurchasableId] = useState("");
+  const [purchasableSearch, setPurchasableSearch] = useState("");
   const [standardCertificateUrl, setStandardCertificateUrl] = useState(material?.standardCertificateUrl ?? "");
   const [certificateUploadMessage, setCertificateUploadMessage] = useState("");
   const [certificateUploading, setCertificateUploading] = useState(false);
   const selectedPurchasable = purchasableMaterials.find((item) => item.id === selectedPurchasableId);
+  const purchasableQuery = purchasableSearch.trim().toLowerCase();
+  const visiblePurchasableMaterials = purchasableQuery === ""
+    ? purchasableMaterials.slice(0, 8)
+    : purchasableMaterials.filter((item) => purchasableMaterialSearchText(item).includes(purchasableQuery)).slice(0, 8);
   const purchasableKey = material?.id ?? selectedPurchasable?.id ?? "manual";
   const primaryDirectories = materialDirectoryOptions(categories, "", material?.category);
   const secondaryDirectories = selectedCategory ? materialDirectoryOptions(categories, selectedCategory, material?.subcategory) : material?.subcategory ? [material.subcategory] : [];
@@ -879,18 +884,40 @@ function MaterialFields({ material, categories, productType, purchasableMaterial
   return (
     <>
       {!material && purchasableMaterials.length > 0 ? (
-        <label className="block min-w-0 space-y-2">
-          <span className="text-sm font-medium">从可采购物资目录带出</span>
-          <select className="h-10 w-full rounded-md border bg-white px-3 text-sm" onChange={(event) => setSelectedPurchasableId(event.target.value)} value={selectedPurchasableId}>
-            <option value="">手动填写</option>
-            {purchasableMaterials.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.idNo} / {item.projectName} / {item.brand} / {item.spec} / {item.unit}
-              </option>
+        <div className="space-y-3 rounded-lg border bg-slate-50 p-3">
+          <label className="block min-w-0 space-y-2">
+            <span className="text-sm font-medium">从可采购物资目录带出</span>
+            <input
+              className="h-10 w-full rounded-md border bg-white px-3 text-sm"
+              onChange={(event) => setPurchasableSearch(event.target.value)}
+              placeholder="搜索ID号、序号、项目、品牌、规格、采购项目"
+              value={purchasableSearch}
+            />
+          </label>
+          <div className="grid max-h-56 gap-2 overflow-y-auto">
+            <button className="rounded-md border bg-white px-3 py-2 text-left text-sm hover:bg-slate-100" onClick={() => setSelectedPurchasableId("")} type="button">
+              手动填写
+            </button>
+            {visiblePurchasableMaterials.map((item) => (
+              <button
+                className={`rounded-md border px-3 py-2 text-left text-sm hover:bg-slate-100 ${item.id === selectedPurchasableId ? "border-primary bg-primary/5" : "bg-white"}`}
+                key={item.id}
+                onClick={() => {
+                  setSelectedPurchasableId(item.id);
+                  setPurchasableSearch(purchasableMaterialOptionLabel(item));
+                }}
+                type="button"
+              >
+                <span className="block break-words font-medium text-slate-900">{purchasableMaterialOptionLabel(item)}</span>
+                <span className="mt-1 block break-words text-xs text-slate-500">{item.procurementProject || "未登记采购项目名称及编号"}</span>
+              </button>
             ))}
-          </select>
-          {selectedPurchasable ? <FieldHint value={`采购项目名称及编号：${selectedPurchasable.procurementProject || "未登记"}`} /> : null}
-        </label>
+          </div>
+          {selectedPurchasable ? <FieldHint value={`已选择：${purchasableMaterialOptionLabel(selectedPurchasable)}；采购项目名称及编号：${selectedPurchasable.procurementProject || "未登记"}`} /> : null}
+        </div>
+      ) : null}
+      {!material ? (
+        <Field label="申购流水号" name="purchaseSerialNo" placeholder="填写申购单ID、ID号或序号后自动匹配采购人和采购目录" />
       ) : null}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         <Field defaultValue={material?.name ?? selectedPurchasable?.projectName} key={`name-${purchasableKey}`} label="资源名称" name="name" placeholder="填写资源名称" required />
@@ -1134,6 +1161,7 @@ function materialPayload(form: FormData, fallbackStatus: string): MaterialPayloa
     standardCertificateUrl: String(form.get("standardCertificateUrl") ?? ""),
     attachmentUrl: String(form.get("attachmentUrl") ?? ""),
     qrCode: String(form.get("qrCode") ?? ""),
+    purchaseSerialNo: String(form.get("purchaseSerialNo") ?? ""),
     expiresAt: String(form.get("expiresAt") ?? ""),
     openedAt: String(form.get("openedAt") ?? ""),
     openExpireDays: Number(form.get("openExpireDays") ?? 0),
@@ -1177,6 +1205,25 @@ function productTypeLabel(productType: string) {
     standard: "标准品/标准物质",
   };
   return labels[productType] ?? productType;
+}
+
+function purchasableMaterialOptionLabel(item: PurchasableMaterial) {
+  return [item.idNo, item.sequenceNo, item.projectName, item.brand, item.spec, item.unit].filter(Boolean).join(" / ");
+}
+
+function purchasableMaterialSearchText(item: PurchasableMaterial) {
+  return [
+    item.idNo,
+    item.sequenceNo,
+    item.procurementProject,
+    item.projectName,
+    item.brand,
+    item.spec,
+    item.unit,
+    item.remark,
+    item.technicalRequirement,
+    item.minSpec,
+  ].join(" ").toLowerCase();
 }
 
 function materialDirectoryOptions(categories: MaterialCategory[], parentName: string, current?: string) {

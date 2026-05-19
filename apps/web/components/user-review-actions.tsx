@@ -2,8 +2,8 @@
 
 import { FormEvent, startTransition, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Pencil, Save, Trash2 } from "lucide-react";
-import { browserDelete, browserPatch, browserPost, OrganizationUnit, Tenant, User, UserMembershipPayload, UserReviewPayload } from "@/lib/api";
+import { Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { browserDelete, browserPatch, browserPost, OrganizationUnit, Tenant, User, UserCreatePayload, UserMembershipPayload, UserReviewPayload } from "@/lib/api";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 import { isTenantAdminRole, roleLabel } from "@/lib/permissions";
@@ -28,6 +28,152 @@ const systemAdminRoles = [
 ];
 
 const membershipRoles = [...baseRoles, ...scopedAdminRoles, ["tenant_admin", "机构管理员"], ["lab_admin", "实验室管理员"]];
+
+export function UserCreateForm({ currentUser, departments, tenants }: { currentUser: User; departments: string[]; tenants: Tenant[] }) {
+  const router = useRouter();
+  const isSuperAdmin = currentUser.role === "super_admin";
+  const tenantOptions = isSuperAdmin ? tenants : [];
+  const [selectedTenantId, setSelectedTenantId] = useState(currentUser.tenantId);
+  const [departmentOptions, setDepartmentOptions] = useState(() => mergeOptions(departments, currentUser.department));
+  const [selectedDepartment, setSelectedDepartment] = useState(currentUser.department || departments[0] || "");
+  const [message, setMessage] = useState("");
+  const [pending, setPending] = useState(false);
+  const roles = isSuperAdmin ? [...baseRoles, ...scopedAdminRoles, ...systemAdminRoles] : [...baseRoles, ...scopedAdminRoles];
+
+  useEffect(() => {
+    if (!isSuperAdmin || selectedTenantId === currentUser.tenantId) {
+      const nextOptions = mergeOptions(departments, selectedDepartment);
+      setDepartmentOptions(nextOptions);
+      if (!nextOptions.includes(selectedDepartment)) {
+        setSelectedDepartment(nextOptions[0] ?? "");
+      }
+      return;
+    }
+    const controller = new AbortController();
+    fetch(`/api/organization-units?kind=department&tenantId=${encodeURIComponent(selectedTenantId)}`, {
+      signal: controller.signal,
+    })
+      .then((response) => (response.ok ? response.json() : []))
+      .then((items: OrganizationUnit[]) => {
+        const nextOptions = mergeOptions(items.map((item) => item.name), "");
+        setDepartmentOptions(nextOptions);
+        setSelectedDepartment((current) => (nextOptions.includes(current) ? current : nextOptions[0] ?? ""));
+      })
+      .catch((error) => {
+        if ((error as Error).name !== "AbortError") {
+          setDepartmentOptions([]);
+          setSelectedDepartment("");
+        }
+      });
+    return () => controller.abort();
+  }, [currentUser.tenantId, departments, isSuperAdmin, selectedDepartment, selectedTenantId]);
+
+  async function submit(event: FormEvent<HTMLFormElement>, close?: () => void) {
+    event.preventDefault();
+    setPending(true);
+    setMessage("");
+    const form = new FormData(event.currentTarget);
+    const payload: UserCreatePayload = {
+      tenantId: isSuperAdmin ? String(form.get("tenantId") ?? selectedTenantId) : currentUser.tenantId,
+      name: String(form.get("name") ?? ""),
+      phone: String(form.get("phone") ?? ""),
+      email: String(form.get("email") ?? ""),
+      password: String(form.get("password") ?? ""),
+      department: String(form.get("department") ?? selectedDepartment),
+      groupName: "",
+      role: String(form.get("role") ?? "unassigned"),
+      status: String(form.get("status") ?? "active"),
+    };
+    try {
+      const created = await browserPost<User>("/api/users", payload);
+      setMessage(`已新增：${created.name}`);
+      close?.();
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "新增失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <AdminDialog
+        description="后台新增人员会直接创建账号，并按所选机构、部门、角色和状态写入人员列表。"
+        maxWidth="max-w-3xl"
+        title="手动添加人员"
+        trigger={
+          <Button className="w-full sm:w-auto" size="sm">
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            添加人员
+          </Button>
+        }
+      >
+        {(close) => (
+          <form className="space-y-4" onSubmit={(event) => submit(event, close)}>
+            <div className="grid gap-4 md:grid-cols-2">
+              {isSuperAdmin ? (
+                <label className="block min-w-0 space-y-2">
+                  <span className="text-sm font-medium">所属机构</span>
+                  <select className="h-10 w-full min-w-0 rounded-md border bg-white px-3 text-sm" name="tenantId" onChange={(event) => setSelectedTenantId(event.currentTarget.value)} value={selectedTenantId}>
+                    {mergeTenants(tenantOptions, currentUser).map((tenant) => (
+                      <option key={tenant.id} value={tenant.id}>
+                        {tenant.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <input name="tenantId" type="hidden" value={currentUser.tenantId} />
+              )}
+              <Field label="姓名" name="name" placeholder="填写姓名" required />
+              <Field label="邮箱" name="email" placeholder="填写邮箱" required type="email" />
+              <Field label="手机号" name="phone" placeholder="填写手机号" required type="tel" />
+              <Field label="初始密码" name="password" placeholder="至少 8 位" required type="password" />
+              <label className="block min-w-0 space-y-2">
+                <span className="text-sm font-medium">部门</span>
+                <select className="h-10 w-full min-w-0 rounded-md border bg-white px-3 text-sm" name="department" onChange={(event) => setSelectedDepartment(event.currentTarget.value)} required value={selectedDepartment}>
+                  {departmentOptions.map((department) => (
+                    <option key={department} value={department}>
+                      {department}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block min-w-0 space-y-2">
+                <span className="text-sm font-medium">角色</span>
+                <select className="h-10 w-full min-w-0 rounded-md border bg-white px-3 text-sm" defaultValue="unassigned" name="role">
+                  {roles.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block min-w-0 space-y-2">
+                <span className="text-sm font-medium">账号状态</span>
+                <select className="h-10 w-full min-w-0 rounded-md border bg-white px-3 text-sm" defaultValue="active" name="status">
+                  <option value="pending_approval">待审核</option>
+                  <option value="active">启用</option>
+                  <option value="disabled">停用</option>
+                </select>
+              </label>
+            </div>
+            <div className="flex justify-end">
+              <Button className="w-full sm:w-auto" disabled={pending} type="submit">
+                <Save className="h-4 w-4" aria-hidden="true" />
+                {pending ? "新增中..." : "新增人员"}
+              </Button>
+            </div>
+          </form>
+        )}
+      </AdminDialog>
+      {message ? <p className="text-xs text-slate-500">{message}</p> : null}
+    </div>
+  );
+}
 
 export function UserReviewActions({
   currentUser,
@@ -446,18 +592,22 @@ function Field({
   defaultValue,
   label,
   name,
+  placeholder,
+  required = true,
   type = "text",
 }: {
-  defaultValue: string;
+  defaultValue?: string;
   label: string;
   name: string;
+  placeholder?: string;
+  required?: boolean;
   type?: string;
 }) {
   return (
     <label className="block min-w-0 space-y-2">
       <span className="text-sm font-medium">{label}</span>
-      <input className="h-10 w-full min-w-0 rounded-md border bg-white px-3 text-sm" defaultValue={defaultValue} name={name} required type={type} />
-      <FieldHint value={`当前：${formatCurrent(defaultValue)}`} />
+      <input className="h-10 w-full min-w-0 rounded-md border bg-white px-3 text-sm" defaultValue={defaultValue ?? ""} name={name} placeholder={placeholder} required={required} type={type} />
+      {defaultValue !== undefined ? <FieldHint value={`当前：${formatCurrent(defaultValue)}`} /> : null}
     </label>
   );
 }

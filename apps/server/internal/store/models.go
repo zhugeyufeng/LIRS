@@ -332,6 +332,20 @@ type RegisterInput struct {
 	VerificationCode string `json:"verificationCode"`
 }
 
+type UserCreateInput struct {
+	TenantID   string `json:"tenantId"`
+	Name       string `json:"name"`
+	Phone      string `json:"phone"`
+	Email      string `json:"email"`
+	Password   string `json:"password"`
+	Department string `json:"department"`
+	GroupName  string `json:"groupName"`
+	Role       string `json:"role"`
+	Status     string `json:"status"`
+	Actor      string `json:"actor"`
+	ActorRole  string `json:"-"`
+}
+
 type EmailVerificationCodeInput struct {
 	TenantID   string `json:"tenantId"`
 	TenantCode string `json:"tenantCode"`
@@ -662,6 +676,7 @@ type MaterialInput struct {
 	StandardCertificateURL string  `json:"standardCertificateUrl"`
 	AttachmentURL          string  `json:"attachmentUrl"`
 	QRCode                 string  `json:"qrCode"`
+	PurchaseSerialNo       string  `json:"purchaseSerialNo"`
 	ExpiresAt              string  `json:"expiresAt"`
 	OpenedAt               string  `json:"openedAt"`
 	OpenExpireDays         int     `json:"openExpireDays"`
@@ -889,6 +904,8 @@ type MaterialPurchase struct {
 	PurchaseMinSpec              string    `json:"purchaseMinSpec"`
 	RequesterID                  string    `json:"requesterId,omitempty"`
 	Requester                    string    `json:"requester"`
+	RequesterPhone               string    `json:"requesterPhone"`
+	RequesterEmail               string    `json:"requesterEmail"`
 	GroupName                    string    `json:"groupName"`
 	Quantity                     int       `json:"quantity"`
 	EstimatedUnitPrice           float64   `json:"estimatedUnitPrice"`
@@ -901,6 +918,7 @@ type MaterialPurchase struct {
 type MaterialPurchaseInput struct {
 	MaterialID            string  `json:"materialId"`
 	PurchasableMaterialID string  `json:"purchasableMaterialId"`
+	PurchaseSerialNo      string  `json:"purchaseSerialNo"`
 	RequesterID           string  `json:"requesterId"`
 	Requester             string  `json:"requester"`
 	Quantity              int     `json:"quantity"`

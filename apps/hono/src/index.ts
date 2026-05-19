@@ -241,6 +241,17 @@ const userReviewSchema = z.object({
   phone: z.string().min(1),
   status: z.enum(["pending_approval", "active", "disabled"]),
 });
+const userCreateSchema = z.object({
+  tenantId: z.string().optional().default(""),
+  name: z.string().min(1),
+  phone: z.string().min(1),
+  email: z.string().email(),
+  password: z.string().min(8),
+  department: z.string().min(1),
+  groupName: z.string().optional().default(""),
+  role: z.enum(["unassigned", "student", "teacher", "researcher", "group_leader", "material_admin", "finance_admin", "tenant_admin", "lab_admin", "super_admin"]),
+  status: z.enum(["pending_approval", "active", "disabled"]).optional().default("active"),
+});
 const userMembershipSchema = z.object({
   tenantId: z.string().min(1),
   role: z.enum(["unassigned", "student", "teacher", "researcher", "group_leader", "material_admin", "finance_admin", "tenant_admin", "lab_admin"]),
@@ -302,6 +313,7 @@ const materialSchema = z.object({
   standardCertificateUrl: z.string().optional().default(""),
   attachmentUrl: z.string().optional().default(""),
   qrCode: z.string().optional().default(""),
+  purchaseSerialNo: z.string().optional().default(""),
   expiresAt: z.string().optional().default("").refine((value) => value.trim() === "" || !Number.isNaN(Date.parse(value)), "expiresAt must be a valid date"),
   openedAt: z.string().optional().default("").refine((value) => value.trim() === "" || !Number.isNaN(Date.parse(value)), "openedAt must be a valid date"),
   openExpireDays: z.coerce.number().int().nonnegative().optional().default(0),
@@ -332,6 +344,7 @@ const materialRequestSchema = z.object({
 const materialPurchaseSchema = z.object({
   materialId: z.string().optional().default(""),
   purchasableMaterialId: z.string().optional().default(""),
+  purchaseSerialNo: z.string().optional().default(""),
   requesterId: z.string().optional().default(""),
   requester: z.string().optional().default(""),
   quantity: z.coerce.number().int().positive(),
@@ -431,6 +444,7 @@ app.patch("/api/reservations/:id/reject", validateAndProxy(reservationDecisionSc
 app.patch("/api/reservations/:id/check-in", validateOptionalJsonAndProxy(emptyJsonObject));
 app.patch("/api/reservations/:id/check-out", validateOptionalJsonAndProxy(emptyJsonObject));
 app.patch("/api/reservations/:id/cancel", validateOptionalJsonAndProxy(reservationCancelSchema));
+app.post("/api/users", validateAndProxy(userCreateSchema));
 app.patch("/api/users/:id/review", validateAndProxy(userReviewSchema));
 app.post("/api/users/:id/memberships", validateAndProxy(userMembershipSchema));
 app.delete("/api/users/:id", proxyToGo);
