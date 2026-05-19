@@ -177,6 +177,63 @@ func TestMaterialImportRecordsSupportXLSX(t *testing.T) {
 	}
 }
 
+func TestMaterialImportRecordsSupportRealStandardXLS(t *testing.T) {
+	t.Parallel()
+
+	content, err := os.ReadFile("../../../../库存导出.xls")
+	if err != nil {
+		t.Skipf("跳过真实标准品 XLS 解析测试：%v", err)
+	}
+	if !looksLikeXLS(content) {
+		t.Fatal("真实标准品样本应识别为 XLS")
+	}
+	records, err := purchasableMaterialImportRecords("库存导出.xls", content)
+	if err != nil {
+		t.Fatalf("读取真实标准品 XLS 失败：%v", err)
+	}
+	headerIndex := -1
+	for i, row := range records {
+		if materialLooksLikeHeader(row) {
+			headerIndex = i
+			break
+		}
+	}
+	if headerIndex < 0 {
+		t.Fatalf("真实标准品 XLS 未找到资源导入表头，行数=%d", len(records))
+	}
+	header := materialImportHeaderIndex(records[headerIndex])
+	parsed := 0
+	for _, row := range records[headerIndex+1:] {
+		if rowBlank(row) {
+			continue
+		}
+		input := materialInputFromCSVRow(header, row)
+		if input.Name == "" || input.Category == "" || input.Spec == "" || input.Unit == "" {
+			continue
+		}
+		parsed++
+	}
+	if parsed == 0 {
+		t.Fatal("真实标准品 XLS 未解析到可导入资源行")
+	}
+}
+
+func TestMaterialImportRecordsDetectsOLEContentWithoutXLSFilename(t *testing.T) {
+	t.Parallel()
+
+	content, err := os.ReadFile("../../../../库存导出.xls")
+	if err != nil {
+		t.Skipf("跳过真实标准品 XLS 解析测试：%v", err)
+	}
+	records, err := purchasableMaterialImportRecords("库存导出", content)
+	if err != nil {
+		t.Fatalf("应根据 OLE 文件头识别 XLS：%v", err)
+	}
+	if len(records) == 0 {
+		t.Fatal("expected records from OLE content")
+	}
+}
+
 func TestMaterialBatchHelpers(t *testing.T) {
 	t.Parallel()
 

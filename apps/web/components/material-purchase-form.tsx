@@ -498,16 +498,22 @@ function PurchasableMaterialImportForm() {
     event.preventDefault();
     const file = new FormData(event.currentTarget).get("file");
     if (!(file instanceof File) || file.size === 0) {
-      setMessage("请选择 CSV 或 XLSX 文件");
+      setMessage("请选择 CSV、XLS 或 XLSX 文件");
       return;
     }
+    const lowerName = file.name.toLowerCase();
+    const contentType = lowerName.endsWith(".xlsx")
+      ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      : lowerName.endsWith(".xls")
+        ? "application/vnd.ms-excel"
+        : "text/csv; charset=utf-8";
     setPending(true);
     setMessage("");
     try {
       const response = await fetch(`/api/purchasable-materials/import?filename=${encodeURIComponent(file.name)}`, {
         body: await file.arrayBuffer(),
         credentials: "include",
-        headers: { "Content-Type": file.name.endsWith(".xlsx") ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8" },
+        headers: { "Content-Type": contentType },
         method: "POST",
       });
       const result = await response.json().catch(() => null) as (MaterialImportResult & { error?: string }) | null;
@@ -533,7 +539,7 @@ function PurchasableMaterialImportForm() {
   return (
     <div className="space-y-1">
       <AdminDialog
-        description="支持 CSV 和 XLSX；单独一行的采购项目名称及编号会作为后续物资的采购项目字段，直到下一条项目行。"
+        description="支持 CSV、XLS 和 XLSX；单独一行的采购项目名称及编号会作为后续物资的采购项目字段，直到下一条项目行。"
         title="批量导入可采购物资"
         trigger={
           <Button className="w-full sm:w-auto" type="button" variant="outline">
@@ -544,7 +550,7 @@ function PurchasableMaterialImportForm() {
       >
         {(close) => (
           <form className="space-y-4" onSubmit={(event) => submit(event, close)}>
-            <input accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="w-full rounded-md border bg-white px-3 py-2 text-sm" name="file" required type="file" />
+            <input accept=".csv,text/csv,.xls,application/vnd.ms-excel,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="w-full rounded-md border bg-white px-3 py-2 text-sm" name="file" required type="file" />
             <div className="flex justify-end">
               <Button disabled={pending} type="submit">
                 {pending ? "导入中..." : "开始导入"}

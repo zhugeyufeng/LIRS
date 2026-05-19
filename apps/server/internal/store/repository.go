@@ -27,6 +27,7 @@ import (
 	"time"
 	"unicode"
 
+	xls "github.com/extrame/xls"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -10041,22 +10042,23 @@ func materialCSVBool(index map[string]int, row []string, names ...string) bool {
 
 func materialLooksLikeHeader(row []string) bool {
 	joined := strings.Join(row, "|")
-	return strings.Contains(joined, "资源名称") && strings.Contains(joined, "一级目录") && strings.Contains(joined, "规格") && strings.Contains(joined, "单位")
+	return (strings.Contains(joined, "资源名称") && strings.Contains(joined, "一级目录") && strings.Contains(joined, "规格") && strings.Contains(joined, "单位")) ||
+		(strings.Contains(joined, "类别") && strings.Contains(joined, "产品名") && strings.Contains(joined, "规格型号") && strings.Contains(joined, "数量单位"))
 }
 
 func materialInputFromCSVRow(index map[string]int, row []string) MaterialInput {
 	procurementProject := materialCSVValue(index, row, "采购项目名称及编号", "采购项目", "采购项目及编号", "招标合同", "tenderContract")
 	return normalizeMaterial(MaterialInput{
-		Name:                   materialCSVValue(index, row, "资源名称", "产品名称", "名称", "name"),
-		ProductType:            productTypeCode(materialCSVValue(index, row, "资源类型", "产品分类", "产品类型", "类型", "productType")),
-		Category:               materialCSVValue(index, row, "一级目录", "一级分类", "分类", "category"),
+		Name:                   materialCSVValue(index, row, "资源名称", "产品名称", "产品名", "名称", "name"),
+		ProductType:            productTypeCode(materialCSVValue(index, row, "资源类型", "产品分类", "产品类型", "类型", "类别", "productType")),
+		Category:               materialCSVValue(index, row, "一级目录", "一级分类", "分类", "类别", "category"),
 		Subcategory:            materialCSVValue(index, row, "二级目录", "二级分类", "子分类", "subcategory"),
-		Spec:                   materialCSVValue(index, row, "规格", "spec"),
-		Unit:                   materialCSVValue(index, row, "单位", "unit"),
+		Spec:                   materialCSVValue(index, row, "规格", "规格型号", "spec"),
+		Unit:                   materialCSVValue(index, row, "单位", "数量单位", "unit"),
 		UnitPrice:              materialCSVFloat(index, row, 0, "单价", "unitPrice"),
-		Stock:                  materialCSVInt(index, row, 0, "库存", "初始库存", "stock"),
+		Stock:                  materialCSVInt(index, row, 0, "库存", "初始库存", "数量", "stock"),
 		WarningLine:            materialCSVInt(index, row, 0, "低库存线", "库存告警线", "warningLine"),
-		Supplier:               materialCSVValue(index, row, "供应商", "supplier"),
+		Supplier:               materialCSVValue(index, row, "供应商", "供应商名", "supplier"),
 		Manufacturer:           materialCSVValue(index, row, "生产商", "manufacturer"),
 		BatchNo:                materialCSVValue(index, row, "批号", "批次号", "batchNo"),
 		CatalogNo:              materialCSVValue(index, row, "货号", "catalogNo"),
@@ -10067,7 +10069,7 @@ func materialInputFromCSVRow(index map[string]int, row []string) MaterialInput {
 		DilutionFactor:         materialCSVValue(index, row, "稀释倍数", "dilutionFactor"),
 		PreparationMethod:      materialCSVValue(index, row, "配制方法", "preparationMethod"),
 		StorageCondition:       materialCSVValue(index, row, "保存条件", "storageCondition"),
-		StorageRoom:            materialCSVValue(index, row, "库房/冰箱", "库房", "storageRoom"),
+		StorageRoom:            materialCSVValue(index, row, "库房/冰箱", "库房", "存放地", "storageRoom"),
 		StorageCabinet:         materialCSVValue(index, row, "柜/架", "storageCabinet"),
 		StorageLayer:           materialCSVValue(index, row, "层/盒", "storageLayer"),
 		StorageSlot:            materialCSVValue(index, row, "孔位", "storageSlot"),
@@ -10078,7 +10080,7 @@ func materialInputFromCSVRow(index map[string]int, row []string) MaterialInput {
 		StandardCertificateURL: materialCSVValue(index, row, "标准证书地址", "standardCertificateUrl"),
 		AttachmentURL:          materialCSVValue(index, row, "附件地址", "attachmentUrl"),
 		QRCode:                 materialCSVValue(index, row, "二维码编码", "qrCode"),
-		ExpiresAt:              materialCSVValue(index, row, "有效期", "expiresAt"),
+		ExpiresAt:              materialCSVValue(index, row, "有效期", "过期时间", "过期时间(yyyy/MM/dd)", "expiresAt"),
 		OpenedAt:               materialCSVValue(index, row, "开封日期", "openedAt"),
 		OpenExpireDays:         materialCSVInt(index, row, 0, "开封有效天数", "openExpireDays"),
 		FreezeThawCount:        materialCSVInt(index, row, 0, "冻融次数", "freezeThawCount"),
@@ -10342,8 +10344,11 @@ func purchasableMaterialImportRecords(filename string, content []byte) ([][]stri
 		}
 		return workbook.GetRows(sheets[0])
 	}
+	if strings.HasSuffix(filename, ".xls") || looksLikeXLS(content) {
+		return xlsImportRecords(content)
+	}
 	if filename != "" && !strings.HasSuffix(filename, ".csv") {
-		return nil, fmt.Errorf("不支持的文件类型 %q，请上传 CSV 或 XLSX 文件", filename)
+		return nil, fmt.Errorf("不支持的文件类型 %q，请上传 CSV、XLS 或 XLSX 文件", filename)
 	}
 	reader := csv.NewReader(strings.NewReader(strings.TrimPrefix(string(content), "\ufeff")))
 	reader.FieldsPerRecord = -1
@@ -10360,8 +10365,54 @@ func normalizeImportFilename(filename string) string {
 	return strings.ToLower(filename)
 }
 
+func xlsImportRecords(content []byte) ([][]string, error) {
+	workbook, err := xls.OpenReader(bytes.NewReader(content), "utf-8")
+	if err != nil {
+		return nil, fmt.Errorf("无法读取 XLS 文件：%w", err)
+	}
+	if workbook == nil || workbook.NumSheets() == 0 {
+		return nil, errors.New("XLS 文件没有工作表")
+	}
+	sheet := workbook.GetSheet(0)
+	if sheet == nil {
+		return nil, errors.New("XLS 文件没有工作表")
+	}
+	records := make([][]string, 0, int(sheet.MaxRow)+1)
+	for rowIndex := 0; rowIndex <= int(sheet.MaxRow); rowIndex++ {
+		row := xlsImportRow(sheet, rowIndex)
+		if row == nil {
+			records = append(records, nil)
+			continue
+		}
+		lastCol := row.LastCol()
+		if lastCol < 0 {
+			records = append(records, nil)
+			continue
+		}
+		values := make([]string, lastCol)
+		for colIndex := 0; colIndex < lastCol; colIndex++ {
+			values[colIndex] = strings.TrimSpace(row.Col(colIndex))
+		}
+		records = append(records, values)
+	}
+	return records, nil
+}
+
+func xlsImportRow(sheet *xls.WorkSheet, rowIndex int) (row *xls.Row) {
+	defer func() {
+		if recover() != nil {
+			row = nil
+		}
+	}()
+	return sheet.Row(rowIndex)
+}
+
 func looksLikeXLSX(content []byte) bool {
 	return len(content) >= 4 && bytes.Equal(content[:4], []byte{'P', 'K', 0x03, 0x04})
+}
+
+func looksLikeXLS(content []byte) bool {
+	return len(content) >= 8 && bytes.Equal(content[:8], []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1})
 }
 
 func limitStrings(values []string, limit int) []string {
@@ -10394,7 +10445,7 @@ func productTypeCode(value string) string {
 		return "consumable"
 	case "普通试剂", "试剂", "reagent":
 		return "reagent"
-	case "标准物质", "标准品", "标准", "工作液", "混标", "standard", "working_solution", "mixed_standard":
+	case "标准物质", "标准品", "标准品/标准物质", "标准", "工作液", "混标", "standard", "working_solution", "mixed_standard":
 		return "standard"
 	default:
 		return value

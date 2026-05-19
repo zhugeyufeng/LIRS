@@ -517,16 +517,22 @@ export function MaterialImportForm() {
     event.preventDefault();
     const file = new FormData(event.currentTarget).get("file");
     if (!(file instanceof File) || file.size === 0) {
-      setMessage("请选择 CSV 或 XLSX 文件");
+      setMessage("请选择 CSV、XLS 或 XLSX 文件");
       return;
     }
+    const lowerName = file.name.toLowerCase();
+    const contentType = lowerName.endsWith(".xlsx")
+      ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      : lowerName.endsWith(".xls")
+        ? "application/vnd.ms-excel"
+        : "text/csv; charset=utf-8";
     setPending(true);
     setMessage("");
     try {
       const response = await fetch(`/api/materials/import?filename=${encodeURIComponent(file.name)}`, {
         body: await file.arrayBuffer(),
         credentials: "include",
-        headers: { "Content-Type": file.name.endsWith(".xlsx") ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8" },
+        headers: { "Content-Type": contentType },
         method: "POST",
       });
       const result = await response.json().catch(() => null) as (MaterialImportResult & { error?: string }) | null;
@@ -554,7 +560,7 @@ export function MaterialImportForm() {
   return (
     <div className="space-y-1">
       <AdminDialog
-        description="支持 CSV 和 XLSX；相同二维码或相同资源名称加批号会更新现有记录。"
+        description="支持 CSV、XLS 和 XLSX；相同二维码或相同资源名称加批号会更新现有记录。"
         title="导入资源"
         trigger={
           <Button className="h-10 w-full sm:h-8 sm:w-auto" size="sm" type="button" variant="outline">
@@ -565,7 +571,7 @@ export function MaterialImportForm() {
       >
         {(close) => (
           <form className="space-y-4" onSubmit={(event) => submit(event, close)}>
-            <input accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="w-full rounded-md border bg-white px-3 py-2 text-sm" name="file" required type="file" />
+            <input accept=".csv,text/csv,.xls,application/vnd.ms-excel,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="w-full rounded-md border bg-white px-3 py-2 text-sm" name="file" required type="file" />
             <div className="flex justify-end">
               <Button className="w-full sm:w-auto" disabled={pending} type="submit">
                 {pending ? "导入中..." : "开始导入"}
