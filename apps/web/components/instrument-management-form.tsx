@@ -2,7 +2,7 @@
 
 import { FormEvent, startTransition, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { browserDelete, browserPatch, browserPost, Instrument, InstrumentPayload, OrganizationUnit } from "@/lib/api";
 import { formatServiceWindow } from "@/lib/instrument-rules";
 import { AdminDialog } from "@/components/admin-dialog";
@@ -139,18 +139,22 @@ export function InstrumentStatusForm({
           <form className="space-y-4" onSubmit={(event) => submit(event, close)}>
             <InstrumentFields departments={departments} groups={groups} instrument={instrument} />
             <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button className="w-full sm:w-auto" disabled={pending} onClick={close} type="button" variant="outline">
+                <X className="h-4 w-4" aria-hidden="true" />
+                取消
+              </Button>
               <Button className="w-full sm:w-auto" disabled={pending} type="submit">
                 <Save className="h-4 w-4" aria-hidden="true" />
                 {pending ? "保存中..." : "保存修改"}
-              </Button>
-              <Button className="w-full sm:w-auto" disabled={pending} onClick={() => deleteInstrument(close)} type="button" variant="destructive">
-                <Trash2 className="h-4 w-4" aria-hidden="true" />
-                删除仪器
               </Button>
             </div>
           </form>
         )}
       </AdminDialog>
+      <Button className="w-full sm:w-auto" disabled={pending} onClick={() => deleteInstrument()} size="sm" type="button" variant="destructive">
+        <Trash2 className="h-4 w-4" aria-hidden="true" />
+        删除仪器
+      </Button>
       {message ? <span className="text-xs text-slate-500">{message}</span> : null}
     </div>
   );

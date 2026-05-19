@@ -1013,7 +1013,13 @@ func (r *Repository) DeleteInstrument(ctx context.Context, id string, actor stri
 		_ = tx.Rollback(ctx)
 	}()
 
-	notifications := make([]Notification, 0)
+	type instrumentDeletionNotice struct {
+		tenantID  string
+		userID    string
+		userName  string
+		groupName string
+	}
+	notices := make([]instrumentDeletionNotice, 0)
 	reservationRows, err := tx.Query(ctx, `
 UPDATE reservations
 SET status = 'cancelled',
@@ -1040,16 +1046,19 @@ RETURNING tenant_id::text, COALESCE(user_id::text, ''), user_name, group_name
 		if userID == "" {
 			continue
 		}
-		notification, err := r.createNotificationTx(ctx, tx, reservationTenantID, userID, groupName, "", "personal", "预约状态更新", fmt.Sprintf("%s 的 %s 预约状态已更新为已取消，原因：关联仪器已删除。", userName, oldItem.Name), "warning")
-		if err != nil {
-			reservationRows.Close()
-			return Instrument{}, err
-		}
-		notifications = append(notifications, notification)
+		notices = append(notices, instrumentDeletionNotice{tenantID: reservationTenantID, userID: userID, userName: userName, groupName: groupName})
 	}
 	reservationRows.Close()
 	if err := reservationRows.Err(); err != nil {
 		return Instrument{}, err
+	}
+	notifications := make([]Notification, 0, len(notices))
+	for _, notice := range notices {
+		notification, err := r.createNotificationTx(ctx, tx, notice.tenantID, notice.userID, notice.groupName, "", "personal", "预约状态更新", fmt.Sprintf("%s 的 %s 预约状态已更新为已取消，原因：关联仪器已删除。", notice.userName, oldItem.Name), "warning")
+		if err != nil {
+			return Instrument{}, err
+		}
+		notifications = append(notifications, notification)
 	}
 	if _, err := tx.Exec(ctx, `
 UPDATE reservations
