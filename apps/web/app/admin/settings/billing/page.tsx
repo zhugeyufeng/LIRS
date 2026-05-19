@@ -10,11 +10,11 @@ export default async function BillingSettingsPage() {
   const visibleTenants = currentUser.role === "super_admin" ? tenants : tenants.filter((tenant) => tenant.id === currentUser.tenantId);
 
   return (
-    <AdminShell active="settings" title="财务模块开关" description="按机构启用或停用财务模块；停用后财务菜单和财务接口会按租户关闭。">
+    <AdminShell active="settings" title="财务模块开关" description="按单位/机构启用或停用财务模块；停用后财务菜单和财务接口会按机构关闭。">
       <AdminSettingsNav active="billing" role={currentUser.role} />
       <Card>
         <CardHeader>
-          <CardTitle>机构财务配置</CardTitle>
+          <CardTitle>单位/机构财务配置</CardTitle>
         </CardHeader>
         <CardContent>
           <TenantManagement currentUser={currentUser} tenants={visibleTenants} />

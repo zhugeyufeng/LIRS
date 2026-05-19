@@ -113,7 +113,7 @@ ALTER TABLE users ADD CONSTRAINT users_status_check CHECK (status IN ('pending_a
 CREATE TABLE IF NOT EXISTS reservations (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id uuid REFERENCES users(id),
-    instrument_id uuid NOT NULL REFERENCES instruments(id),
+    instrument_id uuid REFERENCES instruments(id) ON DELETE SET NULL,
     user_name text NOT NULL,
     group_name text NOT NULL DEFAULT '默认归属',
     purpose text NOT NULL,
@@ -304,7 +304,7 @@ CREATE TABLE IF NOT EXISTS approval_actions (
 
 CREATE TABLE IF NOT EXISTS maintenance_orders (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    instrument_id uuid NOT NULL REFERENCES instruments(id),
+    instrument_id uuid REFERENCES instruments(id) ON DELETE SET NULL,
     type text NOT NULL CHECK (type IN ('routine', 'fault', 'emergency')),
     priority text NOT NULL DEFAULT 'normal',
     status text NOT NULL DEFAULT 'reported' CHECK (status IN ('reported', 'assigned', 'in_progress', 'completed', 'cancelled')),
@@ -692,6 +692,9 @@ UPDATE reservations r SET tenant_id = i.tenant_id FROM instruments i WHERE r.ins
 UPDATE reservations SET tenant_id = '00000000-0000-0000-0000-000000000001' WHERE tenant_id IS NULL;
 ALTER TABLE reservations ALTER COLUMN tenant_id SET DEFAULT '00000000-0000-0000-0000-000000000001';
 ALTER TABLE reservations ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE reservations ALTER COLUMN instrument_id DROP NOT NULL;
+ALTER TABLE reservations DROP CONSTRAINT IF EXISTS reservations_instrument_id_fkey;
+ALTER TABLE reservations ADD CONSTRAINT reservations_instrument_id_fkey FOREIGN KEY (instrument_id) REFERENCES instruments(id) ON DELETE SET NULL;
 
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS tenant_id uuid REFERENCES tenants(id);
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
@@ -946,6 +949,9 @@ UPDATE maintenance_orders mo SET tenant_id = i.tenant_id FROM instruments i WHER
 UPDATE maintenance_orders SET tenant_id = '00000000-0000-0000-0000-000000000001' WHERE tenant_id IS NULL;
 ALTER TABLE maintenance_orders ALTER COLUMN tenant_id SET DEFAULT '00000000-0000-0000-0000-000000000001';
 ALTER TABLE maintenance_orders ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE maintenance_orders ALTER COLUMN instrument_id DROP NOT NULL;
+ALTER TABLE maintenance_orders DROP CONSTRAINT IF EXISTS maintenance_orders_instrument_id_fkey;
+ALTER TABLE maintenance_orders ADD CONSTRAINT maintenance_orders_instrument_id_fkey FOREIGN KEY (instrument_id) REFERENCES instruments(id) ON DELETE SET NULL;
 
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS tenant_id uuid REFERENCES tenants(id);
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS catalog_no text NOT NULL DEFAULT '';

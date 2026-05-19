@@ -9,7 +9,7 @@ export default async function TenantSettingsPage() {
   const visibleTenants = currentUser.role === "super_admin" ? tenants : tenants.filter((tenant) => tenant.id === currentUser.tenantId);
 
   return (
-    <AdminShell active="settings" title="租户配置" description="多机构共用系统但数据按租户隔离；机构编码创建时自动生成，机构 ID 和财务模块状态在这里维护。">
+    <AdminShell active="settings" title="单位/机构信息" description="多单位/机构共用系统但数据按机构隔离；单位名称、机构编码、机构 ID 和财务模块状态在这里维护。">
       <AdminSettingsNav active="tenants" role={currentUser.role} />
       <TenantManagement currentUser={currentUser} tenants={visibleTenants} />
     </AdminShell>

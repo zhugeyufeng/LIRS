@@ -28,11 +28,11 @@ export function TenantManagement({ currentUser, tenants }: { currentUser: User; 
     try {
       if (tenant) {
         await browserPatch<Tenant>(`/api/tenants/${tenant.id}`, payload);
-        setMessage("机构设置已更新。");
+        setMessage("单位/机构信息已更新。");
       } else {
         await browserPost<Tenant>("/api/tenants", payload);
         formElement.reset();
-        setMessage("机构已创建。");
+        setMessage("单位/机构已创建。");
       }
       close?.();
       router.refresh();
@@ -48,12 +48,12 @@ export function TenantManagement({ currentUser, tenants }: { currentUser: User; 
       {isSuperAdmin ? (
         <div className="flex justify-end">
           <AdminDialog
-            description="新增机构后，系统会自动生成唯一机构编码，用户注册可通过机构 ID 或机构编码归属到该机构。"
-            title="新增机构"
+            description="新增单位/机构后，系统会自动生成唯一机构编码，用户注册可通过机构 ID 或机构编码归属到该单位/机构。"
+            title="新增单位/机构"
             trigger={
               <Button>
                 <Plus className="h-4 w-4" />
-                新增机构
+                新增单位/机构
               </Button>
             }
           >
@@ -63,7 +63,7 @@ export function TenantManagement({ currentUser, tenants }: { currentUser: User; 
                 <div className="flex justify-end">
                   <Button disabled={pending === "new"} type="submit">
                     <Save className="h-4 w-4" />
-                    {pending === "new" ? "保存中" : "创建机构"}
+                    {pending === "new" ? "保存中" : "创建单位/机构"}
                   </Button>
                 </div>
               </form>
@@ -81,8 +81,8 @@ export function TenantManagement({ currentUser, tenants }: { currentUser: User; 
                   <Building2 className="h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
                   <h2 className="break-words font-bold text-slate-900">{tenant.name}</h2>
                 </div>
-                <p className="mt-2 break-all text-xs text-slate-500">机构编码：{tenant.code}</p>
-                <p className="mt-1 break-all text-xs text-slate-500">机构 ID：{tenant.id}</p>
+                <p className="mt-2 break-all text-xs text-slate-500">单位/机构编码：{tenant.code}</p>
+                <p className="mt-1 break-all text-xs text-slate-500">单位/机构 ID：{tenant.id}</p>
                 <p className="mt-2 text-xs text-slate-500">财务模块：{tenant.financeEnabled ? "启用" : "停用"}</p>
               </div>
               <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
@@ -90,8 +90,8 @@ export function TenantManagement({ currentUser, tenants }: { currentUser: User; 
                   {tenant.status === "active" ? "启用" : "停用"}
                 </span>
                 <AdminDialog
-                  description="修改后会立即影响该机构下的注册、财务模块展示和租户状态。"
-                  title={`修改机构：${tenant.name}`}
+                  description="修改后会立即影响该单位/机构下的注册、财务模块展示和机构状态。"
+                  title={`修改单位/机构：${tenant.name}`}
                   trigger={
                     <Button size="sm" variant="outline">
                       <Pencil className="h-4 w-4" />
@@ -126,16 +126,16 @@ function TenantFields({ tenant, lockStatus = false }: { tenant?: Tenant; lockSta
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <label className="block space-y-2">
-        <span className="text-sm font-medium">机构名称</span>
-        <input className="h-10 w-full rounded-md border bg-white px-3 text-sm" defaultValue={tenant?.name ?? ""} name="name" placeholder="填写机构名称" required />
+        <span className="text-sm font-medium">单位名称</span>
+        <input className="h-10 w-full rounded-md border bg-white px-3 text-sm" defaultValue={tenant?.name ?? ""} name="name" placeholder="填写单位名称" required />
         {tenant ? <FieldHint value={`当前：${tenant.name}`} /> : null}
       </label>
       <label className="block space-y-2">
-        <span className="text-sm font-medium">机构编码</span>
+        <span className="text-sm font-medium">单位/机构编码</span>
         <div className="flex min-h-10 items-center rounded-md border bg-slate-50 px-3 text-sm text-slate-700">
           {tenant?.code ?? "创建后自动生成"}
         </div>
-        <FieldHint value={tenant ? "机构编码由系统生成，编辑机构时不会变更。" : "提交创建后自动生成唯一编码。"} />
+        <FieldHint value={tenant ? "单位/机构编码由系统生成，编辑单位名称时不会变更。" : "提交创建后自动生成唯一编码。"} />
       </label>
       <label className="block space-y-2">
         <span className="text-sm font-medium">状态</span>

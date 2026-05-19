@@ -99,21 +99,24 @@ export function InstrumentStatusForm({
     }
   }
 
-  async function disableInstrument(close?: () => void) {
-    if (!confirm("确定停用该仪器吗？")) {
+  async function deleteInstrument(close?: () => void) {
+    if (!confirm(`确定删除“${instrument.name}”吗？删除后该仪器会立即从仪器列表、预约入口和维护选择中移除。`)) {
+      return;
+    }
+    if (!confirm("请再次确认删除仪器。关联的未完成预约会取消，历史预约和维护记录会保留为已删除仪器。")) {
       return;
     }
     setPending(true);
     setMessage("");
     try {
-      const updated = await browserDelete<Instrument>(`/api/instruments/${instrument.id}`);
-      setMessage(`已停用：${updated.name}`);
+      const deleted = await browserDelete<Instrument>(`/api/instruments/${instrument.id}`);
+      setMessage(`已删除：${deleted.name}`);
       close?.();
       startTransition(() => {
         router.refresh();
       });
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "停用失败");
+      setMessage(error instanceof Error ? error.message : "删除失败");
     } finally {
       setPending(false);
     }
@@ -140,9 +143,9 @@ export function InstrumentStatusForm({
                 <Save className="h-4 w-4" aria-hidden="true" />
                 {pending ? "保存中..." : "保存修改"}
               </Button>
-              <Button className="w-full sm:w-auto" disabled={pending} onClick={() => disableInstrument(close)} type="button" variant="destructive">
+              <Button className="w-full sm:w-auto" disabled={pending} onClick={() => deleteInstrument(close)} type="button" variant="destructive">
                 <Trash2 className="h-4 w-4" aria-hidden="true" />
-                停用仪器
+                删除仪器
               </Button>
             </div>
           </form>

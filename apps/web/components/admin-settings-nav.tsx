@@ -6,7 +6,7 @@ type AdminSettingsSection = "overview" | "organization" | "tenants" | "billing" 
 const items: { key: AdminSettingsSection; label: string; href: string; icon: LucideIcon }[] = [
   { key: "overview", label: "平台配置总览", href: "/admin/settings", icon: Settings2 },
   { key: "organization", label: "组织架构管理", href: "/admin/settings/organization", icon: Building2 },
-  { key: "tenants", label: "租户配置", href: "/admin/settings/tenants", icon: Landmark },
+  { key: "tenants", label: "单位/机构信息", href: "/admin/settings/tenants", icon: Landmark },
   { key: "billing", label: "财务模块开关", href: "/admin/settings/billing", icon: Wallet },
   { key: "notifications", label: "通知通道配置", href: "/admin/settings/notifications", icon: BellDot },
   { key: "dingtalk", label: "钉钉应用设置", href: "/admin/settings/dingtalk", icon: MessageSquareCode },

@@ -1004,30 +1004,100 @@ func (r *Repository) DeleteInstrument(ctx context.Context, id string, actor stri
 	if err != nil {
 		return Instrument{}, err
 	}
-	item, err := scanInstrument(r.db.QueryRow(ctx, `
-UPDATE instruments i
-SET status = 'disabled'
-WHERE i.id = $1
-  AND ($2::boolean OR i.tenant_id = $3::uuid)
-RETURNING i.id::text, i.tenant_id::text, i.name, i.category, i.department, i.group_name, i.status, i.location,
-       i.hourly_rate::float8, i.brand, i.model, i.asset_code,
-       i.access_control_enabled, i.access_control_group, i.access_control_point,
-       i.description,
-       i.technical_specs, i.booking_rule, i.maintenance_summary,
-       i.max_booking_hours, i.min_advance_hours, i.cancel_cutoff_hours, i.checkin_window_minutes,
-       i.booking_window_days, i.booking_interval_hours, i.service_start_hour, i.service_end_hour,
-       (
-           SELECT count(*)::int
-           FROM reservations r
-           WHERE r.instrument_id = i.id AND r.status = 'completed'
-       ) AS usage_count
-`, id, tenant.AllTenants, tenant.TenantID))
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Instrument{}, err
 	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	notifications := make([]Notification, 0)
+	reservationRows, err := tx.Query(ctx, `
+UPDATE reservations
+SET status = 'cancelled',
+    cancel_reason = '关联仪器已删除',
+    cancelled_at = now(),
+    instrument_id = NULL
+WHERE instrument_id = $1
+  AND status IN ('pending', 'approved', 'in_use')
+  AND ($2::boolean OR tenant_id = $3::uuid)
+RETURNING tenant_id::text, COALESCE(user_id::text, ''), user_name, group_name
+`, id, tenant.AllTenants, tenant.TenantID)
+	if err != nil {
+		return Instrument{}, err
+	}
+	for reservationRows.Next() {
+		var reservationTenantID string
+		var userID string
+		var userName string
+		var groupName string
+		if err := reservationRows.Scan(&reservationTenantID, &userID, &userName, &groupName); err != nil {
+			reservationRows.Close()
+			return Instrument{}, err
+		}
+		if userID == "" {
+			continue
+		}
+		notification, err := r.createNotificationTx(ctx, tx, reservationTenantID, userID, groupName, "", "personal", "预约状态更新", fmt.Sprintf("%s 的 %s 预约状态已更新为已取消，原因：关联仪器已删除。", userName, oldItem.Name), "warning")
+		if err != nil {
+			reservationRows.Close()
+			return Instrument{}, err
+		}
+		notifications = append(notifications, notification)
+	}
+	reservationRows.Close()
+	if err := reservationRows.Err(); err != nil {
+		return Instrument{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE reservations
+SET instrument_id = NULL
+WHERE instrument_id = $1
+  AND ($2::boolean OR tenant_id = $3::uuid)
+`, id, tenant.AllTenants, tenant.TenantID); err != nil {
+		return Instrument{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE maintenance_orders
+SET instrument_id = NULL,
+    status = CASE WHEN status IN ('reported', 'assigned', 'in_progress') THEN 'cancelled' ELSE status END,
+    result = CASE WHEN status IN ('reported', 'assigned', 'in_progress') AND result = '' THEN '关联仪器已删除' ELSE result END
+WHERE instrument_id = $1
+  AND ($2::boolean OR tenant_id = $3::uuid)
+`, id, tenant.AllTenants, tenant.TenantID); err != nil {
+		return Instrument{}, err
+	}
+	for _, query := range []string{
+		`UPDATE training_courses SET instrument_id = NULL, updated_at = now() WHERE instrument_id = $1 AND ($2::boolean OR tenant_id = $3::uuid)`,
+		`UPDATE training_authorizations SET instrument_id = NULL, updated_at = now() WHERE instrument_id = $1 AND ($2::boolean OR tenant_id = $3::uuid)`,
+		`UPDATE training_practical_assessments SET instrument_id = NULL, updated_at = now() WHERE instrument_id = $1 AND ($2::boolean OR tenant_id = $3::uuid)`,
+		`UPDATE lims_tasks SET instrument_id = NULL, updated_at = now() WHERE instrument_id = $1 AND ($2::boolean OR tenant_id = $3::uuid)`,
+		`UPDATE iot_devices SET instrument_id = NULL, updated_at = now() WHERE instrument_id = $1 AND ($2::boolean OR tenant_id = $3::uuid)`,
+		`DELETE FROM training_rules WHERE instrument_id = $1 AND ($2::boolean OR tenant_id = $3::uuid)`,
+	} {
+		if _, err := tx.Exec(ctx, query, id, tenant.AllTenants, tenant.TenantID); err != nil {
+			return Instrument{}, err
+		}
+	}
+	tag, err := tx.Exec(ctx, `
+DELETE FROM instruments
+WHERE id = $1
+  AND ($2::boolean OR tenant_id = $3::uuid)
+`, id, tenant.AllTenants, tenant.TenantID)
+	if err != nil {
+		return Instrument{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return Instrument{}, pgx.ErrNoRows
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Instrument{}, err
+	}
+	r.enqueueDingTalkNotifications(notifications...)
 	r.invalidateDashboard(ctx)
-	r.audit(ctx, actor, "instrument.delete", "instrument", item.ID, oldItem.Status, item.Status)
-	return item, nil
+	r.audit(ctx, actor, "instrument.delete", "instrument", oldItem.ID, oldItem.Status, "deleted")
+	return oldItem, nil
 }
 
 type scanner interface {
@@ -1091,10 +1161,10 @@ func scanReservation(row scanner) (Reservation, error) {
 func (r *Repository) Reservations(ctx context.Context) ([]Reservation, error) {
 	tenant := TenantFromContext(ctx)
 	rows, err := r.db.Query(ctx, `
-SELECT r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), r.instrument_id::text, i.name,
+SELECT r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), COALESCE(r.instrument_id::text, ''), COALESCE(i.name, '已删除仪器'),
        r.user_name, r.group_name, r.purpose, lower(r.period), upper(r.period), r.status, r.fee::float8
 FROM reservations r
-JOIN instruments i ON i.id = r.instrument_id
+LEFT JOIN instruments i ON i.id = r.instrument_id
 WHERE ($1::boolean OR r.tenant_id = $2::uuid)
 ORDER BY lower(r.period) DESC
 `, tenant.AllTenants, tenant.TenantID)
@@ -1117,10 +1187,10 @@ ORDER BY lower(r.period) DESC
 func (r *Repository) Reservation(ctx context.Context, id string) (Reservation, error) {
 	tenant := TenantFromContext(ctx)
 	return scanReservation(r.db.QueryRow(ctx, `
-SELECT r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), r.instrument_id::text, i.name,
+SELECT r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), COALESCE(r.instrument_id::text, ''), COALESCE(i.name, '已删除仪器'),
        r.user_name, r.group_name, r.purpose, lower(r.period), upper(r.period), r.status, r.fee::float8
 FROM reservations r
-JOIN instruments i ON i.id = r.instrument_id
+LEFT JOIN instruments i ON i.id = r.instrument_id
 WHERE r.id = $1
   AND ($2::boolean OR r.tenant_id = $3::uuid)
 `, id, tenant.AllTenants, tenant.TenantID))
@@ -3399,7 +3469,7 @@ WHERE instrument_id = $1
 	err = tx.QueryRow(ctx, `
 INSERT INTO reservations (tenant_id, user_id, instrument_id, user_name, group_name, purpose, period, status, fee, idempotency_key)
 VALUES ($10, $1, $2, $3, $4, $5, tstzrange($6, $7, '[)'), 'pending', $8, $9)
-RETURNING id::text, tenant_id::text, COALESCE(user_id::text, ''), instrument_id::text, user_name, group_name, purpose, lower(period), upper(period), status, fee::float8
+RETURNING id::text, tenant_id::text, COALESCE(user_id::text, ''), COALESCE(instrument_id::text, ''), user_name, group_name, purpose, lower(period), upper(period), status, fee::float8
 `, userID, input.InstrumentID, input.UserName, groupName, input.Purpose, input.StartTime, input.EndTime, fee, input.IdempotencyKey, tenant.TenantID).Scan(
 		&reservation.ID,
 		&reservation.TenantID,
@@ -3459,8 +3529,8 @@ UPDATE reservations r
 SET status = $2, decided_at = now()
 WHERE r.id = $1 AND r.status = 'pending'
   AND ($3::boolean OR r.tenant_id = $4::uuid)
-RETURNING r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), r.instrument_id::text,
-    (SELECT name FROM instruments WHERE id = r.instrument_id),
+RETURNING r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), COALESCE(r.instrument_id::text, ''),
+    COALESCE((SELECT name FROM instruments WHERE id = r.instrument_id), '已删除仪器'),
     r.user_name, r.group_name, r.purpose, lower(r.period), upper(r.period), r.status, r.fee::float8
 `, id, status, tenant.AllTenants, tenant.TenantID).Scan(
 		&reservation.ID,
@@ -3525,8 +3595,8 @@ UPDATE reservations r
 SET status = 'completed', checked_out_at = now()
 WHERE r.id = $1 AND r.status = 'in_use'
   AND ($2::boolean OR r.tenant_id = $3::uuid)
-RETURNING r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), r.instrument_id::text,
-    (SELECT name FROM instruments WHERE id = r.instrument_id),
+RETURNING r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), COALESCE(r.instrument_id::text, ''),
+    COALESCE((SELECT name FROM instruments WHERE id = r.instrument_id), '已删除仪器'),
     r.user_name, r.group_name, r.purpose, lower(r.period), upper(r.period), r.status, r.fee::float8
 `, id, tenant.AllTenants, tenant.TenantID).Scan(
 		&reservation.ID,
@@ -3602,8 +3672,8 @@ WHERE r.id = $1 AND r.status = 'approved'
       WHERE id = r.instrument_id
   )
   AND now() <= upper(r.period)
-RETURNING r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), r.instrument_id::text,
-    (SELECT name FROM instruments WHERE id = r.instrument_id),
+RETURNING r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), COALESCE(r.instrument_id::text, ''),
+    COALESCE((SELECT name FROM instruments WHERE id = r.instrument_id), '已删除仪器'),
     r.user_name, r.group_name, r.purpose, lower(r.period), upper(r.period), r.status, r.fee::float8
 `, id, tenant.AllTenants, tenant.TenantID).Scan(
 		&reservation.ID,
@@ -3648,8 +3718,8 @@ WHERE r.id = $1 AND r.status IN ('pending', 'approved')
       FROM instruments
       WHERE id = r.instrument_id
   ))
-RETURNING r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), r.instrument_id::text,
-    (SELECT name FROM instruments WHERE id = r.instrument_id),
+RETURNING r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), COALESCE(r.instrument_id::text, ''),
+    COALESCE((SELECT name FROM instruments WHERE id = r.instrument_id), '已删除仪器'),
     r.user_name, r.group_name, r.purpose, lower(r.period), upper(r.period), r.status, r.fee::float8
 `, id, reason, bypassCutoff, tenant.AllTenants, tenant.TenantID).Scan(
 		&reservation.ID,
@@ -3701,7 +3771,7 @@ WHERE r.status = 'pending'
   AND r.created_at < now() - ($1 * interval '1 second')
 RETURNING r.id::text, COALESCE(r.user_id::text, ''), r.user_name, r.group_name,
           r.tenant_id::text,
-          (SELECT name FROM instruments WHERE id = r.instrument_id)
+          COALESCE((SELECT name FROM instruments WHERE id = r.instrument_id), '已删除仪器')
 `, int64(maxAge.Seconds()))
 	if err != nil {
 		return 0, err
@@ -7608,10 +7678,10 @@ LIMIT 1
 func (r *Repository) MaintenanceOrders(ctx context.Context) ([]MaintenanceOrder, error) {
 	tenant := TenantFromContext(ctx)
 	rows, err := r.db.Query(ctx, `
-SELECT mo.id::text, mo.instrument_id::text, i.name, mo.type, mo.priority, mo.status, mo.handler,
+SELECT mo.id::text, COALESCE(mo.instrument_id::text, ''), COALESCE(i.name, '已删除仪器'), mo.type, mo.priority, mo.status, mo.handler,
        mo.description, mo.result, lower(mo.period), upper(mo.period), mo.created_at
 FROM maintenance_orders mo
-JOIN instruments i ON i.id = mo.instrument_id
+LEFT JOIN instruments i ON i.id = mo.instrument_id
 WHERE ($1::boolean OR mo.tenant_id = $2::uuid)
 ORDER BY mo.created_at DESC
 LIMIT 100
@@ -7768,10 +7838,13 @@ UPDATE maintenance_orders mo
 SET status = 'in_progress'
 WHERE mo.id = $1 AND mo.status IN ('reported', 'assigned')
   AND ($2::boolean OR mo.tenant_id = $3::uuid)
-RETURNING mo.id::text, mo.tenant_id::text, mo.instrument_id::text, (SELECT name FROM instruments WHERE id = mo.instrument_id), mo.type, mo.priority, mo.status, mo.handler, mo.description, mo.result, lower(mo.period), upper(mo.period), mo.created_at
+RETURNING mo.id::text, mo.tenant_id::text, COALESCE(mo.instrument_id::text, ''), COALESCE((SELECT name FROM instruments WHERE id = mo.instrument_id), '已删除仪器'), mo.type, mo.priority, mo.status, mo.handler, mo.description, mo.result, lower(mo.period), upper(mo.period), mo.created_at
 `, id, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &itemTenantID, &item.InstrumentID, &item.InstrumentName, &item.Type, &item.Priority, &item.Status, &item.Handler, &item.Description, &item.Result, &item.StartTime, &item.EndTime, &item.CreatedAt)
 	if err != nil {
 		return MaintenanceOrder{}, err
+	}
+	if item.InstrumentID == "" {
+		return MaintenanceOrder{}, errors.New("instrument has been deleted")
 	}
 	if _, err := r.db.Exec(ctx, `UPDATE instruments SET status = 'maintenance', maintenance_summary = $2 WHERE id = $1 AND tenant_id = $3::uuid`, item.InstrumentID, item.Description, itemTenantID); err != nil {
 		return MaintenanceOrder{}, err
@@ -7799,7 +7872,7 @@ UPDATE maintenance_orders mo
 SET status = 'cancelled', result = $2
 WHERE mo.id = $1 AND mo.status IN ('reported', 'assigned', 'in_progress')
   AND ($3::boolean OR mo.tenant_id = $4::uuid)
-RETURNING mo.id::text, mo.tenant_id::text, mo.instrument_id::text, (SELECT name FROM instruments WHERE id = mo.instrument_id), mo.type, mo.priority, mo.status, mo.handler, mo.description, mo.result, lower(mo.period), upper(mo.period), mo.created_at
+RETURNING mo.id::text, mo.tenant_id::text, COALESCE(mo.instrument_id::text, ''), COALESCE((SELECT name FROM instruments WHERE id = mo.instrument_id), '已删除仪器'), mo.type, mo.priority, mo.status, mo.handler, mo.description, mo.result, lower(mo.period), upper(mo.period), mo.created_at
 `, id, reason, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &itemTenantID, &item.InstrumentID, &item.InstrumentName, &item.Type, &item.Priority, &item.Status, &item.Handler, &item.Description, &item.Result, &item.StartTime, &item.EndTime, &item.CreatedAt)
 	if err != nil {
 		return MaintenanceOrder{}, err
@@ -7830,7 +7903,7 @@ UPDATE maintenance_orders mo
 SET status = 'completed', result = $2
 WHERE mo.id = $1 AND mo.status IN ('reported', 'assigned', 'in_progress')
   AND ($3::boolean OR mo.tenant_id = $4::uuid)
-RETURNING mo.id::text, mo.tenant_id::text, mo.instrument_id::text, (SELECT name FROM instruments WHERE id = mo.instrument_id), mo.type, mo.priority, mo.status, mo.handler, mo.description, mo.result, lower(mo.period), upper(mo.period), mo.created_at
+RETURNING mo.id::text, mo.tenant_id::text, COALESCE(mo.instrument_id::text, ''), COALESCE((SELECT name FROM instruments WHERE id = mo.instrument_id), '已删除仪器'), mo.type, mo.priority, mo.status, mo.handler, mo.description, mo.result, lower(mo.period), upper(mo.period), mo.created_at
 `, id, result, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &itemTenantID, &item.InstrumentID, &item.InstrumentName, &item.Type, &item.Priority, &item.Status, &item.Handler, &item.Description, &item.Result, &item.StartTime, &item.EndTime, &item.CreatedAt)
 	if err != nil {
 		return MaintenanceOrder{}, err
@@ -7845,6 +7918,9 @@ RETURNING mo.id::text, mo.tenant_id::text, mo.instrument_id::text, (SELECT name 
 }
 
 func (r *Repository) refreshInstrumentAfterMaintenance(ctx context.Context, instrumentID string, tenantID string, summary string) error {
+	if strings.TrimSpace(instrumentID) == "" {
+		return nil
+	}
 	var activeCount int
 	if err := r.db.QueryRow(ctx, `
 SELECT count(*)
@@ -8015,8 +8091,8 @@ func (r *Repository) findDuplicateReservation(ctx context.Context, tx pgx.Tx, in
 	tenant := TenantFromContext(ctx)
 	var reservation Reservation
 	err := tx.QueryRow(ctx, `
-SELECT r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), r.instrument_id::text,
-       (SELECT name FROM instruments WHERE id = r.instrument_id),
+SELECT r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), COALESCE(r.instrument_id::text, ''),
+       COALESCE((SELECT name FROM instruments WHERE id = r.instrument_id), '已删除仪器'),
        r.user_name, r.group_name, r.purpose, lower(r.period), upper(r.period), r.status, r.fee::float8
 FROM reservations r
 WHERE (r.idempotency_key = $1 OR (
