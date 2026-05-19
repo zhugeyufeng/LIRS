@@ -43,8 +43,9 @@ export async function MaterialResourceCatalogPage({
   ]);
   const section = resourceTypeSection(productType);
   const isAdmin = isMaterialAdminRole(currentUser.role);
-  const typeMaterials = materials.filter((item) => item.productType === productType);
-  const visibleMaterials = filterMaterials(materials, { ...params, productType });
+  const includeDeleted = params.status === "disabled";
+  const typeMaterials = materials.filter((item) => item.productType === productType && (includeDeleted || item.status !== "disabled"));
+  const visibleMaterials = filterMaterials(materials, { ...params, productType }).filter((item) => includeDeleted || item.status !== "disabled");
   const warningMaterials = typeMaterials.filter((item) => ["near_expiry", "expired", "open_expired", "freeze_thaw_exceeded", "low", "damaged"].includes(item.status));
   const materialIds = new Set(typeMaterials.map((item) => item.id));
   const availableUnits = typeMaterials.reduce((sum, item) => sum + (item.units ?? []).filter((unit) => unit.status === "available").length, 0);
@@ -144,8 +145,9 @@ export async function AdminMaterialResourceManagementPage({
     api.purchasableMaterials().catch(() => []),
   ]);
   const section = resourceTypeSection(productType);
-  const typeMaterials = materials.filter((item) => item.productType === productType);
-  const visibleMaterials = filterMaterials(materials, { ...params, productType });
+  const includeDeleted = params.status === "disabled";
+  const typeMaterials = materials.filter((item) => item.productType === productType && (includeDeleted || item.status !== "disabled"));
+  const visibleMaterials = filterMaterials(materials, { ...params, productType }).filter((item) => includeDeleted || item.status !== "disabled");
   const materialIds = new Set(typeMaterials.map((item) => item.id));
   const typeRequests = requests.filter((item) => materialIds.has(item.materialId));
   const typePurchases = purchases.filter((item) => item.materialId && materialIds.has(item.materialId));

@@ -216,21 +216,24 @@ export function MaterialEditForm({ material, categories = [] }: { material: Mate
     }
   }
 
-  async function disableMaterial(close?: () => void) {
-    if (!confirm("确定停用该资源吗？")) {
+  async function deleteMaterial(close?: () => void) {
+    if (!confirm(`确定删除“${material.name}”吗？删除后该资源会从默认列表和申领入口移除。`)) {
+      return;
+    }
+    if (!confirm("请再次确认删除资源。历史库存流水、申领和损毁记录会保留。")) {
       return;
     }
     setPending(true);
     setMessage("");
     try {
-      const updated = await browserDelete<Material>(`/api/materials/${material.id}`);
-      setMessage(`已停用：${updated.name}`);
+      const deleted = await browserDelete<Material>(`/api/materials/${material.id}`);
+      setMessage(`已删除：${deleted.name}`);
       close?.();
       startTransition(() => {
         router.refresh();
       });
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "停用失败");
+      setMessage(error instanceof Error ? error.message : "删除失败");
     } finally {
       setPending(false);
     }
@@ -257,9 +260,9 @@ export function MaterialEditForm({ material, categories = [] }: { material: Mate
                 <Save className="h-4 w-4" aria-hidden="true" />
                 {pending ? "保存中..." : "保存资源"}
               </Button>
-              <Button className="w-full sm:w-auto" disabled={pending} onClick={() => disableMaterial(close)} type="button" variant="destructive">
+              <Button className="w-full sm:w-auto" disabled={pending} onClick={() => deleteMaterial(close)} type="button" variant="destructive">
                 <Trash2 className="h-4 w-4" aria-hidden="true" />
-                停用资源
+                删除资源
               </Button>
             </div>
           </form>
@@ -590,11 +593,13 @@ export function MaterialCategoryForm({ categories }: { categories: MaterialCateg
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState(false);
   const [sorting, setSorting] = useState(false);
+  const [editingID, setEditingID] = useState("");
   const [orderedCategories, setOrderedCategories] = useState<MaterialCategory[]>(() => sortCategoryGroup(categories));
   const [dragging, setDragging] = useState<CategoryDragState | null>(null);
 
   useEffect(() => {
     setOrderedCategories(sortCategoryGroup(categories));
+    setEditingID((current) => categories.some((item) => item.id === current) ? current : "");
   }, [categories]);
 
   const primaryCategories = useMemo(
@@ -632,6 +637,56 @@ export function MaterialCategoryForm({ categories }: { categories: MaterialCateg
       });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "分类保存失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function updateCategory(event: FormEvent<HTMLFormElement>, item: MaterialCategory) {
+    event.preventDefault();
+    setPending(true);
+    setMessage("");
+    const form = new FormData(event.currentTarget);
+    const parentName = String(form.get("parentName") ?? "").trim();
+    const payload: MaterialCategoryPayload = {
+      name: String(form.get("name") ?? "").trim(),
+      parentName,
+      displayOrder: item.displayOrder,
+      status: String(form.get("status") ?? item.status),
+    };
+    try {
+      const updated = await browserPatch<MaterialCategory>(`/api/materials/categories/${item.id}`, payload);
+      setMessage(`已修改目录：${updated.name}`);
+      setEditingID("");
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "目录修改失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function deleteCategory(item: MaterialCategory) {
+    if (!confirm(`确定删除目录“${item.name}”吗？删除后该目录不会出现在新增资源的目录选项中。`)) {
+      return;
+    }
+    const children = categorySiblings(orderedCategories, item.name);
+    if (children.length > 0 && !confirm(`该一级目录下还有 ${children.length} 个二级目录，请再次确认删除。`)) {
+      return;
+    }
+    setPending(true);
+    setMessage("");
+    try {
+      const deleted = await browserDelete<MaterialCategory>(`/api/materials/categories/${item.id}`);
+      setMessage(`已删除目录：${deleted.name}`);
+      setEditingID("");
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "目录删除失败");
     } finally {
       setPending(false);
     }
@@ -730,10 +785,10 @@ export function MaterialCategoryForm({ categories }: { categories: MaterialCateg
                   const children = childCategories.get(primary.name) ?? [];
                   return (
                     <div className="space-y-2" key={primary.id}>
-                      <CategorySortRow disabled={disabled} draggingID={dragging?.id} item={primary} level="primary" onDragEnd={() => setDragging(null)} onDragOver={dragOver} onDragStart={dragStart} onDrop={drop} />
+                      <CategorySortRow disabled={disabled} draggingID={dragging?.id} editingID={editingID} item={primary} level="primary" onCancelEdit={() => setEditingID("")} onDelete={deleteCategory} onDragEnd={() => setDragging(null)} onDragOver={dragOver} onDragStart={dragStart} onDrop={drop} onEdit={() => setEditingID(primary.id)} onSubmitEdit={updateCategory} primaryCategories={primaryCategories} />
                       <div className="space-y-2">
                         {children.map((child) => (
-                          <CategorySortRow disabled={disabled} draggingID={dragging?.id} item={child} key={child.id} level="secondary" onDragEnd={() => setDragging(null)} onDragOver={dragOver} onDragStart={dragStart} onDrop={drop} />
+                          <CategorySortRow disabled={disabled} draggingID={dragging?.id} editingID={editingID} item={child} key={child.id} level="secondary" onCancelEdit={() => setEditingID("")} onDelete={deleteCategory} onDragEnd={() => setDragging(null)} onDragOver={dragOver} onDragStart={dragStart} onDrop={drop} onEdit={() => setEditingID(child.id)} onSubmitEdit={updateCategory} primaryCategories={primaryCategories} />
                         ))}
                       </div>
                     </div>
@@ -757,29 +812,78 @@ type CategoryDragState = {
 function CategorySortRow({
   disabled,
   draggingID,
+  editingID,
   item,
   level,
+  onCancelEdit,
+  onDelete,
   onDragEnd,
   onDragOver,
   onDragStart,
   onDrop,
+  onEdit,
+  onSubmitEdit,
+  primaryCategories,
 }: {
   disabled: boolean;
   draggingID?: string;
+  editingID: string;
   item: MaterialCategory;
   level: "primary" | "secondary";
+  onCancelEdit: () => void;
+  onDelete: (item: MaterialCategory) => void;
   onDragEnd: () => void;
   onDragOver: (event: DragEvent<HTMLDivElement>, item: MaterialCategory) => void;
   onDragStart: (event: DragEvent<HTMLDivElement>, item: MaterialCategory) => void;
   onDrop: (event: DragEvent<HTMLDivElement>, item: MaterialCategory) => void;
+  onEdit: () => void;
+  onSubmitEdit: (event: FormEvent<HTMLFormElement>, item: MaterialCategory) => void;
+  primaryCategories: MaterialCategory[];
 }) {
   const isDragging = draggingID === item.id;
+  const editing = editingID === item.id;
   const rowClass = [
-    "flex items-center gap-2 rounded-md border bg-white px-3 py-2 text-sm transition",
+    "rounded-md border bg-white px-3 py-2 text-sm transition",
     level === "secondary" ? "ml-6 border-slate-200" : "border-slate-300",
-    disabled ? "opacity-70" : "cursor-grab hover:border-slate-400",
+    disabled || editing ? "opacity-70" : "hover:border-slate-400",
     isDragging ? "border-slate-500 bg-slate-50 opacity-60" : "",
   ].filter(Boolean).join(" ");
+
+  if (editing) {
+    return (
+      <form className={`${rowClass} cursor-auto space-y-3`} onSubmit={(event) => onSubmitEdit(event, item)}>
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_120px]">
+          <Field defaultValue={item.name} label="目录名称" name="name" placeholder="填写目录名称" required />
+          <label className="space-y-1 text-sm">
+            <span className="text-sm font-medium">上级目录</span>
+            <select className="h-10 w-full rounded-md border bg-white px-3 text-sm" defaultValue={categoryParentName(item)} name="parentName">
+              <option value="">一级目录</option>
+              {primaryCategories.filter((primary) => primary.id !== item.id && primary.status === "active").map((primary) => (
+                <option key={primary.id} value={primary.name}>
+                  {primary.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="text-sm font-medium">状态</span>
+            <select className="h-10 w-full rounded-md border bg-white px-3 text-sm" defaultValue={item.status} name="status">
+              <option value="active">启用</option>
+              <option value="disabled">停用</option>
+            </select>
+          </label>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+          <Button className="w-full sm:w-auto" disabled={disabled} type="button" variant="outline" onClick={onCancelEdit}>
+            取消
+          </Button>
+          <Button className="w-full sm:w-auto" disabled={disabled} type="submit">
+            保存修改
+          </Button>
+        </div>
+      </form>
+    );
+  }
 
   return (
     <div
@@ -791,12 +895,24 @@ function CategorySortRow({
       onDragStart={(event) => onDragStart(event, item)}
       onDrop={(event) => onDrop(event, item)}
     >
-      <GripVertical className="h-4 w-4 flex-none text-slate-400" aria-hidden="true" />
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-bold">{item.name}</p>
-        <p className="text-xs text-slate-500">{level === "primary" ? "一级目录" : item.parentName} / {item.status === "active" ? "启用" : "停用"}</p>
+      <div className="flex items-center gap-2">
+        <GripVertical className="h-4 w-4 flex-none text-slate-400" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-bold">{item.name}</p>
+          <p className="text-xs text-slate-500">{level === "primary" ? "一级目录" : item.parentName} / {item.status === "active" ? "启用" : "停用"}</p>
+        </div>
+        <span className="flex-none rounded border px-2 py-1 text-xs text-slate-500">{item.displayOrder}</span>
       </div>
-      <span className="flex-none rounded border px-2 py-1 text-xs text-slate-500">{item.displayOrder}</span>
+      <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:justify-end">
+        <Button className="w-full sm:w-auto" disabled={disabled} size="sm" type="button" variant="outline" onClick={onEdit}>
+          <Pencil className="h-4 w-4" aria-hidden="true" />
+          修改
+        </Button>
+        <Button className="w-full sm:w-auto" disabled={disabled} size="sm" type="button" variant="destructive" onClick={() => onDelete(item)}>
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
+          删除
+        </Button>
+      </div>
     </div>
   );
 }
