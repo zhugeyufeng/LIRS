@@ -529,6 +529,7 @@ ALTER TABLE material_requests ALTER COLUMN group_name SET DEFAULT '默认归属'
 
 CREATE TABLE IF NOT EXISTS material_purchases (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    purchase_serial_no text NOT NULL DEFAULT '',
     material_id uuid REFERENCES materials(id),
     purchasable_material_id uuid REFERENCES purchasable_materials(id),
     purchase_id_no text NOT NULL DEFAULT '',
@@ -548,7 +549,7 @@ CREATE TABLE IF NOT EXISTS material_purchases (
     estimated_unit_price numeric(12,2) NOT NULL DEFAULT 0 CHECK (estimated_unit_price >= 0),
     supplier text NOT NULL DEFAULT '',
     reason text NOT NULL,
-    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'ordered', 'received', 'cancelled')),
+    status text NOT NULL DEFAULT 'registered' CHECK (status IN ('pending', 'registered', 'returned', 'ordered', 'received', 'cancelled')),
     decided_at timestamptz,
     ordered_at timestamptz,
     received_at timestamptz,
@@ -556,6 +557,7 @@ CREATE TABLE IF NOT EXISTS material_purchases (
 );
 
 ALTER TABLE material_purchases ALTER COLUMN material_id DROP NOT NULL;
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_serial_no text NOT NULL DEFAULT '';
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchasable_material_id uuid REFERENCES purchasable_materials(id);
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_id_no text NOT NULL DEFAULT '';
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_sequence_no text NOT NULL DEFAULT '';
@@ -595,8 +597,30 @@ ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS decided_at timestamptz;
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS ordered_at timestamptz;
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS received_at timestamptz;
 ALTER TABLE material_purchases ALTER COLUMN group_name SET DEFAULT '默认归属';
+ALTER TABLE material_purchases DROP CONSTRAINT IF EXISTS material_purchases_status_check;
+UPDATE material_purchases SET status = 'registered' WHERE status IN ('pending', 'approved', 'rejected');
+ALTER TABLE material_purchases ADD CONSTRAINT material_purchases_status_check CHECK (status IN ('pending', 'registered', 'returned', 'ordered', 'received', 'cancelled'));
+UPDATE material_purchases
+SET purchase_serial_no = 'SG' || to_char(created_at, 'YYYYMM') || '-' || lpad(row_number::text, 4, '0')
+FROM (
+    SELECT id, row_number() OVER (PARTITION BY tenant_id, to_char(created_at, 'YYYYMM') ORDER BY created_at, id) AS row_number
+    FROM material_purchases
+    WHERE purchase_serial_no = ''
+) numbered
+WHERE material_purchases.id = numbered.id;
 CREATE INDEX IF NOT EXISTS material_purchases_status_created_at_idx ON material_purchases (status, created_at DESC);
 CREATE INDEX IF NOT EXISTS material_purchases_group_status_idx ON material_purchases (group_name, status);
+CREATE UNIQUE INDEX IF NOT EXISTS material_purchases_tenant_serial_unique ON material_purchases (tenant_id, purchase_serial_no) WHERE purchase_serial_no <> '';
+
+CREATE TABLE IF NOT EXISTS material_purchase_monthly_confirmations (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id uuid NOT NULL REFERENCES tenants(id) DEFAULT '00000000-0000-0000-0000-000000000001',
+    month text NOT NULL,
+    confirmed_by text NOT NULL DEFAULT '',
+    confirmed_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, month),
+    CHECK (month ~ '^[0-9]{4}-[0-9]{2}$')
+);
 
 CREATE TABLE IF NOT EXISTS inventory_ledger (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1106,6 +1130,7 @@ ALTER TABLE material_requests ALTER COLUMN tenant_id SET NOT NULL;
 
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS tenant_id uuid REFERENCES tenants(id);
 ALTER TABLE material_purchases ALTER COLUMN material_id DROP NOT NULL;
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_serial_no text NOT NULL DEFAULT '';
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchasable_material_id uuid REFERENCES purchasable_materials(id);
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_id_no text NOT NULL DEFAULT '';
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_sequence_no text NOT NULL DEFAULT '';
@@ -1129,6 +1154,29 @@ SET requester_phone = COALESCE(NULLIF(mp.requester_phone, ''), u.phone),
 FROM users u
 WHERE mp.requester_id = u.id
   AND (mp.requester_phone = '' OR mp.requester_email = '');
+ALTER TABLE material_purchases DROP CONSTRAINT IF EXISTS material_purchases_status_check;
+UPDATE material_purchases SET status = 'registered' WHERE status IN ('pending', 'approved', 'rejected');
+ALTER TABLE material_purchases ADD CONSTRAINT material_purchases_status_check CHECK (status IN ('pending', 'registered', 'returned', 'ordered', 'received', 'cancelled'));
+UPDATE material_purchases
+SET purchase_serial_no = 'SG' || to_char(created_at, 'YYYYMM') || '-' || lpad(row_number::text, 4, '0')
+FROM (
+    SELECT id, row_number() OVER (PARTITION BY tenant_id, to_char(created_at, 'YYYYMM') ORDER BY created_at, id) AS row_number
+    FROM material_purchases
+    WHERE purchase_serial_no = ''
+) numbered
+WHERE material_purchases.id = numbered.id;
+CREATE UNIQUE INDEX IF NOT EXISTS material_purchases_tenant_serial_unique ON material_purchases (tenant_id, purchase_serial_no) WHERE purchase_serial_no <> '';
+
+CREATE TABLE IF NOT EXISTS material_purchase_monthly_confirmations (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id uuid NOT NULL REFERENCES tenants(id) DEFAULT '00000000-0000-0000-0000-000000000001',
+    month text NOT NULL,
+    confirmed_by text NOT NULL DEFAULT '',
+    confirmed_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, month),
+    CHECK (month ~ '^[0-9]{4}-[0-9]{2}$')
+);
+
 UPDATE material_purchases mp
 SET purchase_project_name = COALESCE(NULLIF(purchase_project_name, ''), m.name),
     purchase_item_name = COALESCE(NULLIF(purchase_item_name, ''), NULLIF(purchase_project_name, ''), m.name),

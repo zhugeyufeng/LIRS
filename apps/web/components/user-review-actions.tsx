@@ -4,6 +4,7 @@ import { FormEvent, startTransition, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Pencil, Plus, Save, Trash2 } from "lucide-react";
 import { browserDelete, browserPatch, browserPost, OrganizationUnit, Tenant, User, UserCreatePayload, UserMembershipPayload, UserReviewPayload } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 import { isTenantAdminRole, roleLabel } from "@/lib/permissions";
@@ -235,6 +236,9 @@ export function UserReviewActions({
 
   async function submit(event: FormEvent<HTMLFormElement>, close?: () => void) {
     event.preventDefault();
+    if (!confirmTwice(`确定修改人员“${user.name}”吗？`, "请再次确认。人员基础信息和权限状态会立即更新。")) {
+      return;
+    }
     setPending(true);
     setMessage("");
     const formData = new FormData(event.currentTarget);
@@ -263,6 +267,9 @@ export function UserReviewActions({
   }
 
   async function deleteUser(close?: () => void) {
+    if (!confirmTwice(`确定删除人员账号“${user.name}”吗？`, "请再次确认删除该人员账号。账号会被停用并从后台人员列表移除。")) {
+      return;
+    }
     setPending(true);
     setMessage("");
     try {

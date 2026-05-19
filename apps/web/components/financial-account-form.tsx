@@ -4,6 +4,7 @@ import { FormEvent, startTransition, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CreditCard, Pencil, Save } from "lucide-react";
 import { browserPatch, browserPost, FinancialAccount, FinancialAccountPayload, User } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 
@@ -14,6 +15,9 @@ export function FinancialAccountForm({ account, users = [] }: { account?: Financ
 
   async function submit(event: FormEvent<HTMLFormElement>, close?: () => void) {
     event.preventDefault();
+    if (account && !confirmTwice(`确定修改“${account.userName}”的财务账户吗？`, "请再次确认。授信额度修改后会立即生效。")) {
+      return;
+    }
     setPending(true);
     setMessage("");
     const formElement = event.currentTarget;

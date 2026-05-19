@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { browserPatch, clearAuth, PasswordChangePayload, User } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 import { Button } from "@/components/ui/button";
 import { PasswordInput } from "@/components/ui/password-input";
 import { roleLabel } from "@/lib/permissions";
@@ -33,6 +34,9 @@ export function PasswordSettingsForm() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!confirmTwice("确定修改当前账号密码吗？", "请再次确认。修改后当前账号的所有登录会话会失效。")) {
+      return;
+    }
     setPending(true);
     setMessage("");
     const form = new FormData(event.currentTarget);

@@ -12,6 +12,7 @@ import {
   type CopySettings,
   type CopySettingsPayload,
 } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 
 type CopyEntryDraft = CopyEntry & {
   id: string;
@@ -30,6 +31,9 @@ export function CopySettingsForm({ settings }: { settings: CopySettings }) {
 
   async function submit(event: FormEvent<HTMLFormElement>, close?: () => void) {
     event.preventDefault();
+    if (!confirmTwice("确定修改文案中心吗？", "请再次确认。保存后已接入的导航、按钮和标题文案会立即更新。")) {
+      return;
+    }
     setPending(true);
     setMessage("");
 
@@ -124,7 +128,11 @@ export function CopySettingsForm({ settings }: { settings: CopySettings }) {
                         </div>
                         <Button
                           disabled={entries.length <= 1}
-                          onClick={() => setEntries((current) => current.filter((item) => item.id !== entry.id))}
+                          onClick={() => {
+                            if (confirmTwice(`确定删除文案条目“${entry.key || entry.label || entry.value}”吗？`, "请再次确认。删除后该条目会在保存文案时移除。")) {
+                              setEntries((current) => current.filter((item) => item.id !== entry.id));
+                            }
+                          }}
                           size="icon"
                           type="button"
                           variant="ghost"

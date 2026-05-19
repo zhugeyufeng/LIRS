@@ -889,6 +889,8 @@ type MaterialRequestInput struct {
 
 type MaterialPurchase struct {
 	ID                           string    `json:"id"`
+	PurchaseSerialNo             string    `json:"purchaseSerialNo"`
+	MonthlyConfirmed             bool      `json:"monthlyConfirmed"`
 	MaterialID                   string    `json:"materialId,omitempty"`
 	MaterialName                 string    `json:"materialName"`
 	PurchasableMaterialID        string    `json:"purchasableMaterialId,omitempty"`
@@ -925,6 +927,22 @@ type MaterialPurchaseInput struct {
 	EstimatedUnitPrice    float64 `json:"estimatedUnitPrice"`
 	Supplier              string  `json:"supplier"`
 	Reason                string  `json:"reason"`
+}
+
+type MaterialPurchaseUpdateInput struct {
+	PurchasableMaterialID string  `json:"purchasableMaterialId"`
+	Quantity              int     `json:"quantity"`
+	EstimatedUnitPrice    float64 `json:"estimatedUnitPrice"`
+	Supplier              string  `json:"supplier"`
+	Reason                string  `json:"reason"`
+	Actor                 string  `json:"actor"`
+}
+
+type MaterialPurchaseMonthlyConfirmation struct {
+	ID          string    `json:"id"`
+	Month       string    `json:"month"`
+	ConfirmedBy string    `json:"confirmedBy"`
+	ConfirmedAt time.Time `json:"confirmedAt"`
 }
 
 type MaterialDamage struct {

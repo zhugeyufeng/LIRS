@@ -4,6 +4,7 @@ import { FormEvent, startTransition, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCheck, Megaphone, Pencil, Send, Trash2 } from "lucide-react";
 import { browserDelete, browserPatch, browserPost, Notification } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 
@@ -88,6 +89,9 @@ export function AnnouncementForm({
 
   async function submit(event: FormEvent<HTMLFormElement>, close?: () => void) {
     event.preventDefault();
+    if (isEdit && !confirmTwice(`确定修改公告“${initial?.title ?? ""}”吗？`, "请再次确认。修改后用户看到的公告内容会立即更新。")) {
+      return;
+    }
     setPending(true);
     setMessage("");
     const formElement = event.currentTarget;
@@ -186,7 +190,7 @@ export function DeleteNotificationButton({ id, selectedTenantId, title }: { id: 
   const [message, setMessage] = useState("");
 
   async function remove() {
-    if (!confirm(`确定删除“${title}”吗？`)) {
+    if (!confirmTwice(`确定删除“${title}”吗？`, "请再次确认删除该公告。删除后普通用户不会再看到这条公告。")) {
       return;
     }
     setPending(true);

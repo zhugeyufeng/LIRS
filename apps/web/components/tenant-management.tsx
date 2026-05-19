@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Building2, Pencil, Plus, Save } from "lucide-react";
 import { browserPatch, browserPost, Tenant, TenantPayload, User } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 
@@ -15,6 +16,9 @@ export function TenantManagement({ currentUser, tenants }: { currentUser: User; 
 
   async function saveTenant(event: FormEvent<HTMLFormElement>, tenant?: Tenant, close?: () => void) {
     event.preventDefault();
+    if (tenant && !confirmTwice(`确定修改单位/机构“${tenant.name}”吗？`, "请再次确认。机构名称、状态和财务模块开关会立即影响该机构用户。")) {
+      return;
+    }
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const payload: TenantPayload = {

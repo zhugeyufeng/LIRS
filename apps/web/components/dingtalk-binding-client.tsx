@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import { CheckCircle2, ExternalLink, Link2Off, Loader2, QrCode } from "lucide-react";
 import { browserDelete, browserPost, DingTalkBinding } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 import { Button } from "@/components/ui/button";
 
 export function DingTalkBindingClient({ binding }: { binding: DingTalkBinding }) {
@@ -52,6 +53,9 @@ export function DingTalkBindingClient({ binding }: { binding: DingTalkBinding })
   }, [authCode, bindError, router, state]);
 
   async function unbind() {
+    if (!confirmTwice("确定解除当前账号的钉钉绑定吗？", "请再次确认。解除后该账号不会继续接收个人钉钉通知。")) {
+      return;
+    }
     setPending(true);
     setMessage("");
     try {

@@ -4,6 +4,7 @@ import { type DragEvent, FormEvent, startTransition, useEffect, useMemo, useStat
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Download, GripVertical, PackagePlus, Pencil, Save, SlidersHorizontal, Trash2, Upload } from "lucide-react";
 import { browserDelete, browserPatch, browserPost, Material, MaterialAlertAction, MaterialAlertActionPayload, MaterialCategory, MaterialCategoryPayload, MaterialDamage, MaterialDamagePayload, MaterialImportResult, MaterialPayload, PurchasableMaterial, StockAdjustmentPayload } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 
@@ -199,6 +200,9 @@ export function MaterialEditForm({ material, categories = [] }: { material: Mate
 
   async function submit(event: FormEvent<HTMLFormElement>, close?: () => void) {
     event.preventDefault();
+    if (!confirmTwice(`确定修改资源“${material.name}”吗？`, "请再次确认。资源资料修改后列表和申领入口会立即更新。")) {
+      return;
+    }
     setPending(true);
     setMessage("");
     const payload = materialPayload(new FormData(event.currentTarget), material.status);
@@ -217,10 +221,7 @@ export function MaterialEditForm({ material, categories = [] }: { material: Mate
   }
 
   async function deleteMaterial(close?: () => void) {
-    if (!confirm(`确定删除“${material.name}”吗？删除后该资源会从默认列表和申领入口移除。`)) {
-      return;
-    }
-    if (!confirm("请再次确认删除资源。历史库存流水、申领和损毁记录会保留。")) {
+    if (!confirmTwice(`确定删除“${material.name}”吗？删除后该资源会从默认列表和申领入口移除。`, "请再次确认删除资源。历史库存流水、申领和损毁记录会保留。")) {
       return;
     }
     setPending(true);
@@ -644,6 +645,9 @@ export function MaterialCategoryForm({ categories }: { categories: MaterialCateg
 
   async function updateCategory(event: FormEvent<HTMLFormElement>, item: MaterialCategory) {
     event.preventDefault();
+    if (!confirmTwice(`确定修改目录“${item.name}”吗？`, "请再次确认。目录修改后新增资源的目录选项会立即更新。")) {
+      return;
+    }
     setPending(true);
     setMessage("");
     const form = new FormData(event.currentTarget);
@@ -669,11 +673,9 @@ export function MaterialCategoryForm({ categories }: { categories: MaterialCateg
   }
 
   async function deleteCategory(item: MaterialCategory) {
-    if (!confirm(`确定删除目录“${item.name}”吗？删除后该目录不会出现在新增资源的目录选项中。`)) {
-      return;
-    }
     const children = categorySiblings(orderedCategories, item.name);
-    if (children.length > 0 && !confirm(`该一级目录下还有 ${children.length} 个二级目录，请再次确认删除。`)) {
+    const secondMessage = children.length > 0 ? `该一级目录下还有 ${children.length} 个二级目录，请再次确认删除。` : "请再次确认删除该目录。删除后该目录不会出现在新增资源的目录选项中。";
+    if (!confirmTwice(`确定删除目录“${item.name}”吗？删除后该目录不会出现在新增资源的目录选项中。`, secondMessage)) {
       return;
     }
     setPending(true);

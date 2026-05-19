@@ -4,6 +4,7 @@ import { FormEvent, startTransition, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Pencil, Save, ShieldCheck } from "lucide-react";
 import { AccessControlSettings, AccessControlSettingsPayload, browserPatch } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -16,6 +17,9 @@ export function AccessControlSettingsForm({ settings }: { settings: AccessContro
 
   async function submit(event: FormEvent<HTMLFormElement>, close?: () => void) {
     event.preventDefault();
+    if (!confirmTwice("确定修改门禁权限对接设置吗？", "请再次确认。保存后仪器门禁授权和回收事件会按新设置执行。")) {
+      return;
+    }
     setPending(true);
     setMessage("");
 

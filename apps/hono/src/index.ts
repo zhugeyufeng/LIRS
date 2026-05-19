@@ -481,11 +481,14 @@ app.post("/api/procurement-projects", validateAndProxy(procurementProjectSchema)
 app.patch("/api/procurement-projects/:id", validateAndProxy(procurementProjectSchema));
 app.delete("/api/procurement-projects/:id", proxyToGo);
 app.post("/api/material-purchases", validateAndProxy(materialPurchaseSchema));
+app.patch("/api/material-purchases/:id", validateAndProxy(materialPurchaseSchema));
 app.patch("/api/material-purchases/:id/approve", validateOptionalJsonAndProxy(reservationDecisionSchema));
 app.patch("/api/material-purchases/:id/reject", validateOptionalJsonAndProxy(reservationDecisionSchema));
+app.patch("/api/material-purchases/:id/return", validateOptionalJsonAndProxy(reservationDecisionSchema));
 app.patch("/api/material-purchases/:id/order", validateOptionalJsonAndProxy(emptyJsonObject));
 app.patch("/api/material-purchases/:id/receive", validateOptionalJsonAndProxy(emptyJsonObject));
 app.patch("/api/material-purchases/:id/cancel", validateOptionalJsonAndProxy(emptyJsonObject));
+app.post("/api/material-purchases/monthly-confirmations", validateAndProxy(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) })));
 app.post("/api/purchasable-materials/import", proxyToGo);
 app.post("/api/material-damages", validateAndProxy(materialDamageSchema));
 app.patch("/api/material-damages/:id/approve", validateOptionalJsonAndProxy(reservationDecisionSchema));

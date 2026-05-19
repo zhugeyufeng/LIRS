@@ -6,6 +6,7 @@ import { Edit3, PlusCircle, Save } from "lucide-react";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 import { browserPatch, browserPost, type BusinessConfig, type BusinessConfigPayload } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 
 export function BusinessConfigForm({
   item,
@@ -22,6 +23,9 @@ export function BusinessConfigForm({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (item && !confirmTwice(`确定修改${title}“${item.title}”吗？`, "请再次确认。配置修改后相关业务规则会立即按新配置读取。")) {
+      return;
+    }
     setPending(true);
     setMessage("");
     const formElement = event.currentTarget;

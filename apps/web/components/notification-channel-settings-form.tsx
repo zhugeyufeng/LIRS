@@ -13,6 +13,7 @@ import {
   WeChatSettings,
   WeChatSettingsPayload,
 } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -26,6 +27,9 @@ export function NotificationChannelSettingsForm({ settings }: { settings: Notifi
 
   async function saveGraphMail(event: FormEvent<HTMLFormElement>, close?: () => void) {
     event.preventDefault();
+    if (!confirmTwice("确定修改 Microsoft Graph 邮件通道吗？", "请再次确认。保存后验证码和通知邮件会按新配置发送。")) {
+      return;
+    }
     const form = new FormData(event.currentTarget);
     const payload: GraphMailSettingsPayload = {
       enabled: form.get("enabled") === "on",
@@ -40,6 +44,9 @@ export function NotificationChannelSettingsForm({ settings }: { settings: Notifi
 
   async function saveWeChat(event: FormEvent<HTMLFormElement>, close?: () => void) {
     event.preventDefault();
+    if (!confirmTwice("确定修改微信通知通道吗？", "请再次确认。保存后微信通知预留接口参数会按新配置保存。")) {
+      return;
+    }
     const form = new FormData(event.currentTarget);
     const payload: WeChatSettingsPayload = {
       enabled: form.get("enabled") === "on",

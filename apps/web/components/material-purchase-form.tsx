@@ -3,7 +3,8 @@
 import { FormEvent, startTransition, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Download, Pencil, Save, Search, ShoppingCart, Trash2, Upload } from "lucide-react";
-import { browserDelete, browserPatch, browserPost, Material, MaterialImportResult, MaterialPurchase, MaterialPurchasePayload, ProcurementProject, ProcurementProjectPayload, PurchasableMaterial, PurchasableMaterialPayload } from "@/lib/api";
+import { browserDelete, browserPatch, browserPost, Material, MaterialImportResult, MaterialPurchase, MaterialPurchaseMonthlyConfirmation, MaterialPurchasePayload, ProcurementProject, ProcurementProjectPayload, PurchasableMaterial, PurchasableMaterialPayload } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 
@@ -11,18 +12,23 @@ export function MaterialPurchaseForm({
   inline = false,
   material,
   materials,
+  onSaved,
+  purchase,
   purchasableMaterials = [],
 }: {
   inline?: boolean;
   material?: Material;
   materials: Material[];
+  onSaved?: () => void;
+  purchase?: MaterialPurchase;
   purchasableMaterials?: PurchasableMaterial[];
 }) {
   const router = useRouter();
+  const editing = Boolean(purchase);
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState(false);
-  const [selectedPurchasableId, setSelectedPurchasableId] = useState("");
-  const [purchasableSearch, setPurchasableSearch] = useState("");
+  const [selectedPurchasableId, setSelectedPurchasableId] = useState(purchase?.purchasableMaterialId ?? "");
+  const [purchasableSearch, setPurchasableSearch] = useState(purchase ? materialPurchaseOptionLabel(purchase) : "");
   const selectedPurchasable = purchasableMaterials.find((item) => item.id === selectedPurchasableId);
   const hasAvailablePurchasableMaterials = purchasableMaterials.some((item) => !purchasableMaterialExpired(item));
   const visiblePurchasableOptions = useMemo(() => {
@@ -49,14 +55,26 @@ export function MaterialPurchaseForm({
       setMessage("请选择申购物品");
       return;
     }
+    if (purchase?.monthlyConfirmed) {
+      setMessage("该申购单所在月份已确认，不能修改后重新提交。");
+      return;
+    }
+    if (editing && !confirmTwice(`确定修改并重新提交申购单“${purchase?.purchaseSerialNo || purchase?.id}”吗？`, "请再次确认。重新提交后该申购单会回到已登记状态。")) {
+      return;
+    }
     setPending(true);
     try {
-      const purchase = await browserPost<MaterialPurchase>("/api/material-purchases", payload);
-      setMessage(`申购已提交：${purchase.materialName} x${purchase.quantity}`);
-      formElement.reset();
-      setSelectedPurchasableId("");
-      setPurchasableSearch("");
+      const saved = editing && purchase
+        ? await browserPatch<MaterialPurchase>(`/api/material-purchases/${purchase.id}`, payload)
+        : await browserPost<MaterialPurchase>("/api/material-purchases", payload);
+      setMessage(`${editing ? "申购已修改并重新提交" : "申购已登记"}：${saved.purchaseSerialNo || saved.id} / ${saved.materialName} x${saved.quantity}`);
+      if (!editing) {
+        formElement.reset();
+        setSelectedPurchasableId("");
+        setPurchasableSearch("");
+      }
       close?.();
+      onSaved?.();
       startTransition(() => {
         router.refresh();
       });
@@ -125,14 +143,14 @@ export function MaterialPurchaseForm({
         </div>
       ) : null}
       <div className="grid gap-3 sm:grid-cols-2">
-        <input className="h-10 min-w-0 rounded-md border bg-white px-3 text-sm" min={1} name="quantity" placeholder="申购数量" required type="number" />
-        <input className="h-10 min-w-0 rounded-md border bg-white px-3 text-sm" defaultValue={material ? undefined : selectedPurchasable?.purchasePrice} key={selectedPurchasable?.id ?? "estimatedUnitPrice"} min={0} name="estimatedUnitPrice" placeholder="预计单价" required step="0.01" type="number" />
+        <input className="h-10 min-w-0 rounded-md border bg-white px-3 text-sm" defaultValue={purchase?.quantity} min={1} name="quantity" placeholder="申购数量" required type="number" />
+        <input className="h-10 min-w-0 rounded-md border bg-white px-3 text-sm" defaultValue={purchase?.estimatedUnitPrice ?? (material ? undefined : selectedPurchasable?.purchasePrice)} key={`${selectedPurchasable?.id ?? "estimatedUnitPrice"}:${purchase?.id ?? "new"}`} min={0} name="estimatedUnitPrice" placeholder="预计单价" required step="0.01" type="number" />
       </div>
-      <input className="h-10 w-full rounded-md border bg-white px-3 text-sm" name="supplier" placeholder="供应商，可留空沿用资源资料" />
-      <input className="h-10 w-full rounded-md border bg-white px-3 text-sm" name="reason" placeholder="申购原因" required />
+      <input className="h-10 w-full rounded-md border bg-white px-3 text-sm" defaultValue={purchase?.supplier} name="supplier" placeholder="供应商，可留空沿用资源资料" />
+      <input className="h-10 w-full rounded-md border bg-white px-3 text-sm" defaultValue={purchase?.reason} name="reason" placeholder="申购原因" required />
       <div className="flex justify-end">
         <Button className="w-full sm:w-auto" disabled={pending} type="submit">
-          {pending ? "提交中..." : "提交申购"}
+          {pending ? "提交中..." : editing ? "修改并重新提交" : "登记申购"}
         </Button>
       </div>
     </form>
@@ -150,7 +168,7 @@ export function MaterialPurchaseForm({
   return (
     <div className="space-y-2">
       <AdminDialog
-        description="申购提交后进入审批流程，审批、下单和入库在申购管理列表中处理。"
+        description="申购登记后会生成独立流水号，管理员可退回修改、标记下单或到货入库。"
         title="新建申购"
         trigger={
           <Button className="w-full" disabled={pending || (!material && !hasAvailablePurchasableMaterials)}>
@@ -188,6 +206,9 @@ export function PurchasableMaterialManager({ items, projects }: { items: Purchas
   async function submit(event: FormEvent<HTMLFormElement>, close?: () => void, item?: PurchasableMaterial) {
     event.preventDefault();
     const pendingKey = item ? `edit:${item.id}` : "save";
+    if (item && !confirmTwice(`确定修改可采购物资“${item.projectName}”吗？`, "请再次确认。修改后新的申购会按更新后的目录信息登记。")) {
+      return;
+    }
     setPending(pendingKey);
     setMessage("");
     const form = new FormData(event.currentTarget);
@@ -223,6 +244,10 @@ export function PurchasableMaterialManager({ items, projects }: { items: Purchas
   }
 
   async function remove(id: string) {
+    const item = items.find((entry) => entry.id === id);
+    if (!confirmTwice(`确定删除可采购物资“${item?.projectName ?? id}”吗？`, "请再次确认。删除后该物资不会再出现在新建申购选择中。")) {
+      return;
+    }
     setPending(id);
     setMessage("");
     try {
@@ -364,6 +389,9 @@ export function ProcurementProjectManager({ projects }: { projects: ProcurementP
   async function submit(event: FormEvent<HTMLFormElement>, close?: () => void, project?: ProcurementProject) {
     event.preventDefault();
     const pendingKey = project ? `project:${project.id}` : "project:new";
+    if (project && !confirmTwice(`确定修改采购项目“${project.name}”吗？`, "请再次确认。有效期和状态会影响后续申购选择。")) {
+      return;
+    }
     setPending(pendingKey);
     setMessage("");
     const form = new FormData(event.currentTarget);
@@ -389,6 +417,10 @@ export function ProcurementProjectManager({ projects }: { projects: ProcurementP
   }
 
   async function remove(id: string) {
+    const project = projects.find((item) => item.id === id);
+    if (!confirmTwice(`确定停用采购项目“${project?.name ?? id}”吗？`, "请再次确认。停用后关联物资不能继续申购。")) {
+      return;
+    }
     setPending(`project-delete:${id}`);
     setMessage("");
     try {
@@ -485,6 +517,43 @@ export function ProcurementProjectManager({ projects }: { projects: ProcurementP
       </div>
       {projects.length === 0 ? <p className="rounded-lg border p-4 text-sm text-slate-500">暂无采购项目。</p> : null}
       {message ? <p className="text-sm text-slate-500">{message}</p> : null}
+    </div>
+  );
+}
+
+export function MaterialPurchaseMonthConfirmButton({ month }: { month?: string }) {
+  const router = useRouter();
+  const [value, setValue] = useState(month ?? new Date().toISOString().slice(0, 7));
+  const [message, setMessage] = useState("");
+  const [pending, setPending] = useState(false);
+
+  async function confirmMonth() {
+    if (!confirmTwice(`确定确认 ${value} 的申购汇总吗？`, "请再次确认。确认后该月所有申购不能退回、取消或修改重新提交。")) {
+      return;
+    }
+    setPending(true);
+    setMessage("");
+    try {
+      await browserPost<MaterialPurchaseMonthlyConfirmation>("/api/material-purchases/monthly-confirmations", { month: value });
+      setMessage(`${value} 申购汇总已确认。`);
+      startTransition(() => router.refresh());
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "确认失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <label className="block space-y-2">
+        <span className="text-sm font-medium">汇总月份</span>
+        <input className="h-10 w-full rounded-md border bg-white px-3 text-sm" onChange={(event) => setValue(event.currentTarget.value)} type="month" value={value} />
+      </label>
+      <Button className="w-full" disabled={pending || value === ""} onClick={confirmMonth} type="button" variant="outline">
+        {pending ? "确认中..." : "确认当月申购汇总"}
+      </Button>
+      {message ? <p className="text-xs text-slate-500">{message}</p> : null}
     </div>
   );
 }
@@ -688,6 +757,8 @@ function DownloadButton({ filename, label, path }: { filename: string; label: st
 
 export function MaterialPurchaseActions({
   id,
+  purchase,
+  purchasableMaterials = [],
   status,
   canReview = false,
   canOrder = false,
@@ -695,6 +766,8 @@ export function MaterialPurchaseActions({
   canCancel = true,
 }: {
   id: string;
+  purchase: MaterialPurchase;
+  purchasableMaterials?: PurchasableMaterial[];
   status: string;
   canReview?: boolean;
   canOrder?: boolean;
@@ -703,11 +776,13 @@ export function MaterialPurchaseActions({
 }) {
   const router = useRouter();
   const [message, setMessage] = useState("");
-  const [approveComment, setApproveComment] = useState("");
-  const [rejectComment, setRejectComment] = useState("");
+  const [returnComment, setReturnComment] = useState("");
   const [pending, setPending] = useState(false);
 
-  async function patch(path: string, payload?: unknown, close?: () => void) {
+  async function patch(path: string, payload: unknown | undefined, close: (() => void) | undefined, firstConfirm: string, secondConfirm: string) {
+    if (!confirmTwice(firstConfirm, secondConfirm)) {
+      return;
+    }
     setPending(true);
     setMessage("");
     try {
@@ -724,85 +799,71 @@ export function MaterialPurchaseActions({
     }
   }
 
+  const locked = purchase.monthlyConfirmed;
+
   return (
     <div className="grid w-full gap-2 sm:flex sm:flex-wrap sm:items-center">
-      {status === "pending" && canReview ? (
-        <>
-          <AdminDialog
-            description="填写审批意见后通过该申购单。"
-            title="通过申购"
-            trigger={
-              <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => setApproveComment("")} size="sm">
-                通过
-              </Button>
-            }
-          >
-            {(close) => (
-              <div className="space-y-4">
-                <label className="block space-y-2">
-                  <span className="text-sm font-medium">审批意见</span>
-                  <input
-                    className="h-10 w-full rounded border bg-white px-3 text-sm"
-                    onChange={(event) => setApproveComment(event.target.value)}
-                    placeholder="填写该申购单的审批意见"
-                    value={approveComment}
-                  />
-                  <span className="block break-all text-xs text-slate-500">当前申购单 ID：{id}</span>
-                </label>
-                <div className="flex justify-end">
-                  <Button className="w-full sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-purchases/${id}/approve`, { comment: approveComment }, close)} type="button">
-                    确认通过
-                  </Button>
-                </div>
+      {status === "registered" && canReview && !locked ? (
+        <AdminDialog
+          description="退回后申请人可以修改申购物品、数量、单价、供应商和原因，再重新提交。"
+          title="退回修改"
+          trigger={
+            <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => setReturnComment("")} size="sm" variant="outline">
+              退回修改
+            </Button>
+          }
+        >
+          {(close) => (
+            <div className="space-y-4">
+              <label className="block space-y-2">
+                <span className="text-sm font-medium">退回说明</span>
+                <input
+                  className="h-10 w-full rounded border bg-white px-3 text-sm"
+                  onChange={(event) => setReturnComment(event.target.value)}
+                  placeholder="填写需要申请人修改的内容"
+                  value={returnComment}
+                />
+                <span className="block break-all text-xs text-slate-500">申购流水号：{purchase.purchaseSerialNo || id}</span>
+              </label>
+              <div className="flex justify-end">
+                <Button className="w-full sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-purchases/${id}/return`, { comment: returnComment }, close, `确定退回申购单“${purchase.purchaseSerialNo || id}”吗？`, "请再次确认。退回后申请人需要修改并重新提交。")} type="button" variant="outline">
+                  确认退回
+                </Button>
               </div>
-            )}
-          </AdminDialog>
-          <AdminDialog
-            description="填写拒绝原因后驳回该申购单。"
-            title="拒绝申购"
-            trigger={
-              <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => setRejectComment("")} size="sm" variant="outline">
-                拒绝
-              </Button>
-            }
-          >
-            {(close) => (
-              <div className="space-y-4">
-                <label className="block space-y-2">
-                  <span className="text-sm font-medium">拒绝原因</span>
-                  <input
-                    className="h-10 w-full rounded border bg-white px-3 text-sm"
-                    onChange={(event) => setRejectComment(event.target.value)}
-                    placeholder="填写该申购单的拒绝原因"
-                    value={rejectComment}
-                  />
-                  <span className="block break-all text-xs text-slate-500">当前申购单 ID：{id}</span>
-                </label>
-                <div className="flex justify-end">
-                  <Button className="w-full sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-purchases/${id}/reject`, { comment: rejectComment }, close)} type="button" variant="outline">
-                    确认拒绝
-                  </Button>
-                </div>
-              </div>
-            )}
-          </AdminDialog>
-        </>
+            </div>
+          )}
+        </AdminDialog>
       ) : null}
-      {status === "approved" && canOrder ? (
-        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-purchases/${id}/order`)} size="sm" variant="outline">
+      {status === "returned" && !locked && (canCancel || canReview) ? (
+        <AdminDialog
+          description="退回后的申购单可以修改内容并重新登记，仍保留原流水号。"
+          maxWidth="max-w-3xl"
+          title="修改退回申购"
+          trigger={
+            <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} size="sm" variant="outline">
+              修改
+            </Button>
+          }
+        >
+          {(close) => <MaterialPurchaseForm inline materials={[]} onSaved={close} purchase={purchase} purchasableMaterials={purchasableMaterials} />}
+        </AdminDialog>
+      ) : null}
+      {status === "registered" && canOrder ? (
+        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-purchases/${id}/order`, undefined, undefined, `确定将申购单“${purchase.purchaseSerialNo || id}”标记为已下单吗？`, "请再次确认。该申购单会进入已下单状态。")} size="sm" variant="outline">
           标记下单
         </Button>
       ) : null}
-      {(status === "approved" || status === "ordered") && canReceive ? (
-        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-purchases/${id}/receive`)} size="sm">
+      {(status === "registered" || status === "ordered") && canReceive ? (
+        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-purchases/${id}/receive`, undefined, undefined, `确定将申购单“${purchase.purchaseSerialNo || id}”到货入库吗？`, "请再次确认。系统会按关联资源写入库存流水。")} size="sm">
           到货入库
         </Button>
       ) : null}
-      {canCancel && (status === "pending" || status === "approved" || status === "ordered") ? (
-        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-purchases/${id}/cancel`)} size="sm" variant="ghost">
+      {canCancel && !locked && (status === "registered" || status === "returned" || status === "ordered") ? (
+        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-purchases/${id}/cancel`, undefined, undefined, `确定取消申购单“${purchase.purchaseSerialNo || id}”吗？`, "请再次确认。取消后该申购单不能继续下单或入库。")} size="sm" variant="ghost">
           取消
         </Button>
       ) : null}
+      {locked && (status === "registered" || status === "returned" || status === "ordered") ? <span className="text-xs text-slate-500">本月已确认，不能退回、取消或修改。</span> : null}
       {message ? <span className="text-xs text-slate-500 sm:basis-full">{message}</span> : null}
     </div>
   );
@@ -810,12 +871,16 @@ export function MaterialPurchaseActions({
 
 function purchaseStatusLabel(status: string) {
   const labels: Record<string, string> = {
-    pending: "待审批",
-    approved: "已通过",
-    rejected: "已拒绝",
+    pending: "已登记",
+    registered: "已登记",
+    returned: "退回修改",
     ordered: "已下单",
     received: "已入库",
     cancelled: "已取消",
   };
   return labels[status] ?? status;
+}
+
+function materialPurchaseOptionLabel(item: MaterialPurchase) {
+  return `${item.purchaseIdNo} ${item.purchaseItemName || item.materialName} ${item.purchaseBrand} ${item.purchaseSpec}`;
 }

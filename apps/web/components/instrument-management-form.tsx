@@ -4,6 +4,7 @@ import { FormEvent, startTransition, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { browserDelete, browserPatch, browserPost, Instrument, InstrumentPayload, OrganizationUnit } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 import { formatServiceWindow } from "@/lib/instrument-rules";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
@@ -79,6 +80,9 @@ export function InstrumentStatusForm({
 
   async function submit(event: FormEvent<HTMLFormElement>, close?: () => void) {
     event.preventDefault();
+    if (!confirmTwice(`确定修改仪器“${instrument.name}”吗？`, "请再次确认。仪器信息修改后列表和预约入口会立即更新。")) {
+      return;
+    }
     setPending(true);
     setMessage("");
     const payload: InstrumentPayload = {
@@ -100,10 +104,7 @@ export function InstrumentStatusForm({
   }
 
   async function deleteInstrument(close?: () => void) {
-    if (!confirm(`确定删除“${instrument.name}”吗？删除后该仪器会立即从仪器列表、预约入口和维护选择中移除。`)) {
-      return;
-    }
-    if (!confirm("请再次确认删除仪器。关联的未完成预约会取消，历史预约和维护记录会保留为已删除仪器。")) {
+    if (!confirmTwice(`确定删除“${instrument.name}”吗？删除后该仪器会立即从仪器列表、预约入口和维护选择中移除。`, "请再次确认删除仪器。关联的未完成预约会取消，历史预约和维护记录会保留为已删除仪器。")) {
       return;
     }
     setPending(true);

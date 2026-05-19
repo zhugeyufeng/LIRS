@@ -131,7 +131,10 @@ type repository interface {
 	ImportPurchasableMaterials(ctx context.Context, input store.PurchasableMaterialImportInput) (store.MaterialImportResult, error)
 	MaterialPurchase(ctx context.Context, id string) (store.MaterialPurchase, error)
 	MaterialPurchases(ctx context.Context) ([]store.MaterialPurchase, error)
+	MaterialPurchaseMonthlyConfirmations(ctx context.Context) ([]store.MaterialPurchaseMonthlyConfirmation, error)
+	ConfirmMaterialPurchaseMonth(ctx context.Context, month string, actor string) (store.MaterialPurchaseMonthlyConfirmation, error)
 	CreateMaterialPurchase(ctx context.Context, input store.MaterialPurchaseInput) (store.MaterialPurchase, error)
+	UpdateMaterialPurchase(ctx context.Context, id string, input store.MaterialPurchaseUpdateInput) (store.MaterialPurchase, error)
 	ApproveMaterialPurchase(ctx context.Context, id string, approved bool, actor string, comment string) (store.MaterialPurchase, error)
 	MarkMaterialPurchaseOrdered(ctx context.Context, id string, actor string) (store.MaterialPurchase, error)
 	ReceiveMaterialPurchase(ctx context.Context, id string, actor string) (store.MaterialPurchase, error)
@@ -1955,8 +1958,23 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			respond(c, item, err)
 		}
 	})
+	api.PATCH("/material-purchases/:id", func(c *gin.Context) {
+		actor, ok := requireActiveUser(c, repo)
+		if !ok {
+			return
+		}
+		if !authorizeMaterialPurchaseOwnerOrAdmin(c, repo, actor, c.Param("id")) {
+			return
+		}
+		var input store.MaterialPurchaseUpdateInput
+		if bindJSON(c, &input) {
+			input.Actor = actor.Name
+			item, err := repo.UpdateMaterialPurchase(c.Request.Context(), c.Param("id"), input)
+			respond(c, item, err)
+		}
+	})
 	api.PATCH("/material-purchases/:id/approve", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, "group_leader", "material_admin", "tenant_admin", "lab_admin", "super_admin")
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
 		if !ok {
 			return
 		}
@@ -1967,11 +1985,26 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			Comment string `json:"comment"`
 		}
 		_ = c.ShouldBindJSON(&input)
-		item, err := repo.ApproveMaterialPurchase(c.Request.Context(), c.Param("id"), true, actor.Name, input.Comment)
+		item, err := repo.ApproveMaterialPurchase(c.Request.Context(), c.Param("id"), false, actor.Name, input.Comment)
 		respond(c, item, err)
 	})
 	api.PATCH("/material-purchases/:id/reject", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, "group_leader", "material_admin", "tenant_admin", "lab_admin", "super_admin")
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		if !ok {
+			return
+		}
+		if !authorizeMaterialPurchaseReview(c, repo, actor, c.Param("id")) {
+			return
+		}
+		var input struct {
+			Comment string `json:"comment"`
+		}
+		_ = c.ShouldBindJSON(&input)
+		item, err := repo.ApproveMaterialPurchase(c.Request.Context(), c.Param("id"), false, actor.Name, input.Comment)
+		respond(c, item, err)
+	})
+	api.PATCH("/material-purchases/:id/return", func(c *gin.Context) {
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
 		if !ok {
 			return
 		}
@@ -2011,6 +2044,19 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 		item, err := repo.CancelMaterialPurchase(c.Request.Context(), c.Param("id"), actor.Name)
 		respond(c, item, err)
+	})
+	api.POST("/material-purchases/monthly-confirmations", func(c *gin.Context) {
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		if !ok {
+			return
+		}
+		var input struct {
+			Month string `json:"month"`
+		}
+		if bindJSON(c, &input) {
+			item, err := repo.ConfirmMaterialPurchaseMonth(c.Request.Context(), input.Month, actor.Name)
+			respond(c, item, err)
+		}
 	})
 	api.POST("/material-damages", func(c *gin.Context) {
 		actor, ok := requireActiveUser(c, repo)

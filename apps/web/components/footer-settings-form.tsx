@@ -12,6 +12,7 @@ import {
   FooterSettings,
   FooterSettingsPayload,
 } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 
 type SectionDraft = {
   id: string;
@@ -31,6 +32,9 @@ export function FooterSettingsForm({ settings }: { settings: FooterSettings }) {
 
   async function submit(event: FormEvent<HTMLFormElement>, close?: () => void) {
     event.preventDefault();
+    if (!confirmTwice("确定修改 Footer 页面吗？", "请再次确认。保存后全站底部和资源二维码网站域名会立即更新。")) {
+      return;
+    }
     setPending(true);
     setMessage("");
 
@@ -147,7 +151,11 @@ export function FooterSettingsForm({ settings }: { settings: FooterSettings }) {
                           <p className="text-sm font-medium">栏目 {index + 1}</p>
                           <Button
                             disabled={sections.length <= 1}
-                            onClick={() => setSections((current) => current.filter((item) => item.id !== section.id))}
+                            onClick={() => {
+                              if (confirmTwice(`确定删除底部栏目“${section.title || `栏目 ${index + 1}`}”吗？`, "请再次确认。删除后该栏目会在保存 Footer 页面时移除。")) {
+                                setSections((current) => current.filter((item) => item.id !== section.id));
+                              }
+                            }}
                             size="icon"
                             type="button"
                             variant="ghost"

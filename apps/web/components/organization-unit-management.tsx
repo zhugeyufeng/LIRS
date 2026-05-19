@@ -4,6 +4,7 @@ import { FormEvent, startTransition, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { browserDelete, browserPatch, browserPost, OrganizationUnit, OrganizationUnitPayload, Tenant, User } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 
@@ -185,6 +186,9 @@ function UnitRow({
 
   async function submit(event: FormEvent<HTMLFormElement>, close?: () => void) {
     event.preventDefault();
+    if (!confirmTwice(`确定修改“${unit.name}”吗？`, "请再次确认。组织信息修改后相关筛选和下拉选项会立即刷新。")) {
+      return;
+    }
     setPending(true);
     setMessage("");
     const form = new FormData(event.currentTarget);
@@ -208,7 +212,7 @@ function UnitRow({
   }
 
   async function deleteUnit() {
-    if (!confirm(`确定删除“${unit.name}”吗？删除前相关占用必须为 0。`)) {
+    if (!confirmTwice(`确定删除“${unit.name}”吗？删除前相关占用必须为 0。`, "请再次确认删除该组织条目。删除后相关下拉选项会立即刷新。")) {
       return;
     }
     setPending(true);

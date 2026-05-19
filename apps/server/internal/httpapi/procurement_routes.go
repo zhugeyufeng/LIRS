@@ -164,12 +164,13 @@ func registerProcurementRoutes(api *gin.RouterGroup, repo repository) {
 		c.Header("Content-Disposition", "attachment; filename=lirs-material-purchases-"+month+".csv")
 		writeCSVBOM(c)
 		writer := csv.NewWriter(c.Writer)
-		_ = writer.Write([]string{"ID号", "序号", "采购项目名称及编号", "项目名称", "品牌", "规格", "单位", "采购价（元）", "备注", "技术要求", "最小规格", "申购人"})
+		_ = writer.Write([]string{"申购流水号", "ID号", "序号", "采购项目名称及编号", "项目名称", "品牌", "规格", "单位", "采购价（元）", "备注", "技术要求", "最小规格", "申购人"})
 		for _, item := range filterMaterialPurchasesForActor(actor, items) {
 			if item.CreatedAt.Format("2006-01") != month {
 				continue
 			}
 			_ = writer.Write([]string{
+				item.PurchaseSerialNo,
 				item.PurchaseIDNo,
 				item.PurchaseSequenceNo,
 				item.PurchaseProjectName,

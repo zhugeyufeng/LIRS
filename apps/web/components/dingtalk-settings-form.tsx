@@ -4,6 +4,7 @@ import { FormEvent, startTransition, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Pencil, Save, Send } from "lucide-react";
 import { browserPatch, browserPost, DingTalkSettings, DingTalkSettingsPayload, DingTalkTestResult, Tenant, User } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -42,6 +43,9 @@ export function DingTalkSettingsForm({
 
   async function submit(event: FormEvent<HTMLFormElement>, close?: () => void) {
     event.preventDefault();
+    if (!confirmTwice(`确定修改“${selectedTenant.name}”的钉钉企业应用设置吗？`, "请再次确认。保存后扫码登录、事件订阅和钉钉通知会按新配置执行。")) {
+      return;
+    }
     const form = new FormData(event.currentTarget);
     const payload: DingTalkSettingsPayload = {
       schemaVersion: 2,

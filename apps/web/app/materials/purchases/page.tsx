@@ -15,11 +15,11 @@ export default async function MaterialPurchasesPage({
   const query = (params.q ?? "").trim().toLowerCase();
   const [materials, purchasableMaterials, purchases, currentUser] = await Promise.all([api.materials(), api.purchasableMaterials(), api.materialPurchases(), api.me()]);
   const isAdmin = isMaterialAdminRole(currentUser.role);
-  const canReview = isAdmin || currentUser.role === "group_leader";
+  const canManageActions = isAdmin;
   const visiblePurchases = purchases.filter((item) => {
     const matchesSearch =
       query === "" ||
-      [item.materialName, item.purchaseIdNo, item.purchaseProjectName, item.purchaseItemName, item.purchaseBrand, item.purchaseSpec, item.requester, item.groupName, item.supplier, item.reason].some((value) => value.toLowerCase().includes(query));
+      [item.purchaseSerialNo, item.materialName, item.purchaseIdNo, item.purchaseProjectName, item.purchaseItemName, item.purchaseBrand, item.purchaseSpec, item.requester, item.groupName, item.supplier, item.reason].some((value) => value.toLowerCase().includes(query));
     const matchesStatus = !params.status || item.status === params.status;
     return matchesSearch && matchesStatus;
   });
@@ -28,7 +28,7 @@ export default async function MaterialPurchasesPage({
     <AppShell currentUser={currentUser}>
       <div className="mb-6">
         <h1 className="text-2xl font-bold">资源申购</h1>
-        <p className="mt-1 text-sm text-muted-foreground">提交标准品/标准物质、试剂或耗材采购申请，跟踪审批、下单和到货入库状态。</p>
+        <p className="mt-1 text-sm text-muted-foreground">登记标准品/标准物质、试剂或耗材申购，跟踪退回修改、下单和到货入库状态。</p>
       </div>
 
       <MaterialsNav active="purchases" />
@@ -46,9 +46,8 @@ export default async function MaterialPurchasesPage({
               </div>
               <select className="h-10 min-w-0 rounded-md border bg-white px-3 text-sm" defaultValue={params.status ?? ""} name="status">
                 <option value="">全部状态</option>
-                <option value="pending">待审批</option>
-                <option value="approved">已通过</option>
-                <option value="rejected">已拒绝</option>
+                <option value="registered">已登记</option>
+                <option value="returned">退回修改</option>
                 <option value="ordered">已下单</option>
                 <option value="received">已入库</option>
                 <option value="cancelled">已取消</option>
@@ -60,7 +59,7 @@ export default async function MaterialPurchasesPage({
 
             <div className="grid gap-3 xl:hidden">
               {visiblePurchases.map((item) => (
-                <MaterialPurchaseCard currentUserId={currentUser.id} isAdmin={isAdmin} item={item} key={item.id} canReview={canReview} />
+                <MaterialPurchaseCard currentUserId={currentUser.id} isAdmin={isAdmin} item={item} key={item.id} canManageActions={canManageActions} purchasableMaterials={purchasableMaterials} />
               ))}
             </div>
 
@@ -81,6 +80,7 @@ export default async function MaterialPurchasesPage({
                     <tr key={item.id}>
                       <td className="break-words p-3 align-top">
                         <p className="font-bold">{purchaseTitle(item)}</p>
+                        <p className="mt-1 text-xs font-medium text-slate-500">{item.purchaseSerialNo || item.id}</p>
                         <p className="mt-1 text-xs text-slate-500">数量 {item.quantity} / {item.purchaseBrand || item.supplier || "未指定品牌"}</p>
                         {item.purchaseProjectName ? <p className="mt-1 break-words text-xs text-slate-500">{item.purchaseProjectName}</p> : null}
                       </td>
@@ -96,10 +96,12 @@ export default async function MaterialPurchasesPage({
                       <td className="p-3 align-top">
                         <MaterialPurchaseActions
                           canCancel={isAdmin || item.requesterId === currentUser.id}
-                          canOrder={isAdmin}
-                          canReceive={isAdmin && Boolean(item.materialId)}
-                          canReview={canReview}
+                          canOrder={canManageActions}
+                          canReceive={canManageActions && Boolean(item.materialId)}
+                          canReview={canManageActions}
                           id={item.id}
+                          purchase={item}
+                          purchasableMaterials={purchasableMaterials}
                           status={item.status}
                         />
                       </td>
@@ -129,20 +131,23 @@ export default async function MaterialPurchasesPage({
 
 function MaterialPurchaseCard({
   item,
-  canReview,
+  canManageActions,
   currentUserId,
   isAdmin,
+  purchasableMaterials,
 }: {
   item: MaterialPurchase;
-  canReview: boolean;
+  canManageActions: boolean;
   currentUserId: string;
   isAdmin: boolean;
+  purchasableMaterials: Awaited<ReturnType<typeof api.purchasableMaterials>>;
 }) {
   return (
     <div className="rounded-lg border bg-white p-4">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
         <div className="min-w-0">
           <p className="break-words font-bold text-slate-900">{purchaseTitle(item)} x{item.quantity}</p>
+          <p className="mt-1 break-words text-xs font-medium text-slate-500">{item.purchaseSerialNo || item.id}</p>
           <p className="mt-1 break-words text-sm text-slate-500">{item.requester} / {item.groupName}</p>
           {item.purchaseProjectName ? <p className="mt-1 break-words text-xs text-slate-500">{item.purchaseProjectName}</p> : null}
         </div>
@@ -156,10 +161,12 @@ function MaterialPurchaseCard({
       <div className="mt-3">
         <MaterialPurchaseActions
           canCancel={isAdmin || item.requesterId === currentUserId}
-          canOrder={isAdmin}
-          canReceive={isAdmin && Boolean(item.materialId)}
-          canReview={canReview}
+          canOrder={canManageActions}
+          canReceive={canManageActions && Boolean(item.materialId)}
+          canReview={canManageActions}
           id={item.id}
+          purchase={item}
+          purchasableMaterials={purchasableMaterials}
           status={item.status}
         />
       </div>
@@ -178,9 +185,9 @@ function InfoItem({ label, value }: { label: string; value: string }) {
 
 function purchaseStatusLabel(status: string) {
   const labels: Record<string, string> = {
-    pending: "待审批",
-    approved: "已通过",
-    rejected: "已拒绝",
+    pending: "已登记",
+    registered: "已登记",
+    returned: "退回修改",
     ordered: "已下单",
     received: "已入库",
     cancelled: "已取消",

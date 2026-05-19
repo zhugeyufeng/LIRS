@@ -954,6 +954,8 @@ export type MaterialRequest = {
 
 export type MaterialPurchase = {
   id: string;
+  purchaseSerialNo: string;
+  monthlyConfirmed: boolean;
   materialId?: string;
   materialName: string;
   purchasableMaterialId?: string;
@@ -1010,6 +1012,13 @@ export type MaterialPurchasePayload = {
   estimatedUnitPrice: number;
   supplier: string;
   reason: string;
+};
+
+export type MaterialPurchaseMonthlyConfirmation = {
+  id: string;
+  month: string;
+  confirmedBy: string;
+  confirmedAt: string;
 };
 
 export type PurchasableMaterial = {

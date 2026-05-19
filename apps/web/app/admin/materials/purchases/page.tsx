@@ -1,7 +1,7 @@
 import { Search } from "lucide-react";
 import { AdminShell, requireAdminSection } from "@/components/admin-shell";
 import { MaterialPurchaseAdminNav } from "@/components/material-purchase-admin-nav";
-import { MaterialPurchaseActions, MaterialPurchaseForm } from "@/components/material-purchase-form";
+import { MaterialPurchaseActions, MaterialPurchaseForm, MaterialPurchaseMonthConfirmButton } from "@/components/material-purchase-form";
 import { MaterialsNav } from "@/components/materials-nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, MaterialPurchase } from "@/lib/api";
@@ -24,20 +24,20 @@ export default async function AdminMaterialPurchasesPage({
   const visiblePurchases = purchases.filter((item) => {
     const matchesSearch =
       query === "" ||
-      [item.materialName, item.purchaseIdNo, item.purchaseProjectName, item.purchaseItemName, item.purchaseBrand, item.purchaseSpec, item.requester, item.groupName, item.supplier, item.reason].some((value) => value.toLowerCase().includes(query));
+      [item.purchaseSerialNo, item.materialName, item.purchaseIdNo, item.purchaseProjectName, item.purchaseItemName, item.purchaseBrand, item.purchaseSpec, item.requester, item.groupName, item.supplier, item.reason].some((value) => value.toLowerCase().includes(query));
     const matchesStatus = !params.status || item.status === params.status;
     return matchesSearch && matchesStatus;
   });
   return (
-    <AdminShell active="materials" title="资源申购管理" description="独立处理标准品/标准物质、试剂和耗材申购、审批、下单和到货入库；到货会自动增加库存并写入库存流水。">
+    <AdminShell active="materials" title="资源申购管理" description="独立处理标准品/标准物质、试剂和耗材申购登记、退回修改、下单和到货入库；到货会自动增加库存并写入库存流水。">
       <MaterialsNav active="purchases" admin />
       <MaterialPurchaseAdminNav active="orders" />
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="全部申购" value={purchases.length} />
         <Metric label="可采购目录" value={purchasableMaterials.length} />
-        <Metric label="待审批" value={purchases.filter((item) => item.status === "pending").length} />
-        <Metric label="待入库" value={purchases.filter((item) => item.materialId && (item.status === "approved" || item.status === "ordered")).length} />
+        <Metric label="已登记" value={purchases.filter((item) => item.status === "registered").length} />
+        <Metric label="待入库" value={purchases.filter((item) => item.materialId && (item.status === "registered" || item.status === "ordered")).length} />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -53,9 +53,8 @@ export default async function AdminMaterialPurchasesPage({
               </div>
               <select className="h-10 min-w-0 rounded-md border bg-white px-3 text-sm" defaultValue={params.status ?? ""} name="status">
                 <option value="">全部状态</option>
-                <option value="pending">待审批</option>
-                <option value="approved">已通过</option>
-                <option value="rejected">已拒绝</option>
+                <option value="registered">已登记</option>
+                <option value="returned">退回修改</option>
                 <option value="ordered">已下单</option>
                 <option value="received">已入库</option>
                 <option value="cancelled">已取消</option>
@@ -67,7 +66,7 @@ export default async function AdminMaterialPurchasesPage({
 
             <div className="grid gap-3 xl:hidden">
               {visiblePurchases.map((item) => (
-                <MaterialPurchaseCard canManageActions={canManageActions} item={item} key={item.id} />
+                <MaterialPurchaseCard canManageActions={canManageActions} item={item} key={item.id} purchasableMaterials={purchasableMaterials} />
               ))}
             </div>
 
@@ -88,6 +87,7 @@ export default async function AdminMaterialPurchasesPage({
                     <tr key={item.id}>
                       <td className="break-words p-3 align-top">
                         <p className="font-bold">{purchaseTitle(item)}</p>
+                        <p className="mt-1 text-xs font-medium text-slate-500">{item.purchaseSerialNo || item.id}</p>
                         <p className="mt-1 text-xs text-slate-500">数量 {item.quantity} / {item.purchaseBrand || item.supplier || "未指定品牌"}</p>
                         {item.purchaseProjectName ? <p className="mt-1 break-words text-xs text-slate-500">{item.purchaseProjectName}</p> : null}
                       </td>
@@ -101,7 +101,7 @@ export default async function AdminMaterialPurchasesPage({
                         <span className="rounded bg-slate-100 px-2 py-1 text-xs font-bold">{purchaseStatusLabel(item.status)}</span>
                       </td>
                       <td className="p-3 align-top">
-                        <MaterialPurchaseActions canOrder={canManageActions} canReceive={canManageActions && Boolean(item.materialId)} canReview={canManageActions} id={item.id} status={item.status} />
+                        <MaterialPurchaseActions canCancel={canManageActions} canOrder={canManageActions} canReceive={canManageActions && Boolean(item.materialId)} canReview={canManageActions} id={item.id} purchase={item} purchasableMaterials={purchasableMaterials} status={item.status} />
                       </td>
                     </tr>
                   ))}
@@ -115,12 +115,15 @@ export default async function AdminMaterialPurchasesPage({
         <aside className="min-w-0 space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>新建申购</CardTitle>
+              <CardTitle>新建申购与汇总</CardTitle>
             </CardHeader>
             <CardContent>
               <MaterialPurchaseForm materials={materials} purchasableMaterials={purchasableMaterials} />
               <div className="mt-4">
                 <DownloadMonthlyButton />
+              </div>
+              <div className="mt-4 border-t pt-4">
+                <MaterialPurchaseMonthConfirmButton />
               </div>
             </CardContent>
           </Card>
@@ -130,12 +133,13 @@ export default async function AdminMaterialPurchasesPage({
   );
 }
 
-function MaterialPurchaseCard({ canManageActions, item }: { canManageActions: boolean; item: MaterialPurchase }) {
+function MaterialPurchaseCard({ canManageActions, item, purchasableMaterials }: { canManageActions: boolean; item: MaterialPurchase; purchasableMaterials: Awaited<ReturnType<typeof api.purchasableMaterials>> }) {
   return (
     <div className="rounded-lg border bg-white p-4">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
         <div className="min-w-0">
           <p className="break-words font-bold text-slate-900">{purchaseTitle(item)} x{item.quantity}</p>
+          <p className="mt-1 break-words text-xs font-medium text-slate-500">{item.purchaseSerialNo || item.id}</p>
           <p className="mt-1 break-words text-sm text-slate-500">{item.requester} / {item.groupName}</p>
           {item.purchaseProjectName ? <p className="mt-1 break-words text-xs text-slate-500">{item.purchaseProjectName}</p> : null}
         </div>
@@ -147,7 +151,7 @@ function MaterialPurchaseCard({ canManageActions, item }: { canManageActions: bo
       </div>
       <p className="mt-3 break-words text-sm text-slate-600">{item.reason}</p>
       <div className="mt-3">
-        <MaterialPurchaseActions canOrder={canManageActions} canReceive={canManageActions && Boolean(item.materialId)} canReview={canManageActions} id={item.id} status={item.status} />
+        <MaterialPurchaseActions canCancel={canManageActions} canOrder={canManageActions} canReceive={canManageActions && Boolean(item.materialId)} canReview={canManageActions} id={item.id} purchase={item} purchasableMaterials={purchasableMaterials} status={item.status} />
       </div>
     </div>
   );
@@ -173,9 +177,9 @@ function Metric({ label, value }: { label: string; value: number | string }) {
 
 function purchaseStatusLabel(status: string) {
   const labels: Record<string, string> = {
-    pending: "待审批",
-    approved: "已通过",
-    rejected: "已拒绝",
+    pending: "已登记",
+    registered: "已登记",
+    returned: "退回修改",
     ordered: "已下单",
     received: "已入库",
     cancelled: "已取消",
