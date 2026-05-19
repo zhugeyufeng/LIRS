@@ -11,7 +11,7 @@ type SearchParams = {
 
 export default async function MaterialPurchaseNewPage({ searchParams }: { searchParams?: Promise<SearchParams> }) {
   const params = (await searchParams) ?? {};
-  const materials = await api.materials();
+  const [materials, purchasableMaterials] = await Promise.all([api.materials(), api.purchasableMaterials()]);
   const material = params.materialId ? materials.find((item) => item.id === params.materialId) : undefined;
 
   return (
@@ -37,7 +37,7 @@ export default async function MaterialPurchaseNewPage({ searchParams }: { search
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <MaterialPurchaseForm inline material={material} materials={materials} />
+              <MaterialPurchaseForm inline material={material} materials={materials} purchasableMaterials={purchasableMaterials} />
             </CardContent>
           </Card>
         </section>

@@ -29,7 +29,7 @@ export default async function AdminPage() {
   const managementLinks = [
     { href: "/admin/users", icon: UsersRound, title: "用户管理", description: "用户审核、机构归属、角色分配和部门基础数据。", section: "users" },
     { href: "/admin/instruments", icon: ThermometerSun, title: "仪器资源后台", description: "仪器档案、状态、预约规则、可预约时段和门禁绑定。", section: "instruments" },
-    { href: "/admin/materials", icon: PackageSearch, title: "资源管理后台", description: "维护一级目录、二级目录，并进入标准品、试剂和耗材独立管理页。", section: "materials" },
+    { href: "/admin/materials/standards", icon: PackageSearch, title: "资源管理后台", description: "维护一级目录、二级目录，并进入标准品/标准物质、试剂和耗材独立管理页。", section: "materials" },
     { href: "/admin/training/questions", icon: GraduationCap, title: "培训与准入中心", description: "维护题库、实操考核、考试记录和仪器准入规则。", section: "trainingQuestions" },
     { href: "/admin/notifications", icon: Megaphone, title: "通知管理", description: "发布全局、部门或个人公告，并查看最近通知。", section: "notifications" },
     { href: "/admin/analytics", icon: BarChart3, title: "运营分析中心", description: "查看仪器、耗材、审批、财务和风险预警分析。", section: "analytics" },

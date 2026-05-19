@@ -28,7 +28,7 @@ export default async function MaterialRequestsPage({
     <AppShell currentUser={currentUser}>
       <div className="mb-6">
         <h1 className="text-2xl font-bold">申领管理</h1>
-        <p className="mt-1 text-sm text-muted-foreground">展示资源申领记录、审批状态和出库状态；新申领请在资源总览中选择具体资源。</p>
+        <p className="mt-1 text-sm text-muted-foreground">展示资源申领记录、审批状态和出库状态；新申领请在标准品/标准物质、试剂或耗材页面选择具体资源。</p>
       </div>
 
       <MaterialsNav active="requests" />

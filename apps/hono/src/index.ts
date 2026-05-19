@@ -15,7 +15,7 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:3000")
   .filter(Boolean);
 const defaultAllowedOrigin = allowedOrigins[0] ?? "http://localhost:3000";
 const maxRequestBodyBytes = Number(process.env.MAX_REQUEST_BODY_BYTES ?? 1024 * 1024);
-const proxyTimeoutMs = Number(process.env.PROXY_TIMEOUT_MS ?? 15000);
+const proxyTimeoutMs = Number(process.env.PROXY_TIMEOUT_MS ?? 60000);
 
 const app = new Hono();
 
@@ -122,6 +122,7 @@ const emptyJsonObject = z.object({});
 const footerSettingsSchema = z.object({
   brandName: z.string().min(1),
   brandTagline: z.string().min(1),
+  baseUrl: z.string().optional().default(""),
   description: z.string().min(1),
   copyright: z.string().min(1),
   sections: z.array(z.object({
@@ -175,6 +176,9 @@ const dingTalkSettingsSchema = z.object({
   eventCallbackUrl: z.string().optional().default(""),
   eventAesKey: z.string().optional(),
   eventToken: z.string().optional(),
+});
+const dingTalkTestSchema = z.object({
+  userId: z.string().min(1),
 });
 const dingTalkBindingSchema = z.object({
   authCode: z.string().min(1),
@@ -293,6 +297,7 @@ const materialSchema = z.object({
   storageSlot: z.string().optional().default(""),
   tenderContract: z.string().optional().default(""),
   contractNo: z.string().optional().default(""),
+  remark: z.string().optional().default(""),
   certificateUrl: z.string().optional().default(""),
   standardCertificateUrl: z.string().optional().default(""),
   attachmentUrl: z.string().optional().default(""),
@@ -325,13 +330,19 @@ const materialRequestSchema = z.object({
   purpose: z.string().min(1),
 });
 const materialPurchaseSchema = z.object({
-  materialId: z.string().min(1),
+  materialId: z.string().optional().default(""),
+  purchasableMaterialId: z.string().optional().default(""),
   requesterId: z.string().optional().default(""),
   requester: z.string().optional().default(""),
   quantity: z.coerce.number().int().positive(),
   estimatedUnitPrice: z.coerce.number().nonnegative(),
   supplier: z.string().optional().default(""),
   reason: z.string().min(1),
+});
+const procurementProjectSchema = z.object({
+  name: z.string().min(1),
+  expiresAt: z.string().optional().default(""),
+  status: z.enum(["active", "disabled"]).optional().default("active"),
 });
 const materialDamageSchema = z.object({
   materialId: z.string().min(1),
@@ -382,6 +393,7 @@ app.patch("/api/notification-channel-settings/smtp", validateAndProxy(smtpSettin
 app.patch("/api/notification-channel-settings/wechat", validateAndProxy(wechatSettingsSchema));
 app.get("/api/notification-channel-settings/dingtalk", proxyToGo);
 app.patch("/api/notification-channel-settings/dingtalk", validateAndProxy(dingTalkSettingsSchema));
+app.post("/api/notification-channel-settings/dingtalk/test", validateAndProxy(dingTalkTestSchema));
 app.post("/api/dingtalk/events", proxyToGo);
 app.post("/api/dingtalk/events/:tenant", proxyToGo);
 app.post("/api/me/dingtalk-binding", validateAndProxy(dingTalkBindingSchema));
@@ -431,6 +443,7 @@ app.post("/api/ledger/adjustments", validateAndProxy(ledgerAdjustmentSchema));
 app.post("/api/financial-accounts", validateAndProxy(financialAccountSchema));
 app.patch("/api/financial-accounts/:id", validateAndProxy(financialAccountSchema));
 app.post("/api/materials", validateAndProxy(materialSchema));
+app.post("/api/materials/import", proxyToGo);
 app.post("/api/materials/import.csv", proxyToGo);
 app.post("/api/materials/categories", validateAndProxy(materialCategorySchema));
 app.patch("/api/materials/categories/:id", validateAndProxy(materialCategorySchema));
@@ -444,12 +457,16 @@ app.patch("/api/material-requests/:id/approve", validateOptionalJsonAndProxy(res
 app.patch("/api/material-requests/:id/reject", validateOptionalJsonAndProxy(reservationDecisionSchema));
 app.patch("/api/material-requests/:id/outbound", validateOptionalJsonAndProxy(emptyJsonObject));
 app.patch("/api/material-requests/:id/cancel", validateOptionalJsonAndProxy(emptyJsonObject));
+app.post("/api/procurement-projects", validateAndProxy(procurementProjectSchema));
+app.patch("/api/procurement-projects/:id", validateAndProxy(procurementProjectSchema));
+app.delete("/api/procurement-projects/:id", proxyToGo);
 app.post("/api/material-purchases", validateAndProxy(materialPurchaseSchema));
 app.patch("/api/material-purchases/:id/approve", validateOptionalJsonAndProxy(reservationDecisionSchema));
 app.patch("/api/material-purchases/:id/reject", validateOptionalJsonAndProxy(reservationDecisionSchema));
 app.patch("/api/material-purchases/:id/order", validateOptionalJsonAndProxy(emptyJsonObject));
 app.patch("/api/material-purchases/:id/receive", validateOptionalJsonAndProxy(emptyJsonObject));
 app.patch("/api/material-purchases/:id/cancel", validateOptionalJsonAndProxy(emptyJsonObject));
+app.post("/api/purchasable-materials/import", proxyToGo);
 app.post("/api/material-damages", validateAndProxy(materialDamageSchema));
 app.patch("/api/material-damages/:id/approve", validateOptionalJsonAndProxy(reservationDecisionSchema));
 app.patch("/api/material-damages/:id/reject", validateOptionalJsonAndProxy(reservationDecisionSchema));
@@ -489,6 +506,9 @@ function validateAndProxy(schema: z.ZodTypeAny) {
 
 function validateOptionalJsonAndProxy(schema: z.ZodTypeAny) {
   return async (c: Context) => {
+    if (!isJsonRequest(c)) {
+      return proxyToGo(c);
+    }
     const body = await c.req.json().catch(() => ({}));
     const parsed = schema.safeParse(body);
     if (!parsed.success) {
@@ -498,26 +518,41 @@ function validateOptionalJsonAndProxy(schema: z.ZodTypeAny) {
   };
 }
 
+function isJsonRequest(c: Context) {
+  const contentType = c.req.header("content-type") ?? "";
+  return contentType === "" || contentType.toLowerCase().includes("application/json");
+}
+
 async function proxyToGo(c: Context, overrideBody?: unknown) {
   const requestUrl = new URL(c.req.url);
   const upstreamUrl = `${goApiBaseUrl}${requestUrl.pathname}${requestUrl.search}`;
   const headers = forwardRequestHeaders(c.req.header());
   const method = c.req.method;
   const hasBody = !["GET", "HEAD"].includes(method);
+  const hasOverrideBody = overrideBody !== undefined && typeof overrideBody !== "function";
   let body: BodyInit | undefined;
-  if (overrideBody !== undefined) {
+  if (hasOverrideBody) {
     body = JSON.stringify(overrideBody);
   } else if (hasBody) {
-    const buffer = Buffer.from(await c.req.raw.clone().arrayBuffer());
+    const buffer = Buffer.from(await c.req.raw.arrayBuffer());
     body = buffer.byteLength === 0 ? undefined : buffer;
   }
-  if (overrideBody !== undefined) {
+  if (hasOverrideBody) {
     headers.set("Content-Type", "application/json");
   } else if (body !== undefined && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetchWithTimeout(upstreamUrl, { method, headers, body }, proxyTimeoutMs);
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(upstreamUrl, { method, headers, body }, proxyTimeoutMs);
+  } catch (error) {
+    const message = error instanceof Error && error.name === "AbortError" ? "后端接口超时，请稍后重试或联系管理员查看导入日志" : "后端接口不可用";
+    return new Response(JSON.stringify({ error: message }), {
+      status: 504,
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+    });
+  }
 
   const responseHeaders = new Headers(response.headers);
   responseHeaders.delete("content-encoding");

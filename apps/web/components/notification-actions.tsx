@@ -35,7 +35,7 @@ export function MarkNotificationRead({ id, read }: { id: string; read: boolean }
   );
 }
 
-export function MarkAllNotificationsRead({ disabled }: { disabled: boolean }) {
+export function MarkAllNotificationsRead({ disabled, source }: { disabled: boolean; source?: "system" | "announcement" }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
@@ -44,7 +44,7 @@ export function MarkAllNotificationsRead({ disabled }: { disabled: boolean }) {
     setPending(true);
     setMessage("");
     try {
-      await browserPatch<{ count: number }>("/api/notifications/read-all");
+      await browserPatch<{ count: number }>(notificationPath("/api/notifications/read-all", undefined, source));
       startTransition(() => {
         router.refresh();
       });
@@ -214,12 +214,18 @@ export function DeleteNotificationButton({ id, selectedTenantId, title }: { id: 
   );
 }
 
-function notificationPath(path: string, tenantId?: string) {
+function notificationPath(path: string, tenantId?: string, source?: string) {
   const normalizedTenantId = tenantId?.trim() ?? "";
-  if (!normalizedTenantId) {
+  const normalizedSource = source?.trim() ?? "";
+  if (!normalizedTenantId && !normalizedSource) {
     return path;
   }
   const query = new URLSearchParams();
-  query.set("tenantId", normalizedTenantId);
+  if (normalizedTenantId) {
+    query.set("tenantId", normalizedTenantId);
+  }
+  if (normalizedSource) {
+    query.set("source", normalizedSource);
+  }
   return `${path}?${query.toString()}`;
 }

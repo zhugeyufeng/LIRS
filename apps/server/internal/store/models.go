@@ -95,6 +95,8 @@ type Notification struct {
 	GroupName   string    `json:"groupName,omitempty"`
 	Department  string    `json:"department,omitempty"`
 	TargetScope string    `json:"targetScope"`
+	Source      string    `json:"source"`
+	Publisher   string    `json:"publisher"`
 	Title       string    `json:"title"`
 	Body        string    `json:"body"`
 	Level       string    `json:"level"`
@@ -135,6 +137,7 @@ type FooterSettings struct {
 	Key          string          `json:"key"`
 	BrandName    string          `json:"brandName"`
 	BrandTagline string          `json:"brandTagline"`
+	BaseURL      string          `json:"baseUrl"`
 	Description  string          `json:"description"`
 	Sections     []FooterSection `json:"sections"`
 	Copyright    string          `json:"copyright"`
@@ -145,6 +148,7 @@ type FooterSettings struct {
 type FooterSettingsInput struct {
 	BrandName    string          `json:"brandName"`
 	BrandTagline string          `json:"brandTagline"`
+	BaseURL      string          `json:"baseUrl"`
 	Description  string          `json:"description"`
 	Sections     []FooterSection `json:"sections"`
 	Copyright    string          `json:"copyright"`
@@ -171,27 +175,35 @@ type CopySettingsInput struct {
 	Actor   string      `json:"actor"`
 }
 
-type SMTPSettings struct {
-	Enabled            bool      `json:"enabled"`
-	Host               string    `json:"host"`
-	Port               int       `json:"port"`
-	Username           string    `json:"username"`
-	FromEmail          string    `json:"fromEmail"`
-	FromName           string    `json:"fromName"`
-	PasswordConfigured bool      `json:"passwordConfigured"`
-	UpdatedBy          string    `json:"updatedBy"`
-	UpdatedAt          time.Time `json:"updatedAt"`
+type GraphMailSettings struct {
+	Enabled                 bool      `json:"enabled"`
+	TenantID                string    `json:"tenantId"`
+	ClientID                string    `json:"clientId"`
+	SenderUserPrincipalName string    `json:"senderUserPrincipalName"`
+	SaveToSentItems         bool      `json:"saveToSentItems"`
+	ClientSecretConfigured  bool      `json:"clientSecretConfigured"`
+	UpdatedBy               string    `json:"updatedBy"`
+	UpdatedAt               time.Time `json:"updatedAt"`
 }
 
-type SMTPSettingsInput struct {
-	Enabled   bool   `json:"enabled"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	Username  string `json:"username"`
-	Password  string `json:"password"`
-	FromEmail string `json:"fromEmail"`
-	FromName  string `json:"fromName"`
-	Actor     string `json:"actor"`
+type GraphMailSettingsInput struct {
+	Enabled                 bool   `json:"enabled"`
+	TenantID                string `json:"tenantId"`
+	ClientID                string `json:"clientId"`
+	ClientSecret            string `json:"clientSecret"`
+	SenderUserPrincipalName string `json:"senderUserPrincipalName"`
+	SaveToSentItems         bool   `json:"saveToSentItems"`
+	Actor                   string `json:"actor"`
+}
+
+type GraphMailTestInput struct {
+	To    string `json:"to"`
+	Actor string `json:"actor"`
+}
+
+type GraphMailTestResult struct {
+	Sent    bool   `json:"sent"`
+	Message string `json:"message"`
 }
 
 type WeChatSettings struct {
@@ -251,6 +263,16 @@ type DingTalkSettingsInput struct {
 	Actor            string `json:"actor"`
 }
 
+type DingTalkTestInput struct {
+	UserID string `json:"userId"`
+	Actor  string `json:"actor"`
+}
+
+type DingTalkTestResult struct {
+	Sent    bool   `json:"sent"`
+	Message string `json:"message"`
+}
+
 type DingTalkEventCallbackInput struct {
 	TenantID   string `json:"tenantId"`
 	TenantCode string `json:"tenantCode"`
@@ -268,9 +290,9 @@ type DingTalkEventCallbackResponse struct {
 }
 
 type NotificationChannelSettings struct {
-	SMTP     SMTPSettings     `json:"smtp"`
-	WeChat   WeChatSettings   `json:"wechat"`
-	DingTalk DingTalkSettings `json:"dingtalk"`
+	GraphMail GraphMailSettings `json:"graphMail"`
+	WeChat    WeChatSettings    `json:"wechat"`
+	DingTalk  DingTalkSettings  `json:"dingtalk"`
 }
 
 type AccessControlSettings struct {
@@ -335,6 +357,44 @@ type DingTalkQuickLoginInput struct {
 	AuthCode   string `json:"authCode"`
 	CorpID     string `json:"corpId"`
 	Device     string `json:"device"`
+}
+
+type DingTalkWebLoginIntentInput struct {
+	TenantID    string `json:"tenantId"`
+	TenantCode  string `json:"tenantCode"`
+	RedirectURI string `json:"redirectUri"`
+	Next        string `json:"next"`
+}
+
+type DingTalkWebLoginIntent struct {
+	AuthURL    string `json:"authUrl"`
+	State      string `json:"state"`
+	TenantID   string `json:"tenantId"`
+	TenantCode string `json:"tenantCode"`
+}
+
+type DingTalkWebLoginInput struct {
+	TenantID   string `json:"tenantId"`
+	TenantCode string `json:"tenantCode"`
+	AuthCode   string `json:"authCode"`
+	State      string `json:"state"`
+	Device     string `json:"device"`
+}
+
+type DingTalkWebLoginResult struct {
+	Bound        bool          `json:"bound"`
+	Auth         *AuthResponse `json:"auth,omitempty"`
+	BindingToken string        `json:"bindingToken,omitempty"`
+	TenantID     string        `json:"tenantId,omitempty"`
+	TenantCode   string        `json:"tenantCode,omitempty"`
+	DingTalkName string        `json:"dingTalkName,omitempty"`
+}
+
+type DingTalkLoginBindExistingInput struct {
+	BindingToken string `json:"bindingToken"`
+	Email        string `json:"email"`
+	Password     string `json:"password"`
+	Device       string `json:"device"`
 }
 
 type AuthResponse struct {
@@ -525,6 +585,7 @@ type Material struct {
 	StorageSlot            string          `json:"storageSlot"`
 	TenderContract         string          `json:"tenderContract"`
 	ContractNo             string          `json:"contractNo"`
+	Remark                 string          `json:"remark"`
 	CertificateURL         string          `json:"certificateUrl"`
 	StandardCertificateURL string          `json:"standardCertificateUrl"`
 	AttachmentURL          string          `json:"attachmentUrl"`
@@ -596,6 +657,7 @@ type MaterialInput struct {
 	StorageSlot            string  `json:"storageSlot"`
 	TenderContract         string  `json:"tenderContract"`
 	ContractNo             string  `json:"contractNo"`
+	Remark                 string  `json:"remark"`
 	CertificateURL         string  `json:"certificateUrl"`
 	StandardCertificateURL string  `json:"standardCertificateUrl"`
 	AttachmentURL          string  `json:"attachmentUrl"`
@@ -627,6 +689,72 @@ type MaterialImportResult struct {
 	Updated int      `json:"updated"`
 	Skipped int      `json:"skipped"`
 	Errors  []string `json:"errors"`
+	Message string   `json:"message"`
+}
+
+type MaterialImportInput struct {
+	Filename string `json:"filename"`
+	Content  []byte `json:"-"`
+	Actor    string `json:"actor"`
+}
+
+type PurchasableMaterial struct {
+	ID                       string    `json:"id"`
+	IDNo                     string    `json:"idNo"`
+	SequenceNo               string    `json:"sequenceNo"`
+	ProcurementProjectID     string    `json:"procurementProjectId"`
+	ProcurementProject       string    `json:"procurementProject"`
+	ProcurementExpiresAt     string    `json:"procurementExpiresAt"`
+	ProcurementProjectStatus string    `json:"procurementProjectStatus"`
+	ProjectName              string    `json:"projectName"`
+	Brand                    string    `json:"brand"`
+	Spec                     string    `json:"spec"`
+	Unit                     string    `json:"unit"`
+	PurchasePrice            float64   `json:"purchasePrice"`
+	Remark                   string    `json:"remark"`
+	TechnicalRequirement     string    `json:"technicalRequirement"`
+	MinSpec                  string    `json:"minSpec"`
+	Status                   string    `json:"status"`
+	CreatedAt                time.Time `json:"createdAt"`
+	UpdatedAt                time.Time `json:"updatedAt"`
+}
+
+type PurchasableMaterialInput struct {
+	IDNo                 string  `json:"idNo"`
+	SequenceNo           string  `json:"sequenceNo"`
+	ProcurementProjectID string  `json:"procurementProjectId"`
+	ProcurementProject   string  `json:"procurementProject"`
+	ProjectName          string  `json:"projectName"`
+	Brand                string  `json:"brand"`
+	Spec                 string  `json:"spec"`
+	Unit                 string  `json:"unit"`
+	PurchasePrice        float64 `json:"purchasePrice"`
+	Remark               string  `json:"remark"`
+	TechnicalRequirement string  `json:"technicalRequirement"`
+	MinSpec              string  `json:"minSpec"`
+	Actor                string  `json:"actor"`
+}
+
+type ProcurementProject struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	ExpiresAt string    `json:"expiresAt"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type ProcurementProjectInput struct {
+	Name      string `json:"name"`
+	ExpiresAt string `json:"expiresAt"`
+	Status    string `json:"status"`
+	Actor     string `json:"actor"`
+}
+
+type PurchasableMaterialImportInput struct {
+	Filename string `json:"filename"`
+	Content  []byte `json:"-"`
+	Actor    string `json:"actor"`
 }
 
 type MaterialCategory struct {
@@ -727,6 +855,7 @@ type MaterialRequest struct {
 	BatchNo      string    `json:"batchNo,omitempty"`
 	UnitID       string    `json:"unitId,omitempty"`
 	UnitCode     string    `json:"unitCode,omitempty"`
+	Location     string    `json:"location,omitempty"`
 	Quantity     int       `json:"quantity"`
 	Purpose      string    `json:"purpose"`
 	Status       string    `json:"status"`
@@ -744,28 +873,40 @@ type MaterialRequestInput struct {
 }
 
 type MaterialPurchase struct {
-	ID                 string    `json:"id"`
-	MaterialID         string    `json:"materialId"`
-	MaterialName       string    `json:"materialName"`
-	RequesterID        string    `json:"requesterId,omitempty"`
-	Requester          string    `json:"requester"`
-	GroupName          string    `json:"groupName"`
-	Quantity           int       `json:"quantity"`
-	EstimatedUnitPrice float64   `json:"estimatedUnitPrice"`
-	Supplier           string    `json:"supplier"`
-	Reason             string    `json:"reason"`
-	Status             string    `json:"status"`
-	CreatedAt          time.Time `json:"createdAt"`
+	ID                           string    `json:"id"`
+	MaterialID                   string    `json:"materialId,omitempty"`
+	MaterialName                 string    `json:"materialName"`
+	PurchasableMaterialID        string    `json:"purchasableMaterialId,omitempty"`
+	PurchaseIDNo                 string    `json:"purchaseIdNo"`
+	PurchaseSequenceNo           string    `json:"purchaseSequenceNo"`
+	PurchaseProjectName          string    `json:"purchaseProjectName"`
+	PurchaseItemName             string    `json:"purchaseItemName"`
+	PurchaseBrand                string    `json:"purchaseBrand"`
+	PurchaseSpec                 string    `json:"purchaseSpec"`
+	PurchaseUnit                 string    `json:"purchaseUnit"`
+	PurchaseRemark               string    `json:"purchaseRemark"`
+	PurchaseTechnicalRequirement string    `json:"purchaseTechnicalRequirement"`
+	PurchaseMinSpec              string    `json:"purchaseMinSpec"`
+	RequesterID                  string    `json:"requesterId,omitempty"`
+	Requester                    string    `json:"requester"`
+	GroupName                    string    `json:"groupName"`
+	Quantity                     int       `json:"quantity"`
+	EstimatedUnitPrice           float64   `json:"estimatedUnitPrice"`
+	Supplier                     string    `json:"supplier"`
+	Reason                       string    `json:"reason"`
+	Status                       string    `json:"status"`
+	CreatedAt                    time.Time `json:"createdAt"`
 }
 
 type MaterialPurchaseInput struct {
-	MaterialID         string  `json:"materialId"`
-	RequesterID        string  `json:"requesterId"`
-	Requester          string  `json:"requester"`
-	Quantity           int     `json:"quantity"`
-	EstimatedUnitPrice float64 `json:"estimatedUnitPrice"`
-	Supplier           string  `json:"supplier"`
-	Reason             string  `json:"reason"`
+	MaterialID            string  `json:"materialId"`
+	PurchasableMaterialID string  `json:"purchasableMaterialId"`
+	RequesterID           string  `json:"requesterId"`
+	Requester             string  `json:"requester"`
+	Quantity              int     `json:"quantity"`
+	EstimatedUnitPrice    float64 `json:"estimatedUnitPrice"`
+	Supplier              string  `json:"supplier"`
+	Reason                string  `json:"reason"`
 }
 
 type MaterialDamage struct {

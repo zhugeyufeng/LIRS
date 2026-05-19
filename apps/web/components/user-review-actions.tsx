@@ -2,8 +2,8 @@
 
 import { FormEvent, startTransition, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Pencil, Save } from "lucide-react";
-import { browserPatch, browserPost, OrganizationUnit, Tenant, User, UserMembershipPayload, UserReviewPayload } from "@/lib/api";
+import { Pencil, Save, Trash2 } from "lucide-react";
+import { browserDelete, browserPatch, browserPost, OrganizationUnit, Tenant, User, UserMembershipPayload, UserReviewPayload } from "@/lib/api";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 import { isTenantAdminRole, roleLabel } from "@/lib/permissions";
@@ -48,6 +48,7 @@ export function UserReviewActions({
   const [pending, setPending] = useState(false);
   const isSuperAdmin = currentUser.role === "super_admin";
   const canEditTarget = isSuperAdmin || !isTenantAdminRole(user.role);
+  const canDeleteTarget = canEditTarget && currentUser.id !== user.id && user.status !== "disabled";
   const [selectedTenantId, setSelectedTenantId] = useState(user.tenantId);
   const [departmentOptions, setDepartmentOptions] = useState(() => mergeOptions(departments, user.department));
   const [selectedDepartment, setSelectedDepartment] = useState(user.department);
@@ -110,6 +111,23 @@ export function UserReviewActions({
       });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "更新失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function deleteUser(close?: () => void) {
+    setPending(true);
+    setMessage("");
+    try {
+      const deleted = await browserDelete<User>(`/api/users/${user.id}`);
+      setMessage(`已删除：${deleted.name}`);
+      close?.();
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "删除失败");
     } finally {
       setPending(false);
     }
@@ -206,6 +224,35 @@ export function UserReviewActions({
                 <UserMembershipPanel user={user} departments={departments} tenants={tenants} close={close} />
               </section>
             ) : null}
+          </div>
+        )}
+      </AdminDialog>
+      <AdminDialog
+        description="删除后该账号将被停用，当前登录会话会失效；关联的预约、申领、审计记录仍会保留。"
+        title={`确认删除：${user.name}`}
+        trigger={
+          <Button className="w-full min-w-0 px-2 sm:w-auto" disabled={!canDeleteTarget || pending} size="sm" variant="destructive">
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
+            删除
+          </Button>
+        }
+      >
+        {(close) => (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+              <p className="font-bold">即将删除以下人员账号</p>
+              <p className="mt-2 break-words">{user.name} / {user.email}</p>
+              <p className="mt-1 break-words">{user.tenantName} / {roleLabel(user.role)} / {userStatusLabel(user.status)}</p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button className="w-full sm:w-auto" disabled={pending} onClick={close} type="button" variant="outline">
+                取消
+              </Button>
+              <Button className="w-full sm:w-auto" disabled={pending} onClick={() => deleteUser(close)} type="button" variant="destructive">
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+                {pending ? "删除中..." : "确认删除"}
+              </Button>
+            </div>
           </div>
         )}
       </AdminDialog>

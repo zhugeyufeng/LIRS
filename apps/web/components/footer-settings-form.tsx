@@ -38,6 +38,7 @@ export function FooterSettingsForm({ settings }: { settings: FooterSettings }) {
     const payload: FooterSettingsPayload = {
       brandName: String(form.get("brandName") ?? ""),
       brandTagline: String(form.get("brandTagline") ?? ""),
+      baseUrl: String(form.get("baseUrl") ?? ""),
       description: String(form.get("description") ?? ""),
       copyright: String(form.get("copyright") ?? ""),
       sections: sections
@@ -82,6 +83,7 @@ export function FooterSettingsForm({ settings }: { settings: FooterSettings }) {
             </div>
             <p className="max-w-3xl break-words text-sm leading-6 text-slate-600">{settings.description}</p>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <Summary label="网站域名" value={settings.baseUrl || "未设置"} />
               <Summary label="栏目数" value={`${settings.sections.length || createDefaultFooterSettings().sections.length} 个`} />
               <Summary label="版权信息" value={settings.copyright} />
               <Summary
@@ -107,6 +109,14 @@ export function FooterSettingsForm({ settings }: { settings: FooterSettings }) {
                   <Field defaultValue={settings.brandName} label="品牌名称" name="brandName" />
                   <Field defaultValue={settings.brandTagline} label="品牌副标题" name="brandTagline" />
                 </div>
+                <Field
+                  defaultValue={settings.baseUrl}
+                  hint="用于生成资源详情二维码，例如 https://lirs.example.cn。留空时生成站内相对路径。"
+                  label="网站域名"
+                  name="baseUrl"
+                  placeholder="https://lirs.example.cn"
+                  required={false}
+                />
                 <label className="block space-y-2">
                   <span className="text-sm font-medium">简介文案</span>
                   <textarea
@@ -203,6 +213,8 @@ function Field({
   label,
   name,
   onChange,
+  placeholder,
+  required = true,
   value,
 }: {
   defaultValue?: string;
@@ -210,6 +222,8 @@ function Field({
   label: string;
   name: string;
   onChange?: (event: ChangeEvent<HTMLInputElement>) => void;
+  placeholder?: string;
+  required?: boolean;
   value?: string;
 }) {
   const controlled = value !== undefined;
@@ -219,7 +233,8 @@ function Field({
       <input
         className="h-10 w-full rounded-md border bg-white px-3 text-sm outline-none ring-0 transition focus:border-primary/40 focus:ring-2 focus:ring-primary/20"
         name={name}
-        required
+        placeholder={placeholder}
+        required={required}
         {...(controlled
           ? {
               onChange: onChange ?? (() => undefined),

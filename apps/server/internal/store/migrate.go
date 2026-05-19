@@ -162,8 +162,13 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id uuid REFERENCES users
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS group_name text NOT NULL DEFAULT '';
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS department text NOT NULL DEFAULT '';
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_scope text NOT NULL DEFAULT 'global';
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'system';
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS publisher text NOT NULL DEFAULT '';
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS read_at timestamptz;
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+UPDATE notifications SET source = 'system' WHERE source = '';
+ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_source_check;
+ALTER TABLE notifications ADD CONSTRAINT notifications_source_check CHECK (source IN ('system', 'announcement'));
 
 CREATE TABLE IF NOT EXISTS notification_reads (
     notification_id uuid NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
@@ -337,6 +342,7 @@ CREATE TABLE IF NOT EXISTS materials (
     storage_slot text NOT NULL DEFAULT '',
     tender_contract text NOT NULL DEFAULT '',
     contract_no text NOT NULL DEFAULT '',
+    remark text NOT NULL DEFAULT '',
     certificate_url text NOT NULL DEFAULT '',
     standard_certificate_url text NOT NULL DEFAULT '',
     attachment_url text NOT NULL DEFAULT '',
@@ -366,6 +372,7 @@ ALTER TABLE materials ADD COLUMN IF NOT EXISTS storage_room text NOT NULL DEFAUL
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS storage_cabinet text NOT NULL DEFAULT '';
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS storage_layer text NOT NULL DEFAULT '';
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS storage_slot text NOT NULL DEFAULT '';
+ALTER TABLE materials ADD COLUMN IF NOT EXISTS remark text NOT NULL DEFAULT '';
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS certificate_url text NOT NULL DEFAULT '';
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS standard_certificate_url text NOT NULL DEFAULT '';
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS attachment_url text NOT NULL DEFAULT '';
@@ -416,6 +423,54 @@ CREATE TABLE IF NOT EXISTS material_alert_actions (
 );
 CREATE INDEX IF NOT EXISTS material_alert_actions_material_created_at_idx ON material_alert_actions (material_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS material_alert_actions_tenant_created_at_idx ON material_alert_actions (tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS procurement_projects (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id uuid NOT NULL REFERENCES tenants(id) DEFAULT '00000000-0000-0000-0000-000000000001',
+    name text NOT NULL,
+    expires_at date,
+    status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, name)
+);
+CREATE INDEX IF NOT EXISTS procurement_projects_tenant_status_idx ON procurement_projects (tenant_id, status, expires_at);
+
+CREATE TABLE IF NOT EXISTS purchasable_materials (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id uuid NOT NULL REFERENCES tenants(id) DEFAULT '00000000-0000-0000-0000-000000000001',
+    id_no text NOT NULL,
+    sequence_no text NOT NULL,
+    procurement_project_id uuid REFERENCES procurement_projects(id),
+    procurement_project text NOT NULL DEFAULT '',
+    project_name text NOT NULL,
+    brand text NOT NULL,
+    spec text NOT NULL,
+    unit text NOT NULL,
+    purchase_price numeric(12,2) NOT NULL CHECK (purchase_price >= 0),
+    remark text NOT NULL DEFAULT '',
+    technical_requirement text NOT NULL DEFAULT '',
+    min_spec text NOT NULL DEFAULT '',
+    status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deleted')),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, id_no)
+);
+ALTER TABLE purchasable_materials ADD COLUMN IF NOT EXISTS procurement_project_id uuid REFERENCES procurement_projects(id);
+ALTER TABLE purchasable_materials ADD COLUMN IF NOT EXISTS procurement_project text NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS purchasable_materials_tenant_status_idx ON purchasable_materials (tenant_id, status, project_name, sequence_no);
+INSERT INTO procurement_projects (tenant_id, name)
+SELECT DISTINCT tenant_id, procurement_project
+FROM purchasable_materials
+WHERE procurement_project <> ''
+ON CONFLICT (tenant_id, name) DO NOTHING;
+UPDATE purchasable_materials pm
+SET procurement_project_id = pp.id
+FROM procurement_projects pp
+WHERE pm.procurement_project <> ''
+  AND pm.procurement_project_id IS NULL
+  AND pp.tenant_id = pm.tenant_id
+  AND pp.name = pm.procurement_project;
 
 CREATE TABLE IF NOT EXISTS material_batches (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -472,7 +527,18 @@ ALTER TABLE material_requests ALTER COLUMN group_name SET DEFAULT '默认归属'
 
 CREATE TABLE IF NOT EXISTS material_purchases (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    material_id uuid NOT NULL REFERENCES materials(id),
+    material_id uuid REFERENCES materials(id),
+    purchasable_material_id uuid REFERENCES purchasable_materials(id),
+    purchase_id_no text NOT NULL DEFAULT '',
+    purchase_sequence_no text NOT NULL DEFAULT '',
+    purchase_project_name text NOT NULL DEFAULT '',
+    purchase_item_name text NOT NULL DEFAULT '',
+    purchase_brand text NOT NULL DEFAULT '',
+    purchase_spec text NOT NULL DEFAULT '',
+    purchase_unit text NOT NULL DEFAULT '',
+    purchase_remark text NOT NULL DEFAULT '',
+    purchase_technical_requirement text NOT NULL DEFAULT '',
+    purchase_min_spec text NOT NULL DEFAULT '',
     requester_id uuid REFERENCES users(id),
     requester text NOT NULL,
     group_name text NOT NULL DEFAULT '默认归属',
@@ -487,6 +553,36 @@ CREATE TABLE IF NOT EXISTS material_purchases (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE material_purchases ALTER COLUMN material_id DROP NOT NULL;
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchasable_material_id uuid REFERENCES purchasable_materials(id);
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_id_no text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_sequence_no text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_project_name text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_item_name text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_brand text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_spec text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_unit text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_remark text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_technical_requirement text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_min_spec text NOT NULL DEFAULT '';
+UPDATE material_purchases mp
+SET purchase_project_name = COALESCE(NULLIF(purchase_project_name, ''), m.name),
+    purchase_item_name = COALESCE(NULLIF(purchase_item_name, ''), NULLIF(purchase_project_name, ''), m.name),
+    purchase_brand = COALESCE(NULLIF(purchase_brand, ''), m.manufacturer, ''),
+    purchase_spec = COALESCE(NULLIF(purchase_spec, ''), m.spec),
+    purchase_unit = COALESCE(NULLIF(purchase_unit, ''), m.unit)
+FROM materials m
+WHERE mp.material_id = m.id
+  AND (mp.purchase_project_name = '' OR mp.purchase_item_name = '' OR mp.purchase_spec = '' OR mp.purchase_unit = '');
+UPDATE material_purchases mp
+SET purchase_project_name = CASE
+        WHEN pm.procurement_project <> '' AND (mp.purchase_project_name = '' OR mp.purchase_project_name = pm.project_name) THEN pm.procurement_project
+        ELSE COALESCE(NULLIF(mp.purchase_project_name, ''), NULLIF(pm.procurement_project, ''), pm.project_name)
+    END,
+    purchase_item_name = COALESCE(NULLIF(mp.purchase_item_name, ''), pm.project_name)
+FROM purchasable_materials pm
+WHERE mp.purchasable_material_id = pm.id
+  AND (mp.purchase_project_name = '' OR mp.purchase_item_name = '' OR mp.purchase_project_name = pm.project_name);
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS requester_id uuid REFERENCES users(id);
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS group_name text NOT NULL DEFAULT '默认归属';
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS estimated_unit_price numeric(12,2) NOT NULL DEFAULT 0;
@@ -593,6 +689,11 @@ ALTER TABLE reservations ALTER COLUMN tenant_id SET NOT NULL;
 
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS tenant_id uuid REFERENCES tenants(id);
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'system';
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS publisher text NOT NULL DEFAULT '';
+UPDATE notifications SET source = 'system' WHERE source = '';
+ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_source_check;
+ALTER TABLE notifications ADD CONSTRAINT notifications_source_check CHECK (source IN ('system', 'announcement'));
 UPDATE notifications SET updated_at = created_at WHERE updated_at IS NULL;
 UPDATE notifications SET tenant_id = '00000000-0000-0000-0000-000000000001' WHERE tenant_id IS NULL;
 ALTER TABLE notifications ALTER COLUMN tenant_id SET DEFAULT '00000000-0000-0000-0000-000000000001';
@@ -844,6 +945,7 @@ ALTER TABLE materials ADD COLUMN IF NOT EXISTS tenant_id uuid REFERENCES tenants
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS catalog_no text NOT NULL DEFAULT '';
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS tender_contract text NOT NULL DEFAULT '';
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS contract_no text NOT NULL DEFAULT '';
+ALTER TABLE materials ADD COLUMN IF NOT EXISTS remark text NOT NULL DEFAULT '';
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS product_type text NOT NULL DEFAULT 'consumable';
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS subcategory text NOT NULL DEFAULT '';
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS manufacturer text NOT NULL DEFAULT '';
@@ -903,6 +1005,54 @@ CREATE TABLE IF NOT EXISTS material_alert_actions (
 CREATE INDEX IF NOT EXISTS material_alert_actions_material_created_at_idx ON material_alert_actions (material_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS material_alert_actions_tenant_created_at_idx ON material_alert_actions (tenant_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS procurement_projects (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id uuid NOT NULL REFERENCES tenants(id) DEFAULT '00000000-0000-0000-0000-000000000001',
+    name text NOT NULL,
+    expires_at date,
+    status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, name)
+);
+CREATE INDEX IF NOT EXISTS procurement_projects_tenant_status_idx ON procurement_projects (tenant_id, status, expires_at);
+
+CREATE TABLE IF NOT EXISTS purchasable_materials (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id uuid NOT NULL REFERENCES tenants(id) DEFAULT '00000000-0000-0000-0000-000000000001',
+    id_no text NOT NULL,
+    sequence_no text NOT NULL,
+    procurement_project_id uuid REFERENCES procurement_projects(id),
+    procurement_project text NOT NULL DEFAULT '',
+    project_name text NOT NULL,
+    brand text NOT NULL,
+    spec text NOT NULL,
+    unit text NOT NULL,
+    purchase_price numeric(12,2) NOT NULL CHECK (purchase_price >= 0),
+    remark text NOT NULL DEFAULT '',
+    technical_requirement text NOT NULL DEFAULT '',
+    min_spec text NOT NULL DEFAULT '',
+    status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deleted')),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, id_no)
+);
+ALTER TABLE purchasable_materials ADD COLUMN IF NOT EXISTS procurement_project_id uuid REFERENCES procurement_projects(id);
+ALTER TABLE purchasable_materials ADD COLUMN IF NOT EXISTS procurement_project text NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS purchasable_materials_tenant_status_idx ON purchasable_materials (tenant_id, status, project_name, sequence_no);
+INSERT INTO procurement_projects (tenant_id, name)
+SELECT DISTINCT tenant_id, procurement_project
+FROM purchasable_materials
+WHERE procurement_project <> ''
+ON CONFLICT (tenant_id, name) DO NOTHING;
+UPDATE purchasable_materials pm
+SET procurement_project_id = pp.id
+FROM procurement_projects pp
+WHERE pm.procurement_project <> ''
+  AND pm.procurement_project_id IS NULL
+  AND pp.tenant_id = pm.tenant_id
+  AND pp.name = pm.procurement_project;
+
 CREATE TABLE IF NOT EXISTS material_batches (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id uuid NOT NULL REFERENCES tenants(id) DEFAULT '00000000-0000-0000-0000-000000000001',
@@ -943,10 +1093,40 @@ ALTER TABLE material_requests ALTER COLUMN tenant_id SET DEFAULT '00000000-0000-
 ALTER TABLE material_requests ALTER COLUMN tenant_id SET NOT NULL;
 
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS tenant_id uuid REFERENCES tenants(id);
+ALTER TABLE material_purchases ALTER COLUMN material_id DROP NOT NULL;
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchasable_material_id uuid REFERENCES purchasable_materials(id);
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_id_no text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_sequence_no text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_project_name text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_item_name text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_brand text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_spec text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_unit text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_remark text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_technical_requirement text NOT NULL DEFAULT '';
+ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS purchase_min_spec text NOT NULL DEFAULT '';
 UPDATE material_purchases mp SET tenant_id = m.tenant_id FROM materials m WHERE mp.material_id = m.id AND mp.tenant_id IS NULL;
 UPDATE material_purchases SET tenant_id = '00000000-0000-0000-0000-000000000001' WHERE tenant_id IS NULL;
 ALTER TABLE material_purchases ALTER COLUMN tenant_id SET DEFAULT '00000000-0000-0000-0000-000000000001';
 ALTER TABLE material_purchases ALTER COLUMN tenant_id SET NOT NULL;
+UPDATE material_purchases mp
+SET purchase_project_name = COALESCE(NULLIF(purchase_project_name, ''), m.name),
+    purchase_item_name = COALESCE(NULLIF(purchase_item_name, ''), NULLIF(purchase_project_name, ''), m.name),
+    purchase_brand = COALESCE(NULLIF(purchase_brand, ''), m.manufacturer, ''),
+    purchase_spec = COALESCE(NULLIF(purchase_spec, ''), m.spec),
+    purchase_unit = COALESCE(NULLIF(purchase_unit, ''), m.unit)
+FROM materials m
+WHERE mp.material_id = m.id
+  AND (mp.purchase_project_name = '' OR mp.purchase_item_name = '' OR mp.purchase_spec = '' OR mp.purchase_unit = '');
+UPDATE material_purchases mp
+SET purchase_project_name = CASE
+        WHEN pm.procurement_project <> '' AND (mp.purchase_project_name = '' OR mp.purchase_project_name = pm.project_name) THEN pm.procurement_project
+        ELSE COALESCE(NULLIF(mp.purchase_project_name, ''), NULLIF(pm.procurement_project, ''), pm.project_name)
+    END,
+    purchase_item_name = COALESCE(NULLIF(mp.purchase_item_name, ''), pm.project_name)
+FROM purchasable_materials pm
+WHERE mp.purchasable_material_id = pm.id
+  AND (mp.purchase_project_name = '' OR mp.purchase_item_name = '' OR mp.purchase_project_name = pm.project_name);
 
 CREATE TABLE IF NOT EXISTS material_damage_reports (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

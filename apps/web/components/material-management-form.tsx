@@ -3,13 +3,13 @@
 import { type DragEvent, FormEvent, startTransition, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Download, GripVertical, PackagePlus, Pencil, Save, SlidersHorizontal, Trash2, Upload } from "lucide-react";
-import { browserDelete, browserPatch, browserPost, Material, MaterialAlertAction, MaterialAlertActionPayload, MaterialCategory, MaterialCategoryPayload, MaterialDamage, MaterialDamagePayload, MaterialImportResult, MaterialPayload, StockAdjustmentPayload } from "@/lib/api";
+import { browserDelete, browserPatch, browserPost, Material, MaterialAlertAction, MaterialAlertActionPayload, MaterialCategory, MaterialCategoryPayload, MaterialDamage, MaterialDamagePayload, MaterialImportResult, MaterialPayload, PurchasableMaterial, StockAdjustmentPayload } from "@/lib/api";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 
 type MaterialProductType = "standard" | "reagent" | "consumable";
 
-export function MaterialCreateForm({ categories = [], productType }: { categories?: MaterialCategory[]; productType?: MaterialProductType }) {
+export function MaterialCreateForm({ categories = [], productType, purchasableMaterials = [] }: { categories?: MaterialCategory[]; productType?: MaterialProductType; purchasableMaterials?: PurchasableMaterial[] }) {
   const router = useRouter();
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState(false);
@@ -38,7 +38,7 @@ export function MaterialCreateForm({ categories = [], productType }: { categorie
   return (
     <div className="space-y-3">
       <AdminDialog
-        description="新增资源会写入标准品、试剂或耗材目录，并生成初始库存流水；可登记批次、CAS、库位、证书、开封和审批策略。"
+        description="新增资源会写入标准品/标准物质、试剂或耗材目录，并生成初始库存流水；可登记批次、CAS、库位、证书、开封和审批策略。"
         maxWidth="max-w-4xl"
         title="新增资源入库"
         trigger={
@@ -50,7 +50,7 @@ export function MaterialCreateForm({ categories = [], productType }: { categorie
       >
         {(close) => (
           <form className="space-y-4" onSubmit={(event) => submit(event, close)}>
-            <MaterialFields categories={categories} productType={productType} />
+            <MaterialFields categories={categories} productType={productType} purchasableMaterials={purchasableMaterials} />
             <div className="flex justify-end">
               <Button className="w-full sm:w-auto" disabled={pending} type="submit">
                 <Save className="h-4 w-4" aria-hidden="true" />
@@ -517,25 +517,29 @@ export function MaterialImportForm() {
     event.preventDefault();
     const file = new FormData(event.currentTarget).get("file");
     if (!(file instanceof File) || file.size === 0) {
-      setMessage("请选择 CSV 文件");
+      setMessage("请选择 CSV 或 XLSX 文件");
       return;
     }
     setPending(true);
     setMessage("");
     try {
-      const text = await file.text();
-      const response = await fetch("/api/materials/import.csv", {
-        body: text,
+      const response = await fetch(`/api/materials/import?filename=${encodeURIComponent(file.name)}`, {
+        body: await file.arrayBuffer(),
         credentials: "include",
-        headers: { "Content-Type": "text/csv; charset=utf-8" },
+        headers: { "Content-Type": file.name.endsWith(".xlsx") ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8" },
         method: "POST",
       });
+      const result = await response.json().catch(() => null) as (MaterialImportResult & { error?: string }) | null;
       if (!response.ok) {
-        setMessage(`导入失败：${response.status}`);
+        setMessage(result?.error ? `导入失败：${result.error}` : `导入失败：${response.status}`);
         return;
       }
-      const result = (await response.json()) as MaterialImportResult;
-      setMessage(`导入完成：新增 ${result.created}，更新 ${result.updated}，跳过 ${result.skipped}`);
+      if (!result) {
+        setMessage("导入失败：后端未返回导入结果");
+        return;
+      }
+      const errorPreview = result.errors.length > 0 ? `；错误示例：${result.errors.slice(0, 3).join("；")}` : "";
+      setMessage(`${result.message || `导入完成：新增 ${result.created}，更新 ${result.updated}，跳过 ${result.skipped}`}${errorPreview}`);
       close?.();
       startTransition(() => {
         router.refresh();
@@ -550,7 +554,7 @@ export function MaterialImportForm() {
   return (
     <div className="space-y-1">
       <AdminDialog
-        description="CSV 第一行必须使用导入模板表头；相同二维码或相同资源名称加批号会更新现有记录。"
+        description="支持 CSV 和 XLSX；相同二维码或相同资源名称加批号会更新现有记录。"
         title="导入资源"
         trigger={
           <Button className="h-10 w-full sm:h-8 sm:w-auto" size="sm" type="button" variant="outline">
@@ -561,7 +565,7 @@ export function MaterialImportForm() {
       >
         {(close) => (
           <form className="space-y-4" onSubmit={(event) => submit(event, close)}>
-            <input accept=".csv,text/csv" className="w-full rounded-md border bg-white px-3 py-2 text-sm" name="file" required type="file" />
+            <input accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="w-full rounded-md border bg-white px-3 py-2 text-sm" name="file" required type="file" />
             <div className="flex justify-end">
               <Button className="w-full sm:w-auto" disabled={pending} type="submit">
                 {pending ? "导入中..." : "开始导入"}
@@ -830,23 +834,72 @@ export function MaterialAlertActionForm({ material, alertType }: { material: Mat
   );
 }
 
-function MaterialFields({ material, categories, productType }: { material?: Material; categories: MaterialCategory[]; productType?: MaterialProductType }) {
+function MaterialFields({ material, categories, productType, purchasableMaterials = [] }: { material?: Material; categories: MaterialCategory[]; productType?: MaterialProductType; purchasableMaterials?: PurchasableMaterial[] }) {
   const [selectedCategory, setSelectedCategory] = useState(material?.category ?? "");
   const [selectedSubcategory, setSelectedSubcategory] = useState(material?.subcategory ?? "");
+  const [selectedPurchasableId, setSelectedPurchasableId] = useState("");
+  const [standardCertificateUrl, setStandardCertificateUrl] = useState(material?.standardCertificateUrl ?? "");
+  const [certificateUploadMessage, setCertificateUploadMessage] = useState("");
+  const [certificateUploading, setCertificateUploading] = useState(false);
+  const selectedPurchasable = purchasableMaterials.find((item) => item.id === selectedPurchasableId);
+  const purchasableKey = material?.id ?? selectedPurchasable?.id ?? "manual";
   const primaryDirectories = materialDirectoryOptions(categories, "", material?.category);
   const secondaryDirectories = selectedCategory ? materialDirectoryOptions(categories, selectedCategory, material?.subcategory) : material?.subcategory ? [material.subcategory] : [];
   const resolvedProductType = material?.productType ?? productType ?? "consumable";
+  const isStandard = resolvedProductType === "standard";
+
+  async function uploadStandardCertificate(file: File | undefined) {
+    if (!file || file.size === 0) {
+      return;
+    }
+    setCertificateUploading(true);
+    setCertificateUploadMessage("");
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const response = await fetch("/api/uploads/material-certificates", {
+        body,
+        credentials: "include",
+        method: "POST",
+      });
+      const result = await response.json().catch(() => null) as { url?: string; error?: string } | null;
+      if (!response.ok || !result?.url) {
+        setCertificateUploadMessage(result?.error ? `上传失败：${result.error}` : `上传失败：${response.status}`);
+        return;
+      }
+      setStandardCertificateUrl(result.url);
+      setCertificateUploadMessage("证书已上传，保存资源后生效。");
+    } catch (error) {
+      setCertificateUploadMessage(error instanceof Error ? error.message : "上传失败");
+    } finally {
+      setCertificateUploading(false);
+    }
+  }
 
   return (
     <>
+      {!material && purchasableMaterials.length > 0 ? (
+        <label className="block min-w-0 space-y-2">
+          <span className="text-sm font-medium">从可采购物资目录带出</span>
+          <select className="h-10 w-full rounded-md border bg-white px-3 text-sm" onChange={(event) => setSelectedPurchasableId(event.target.value)} value={selectedPurchasableId}>
+            <option value="">手动填写</option>
+            {purchasableMaterials.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.idNo} / {item.projectName} / {item.brand} / {item.spec} / {item.unit}
+              </option>
+            ))}
+          </select>
+          {selectedPurchasable ? <FieldHint value={`采购项目名称及编号：${selectedPurchasable.procurementProject || "未登记"}`} /> : null}
+        </label>
+      ) : null}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <Field defaultValue={material?.name} label="资源名称" name="name" placeholder="填写资源名称" required />
+        <Field defaultValue={material?.name ?? selectedPurchasable?.projectName} key={`name-${purchasableKey}`} label="资源名称" name="name" placeholder="填写资源名称" required />
         <label className="block min-w-0 space-y-2">
           <span className="text-sm font-medium">资源类型</span>
           <select className="h-10 w-full rounded-md border bg-white px-3 text-sm" defaultValue={resolvedProductType} disabled={!material && Boolean(productType)} name="productType">
             <option value="consumable">耗材</option>
             <option value="reagent">试剂</option>
-            <option value="standard">标准品</option>
+            <option value="standard">标准品/标准物质</option>
           </select>
           {!material && productType ? <input name="productType" type="hidden" value={productType} /> : null}
           {material ? <FieldHint value={`当前：${productTypeLabel(material.productType)}`} /> : null}
@@ -886,13 +939,13 @@ function MaterialFields({ material, categories, productType }: { material?: Mate
         </label>
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <Field defaultValue={material?.spec} label="规格" name="spec" placeholder="填写规格" required />
-        <Field defaultValue={material?.unit} label="单位" name="unit" placeholder="填写库存单位" required />
-        <Field defaultValue={material?.supplier} label="供应商" name="supplier" placeholder="填写供应商" />
+        <Field defaultValue={material?.spec ?? selectedPurchasable?.spec} key={`spec-${purchasableKey}`} label="规格" name="spec" placeholder="填写规格" required />
+        <Field defaultValue={material?.unit ?? selectedPurchasable?.unit} key={`unit-${purchasableKey}`} label="单位" name="unit" placeholder="填写库存单位" required />
+        <Field defaultValue={material?.supplier ?? selectedPurchasable?.brand} key={`supplier-${purchasableKey}`} label="供应商" name="supplier" placeholder="填写供应商" />
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <Field defaultValue={material?.manufacturer} label="生产商" name="manufacturer" placeholder="填写生产商" />
-        <Field defaultValue={material?.catalogNo} label="货号" name="catalogNo" placeholder="填写货号" />
+        <Field defaultValue={material?.manufacturer ?? selectedPurchasable?.brand} key={`manufacturer-${purchasableKey}`} label="生产商" name="manufacturer" placeholder="填写生产商" />
+        <Field defaultValue={material?.catalogNo ?? selectedPurchasable?.idNo} key={`catalogNo-${purchasableKey}`} label="货号" name="catalogNo" placeholder="填写货号" />
         <Field defaultValue={material?.casNo} label="CAS号" name="casNo" placeholder="填写 CAS 号" />
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -900,11 +953,13 @@ function MaterialFields({ material, categories, productType }: { material?: Mate
         <Field defaultValue={material?.concentration} label="浓度" name="concentration" placeholder="填写浓度或含量" />
         <Field defaultValue={material?.storageCondition} label="保存条件" name="storageCondition" placeholder="例如 2-8°C 避光" />
       </div>
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <Field defaultValue={material?.parentMaterialId} label="母液/来源资源ID" name="parentMaterialId" placeholder="填写来源资源 ID" />
-        <Field defaultValue={material?.dilutionFactor} label="稀释倍数" name="dilutionFactor" placeholder="例如 1:10" />
-        <Field defaultValue={material?.preparationMethod} label="配制方法" name="preparationMethod" placeholder="填写工作液或混标配制方法" />
-      </div>
+      {!isStandard ? (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <Field defaultValue={material?.parentMaterialId} label="母液/来源资源ID" name="parentMaterialId" placeholder="填写来源资源 ID" />
+          <Field defaultValue={material?.dilutionFactor} label="稀释倍数" name="dilutionFactor" placeholder="例如 1:10" />
+          <Field defaultValue={material?.preparationMethod} label="配制方法" name="preparationMethod" placeholder="填写工作液或混标配制方法" />
+        </div>
+      ) : null}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {material ? (
           <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm">
@@ -919,7 +974,7 @@ function MaterialFields({ material, categories, productType }: { material?: Mate
           <Field label="初始库存" min={0} name="stock" placeholder="填写初始库存数量" required type="number" />
         )}
         <Field defaultValue={material?.warningLine} label="库存告警线" min={0} name="warningLine" placeholder="低于或等于该数量触发告警" required type="number" />
-        <Field defaultValue={material?.unitPrice} label="单价" min={0} name="unitPrice" placeholder="填写单价" required step="0.01" type="number" />
+        <Field defaultValue={material?.unitPrice ?? selectedPurchasable?.purchasePrice} key={`unitPrice-${purchasableKey}`} label="单价" min={0} name="unitPrice" placeholder="填写单价" required step="0.01" type="number" />
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         <Field defaultValue={material?.batchNo} label="批次号" name="batchNo" placeholder="填写批次号" />
@@ -939,7 +994,7 @@ function MaterialFields({ material, categories, productType }: { material?: Mate
         <Field defaultValue={material?.freezeThawLimit} label="冻融上限" min={0} name="freezeThawLimit" placeholder="0 表示不限制" type="number" />
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <Field defaultValue={material?.contractNo} label="合同序号" name="contractNo" placeholder="填写合同序号" />
+        <Field defaultValue={material?.tenderContract || material?.contractNo || selectedPurchasable?.procurementProject} key={`procurementProject-${purchasableKey}`} label="采购项目名称及编号" name="procurementProject" placeholder="填写采购项目名称及编号" />
         <Field defaultValue={material?.qrCode} label="二维码编码" name="qrCode" placeholder="留空时由系统按资源编号生成" />
         <label className="flex min-h-10 items-center gap-2 rounded-md border bg-white px-3 text-sm">
           <input defaultChecked={material?.approvalRequired ?? false} name="approvalRequired" type="checkbox" value="true" />
@@ -947,11 +1002,26 @@ function MaterialFields({ material, categories, productType }: { material?: Mate
         </label>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
-        <Field defaultValue={material?.tenderContract} label="招标合同" name="tenderContract" placeholder="填写招标合同名称或编号" />
+        <Field defaultValue={material?.remark ?? selectedPurchasable?.remark} key={`remark-${purchasableKey}`} label="备注" name="remark" placeholder="填写备注信息" />
         <Field defaultValue={material?.certificateUrl} label="资源证书地址" name="certificateUrl" placeholder="填写证书查看或下载地址" />
       </div>
       <div className="grid gap-3 md:grid-cols-2">
-        <Field defaultValue={material?.standardCertificateUrl} label="标准证书地址" name="standardCertificateUrl" placeholder="标准品证书地址" />
+        {isStandard ? (
+          <label className="block min-w-0 space-y-2">
+            <span className="text-sm font-medium">标准品/标准物质证书</span>
+            <input
+              className="h-10 w-full min-w-0 rounded-md border bg-white px-3 text-sm"
+              onChange={(event) => uploadStandardCertificate(event.currentTarget.files?.[0])}
+              type="file"
+              accept=".pdf,application/pdf"
+            />
+            <input className="h-10 w-full min-w-0 rounded-md border bg-white px-3 text-sm" name="standardCertificateUrl" onChange={(event) => setStandardCertificateUrl(event.target.value)} placeholder="上传 PDF 后自动填入，也可手动填写证书地址" value={standardCertificateUrl} />
+            {certificateUploadMessage ? <FieldHint value={certificateUploadMessage} /> : null}
+            {certificateUploading ? <FieldHint value="证书上传中..." /> : null}
+          </label>
+        ) : (
+          <Field defaultValue={material?.standardCertificateUrl} label="标准证书地址" name="standardCertificateUrl" placeholder="标准证书地址" />
+        )}
         <Field defaultValue={material?.attachmentUrl} label="附件地址" name="attachmentUrl" placeholder="填写说明文件或附件地址" />
       </div>
       {material ? (
@@ -1030,9 +1100,11 @@ function materialBatchLocation(material?: Material) {
 }
 
 function materialPayload(form: FormData, fallbackStatus: string): MaterialPayload {
+  const productType = String(form.get("productType") ?? "consumable");
+  const procurementProject = String(form.get("procurementProject") ?? form.get("tenderContract") ?? "");
   return {
     name: String(form.get("name") ?? ""),
-    productType: String(form.get("productType") ?? "consumable"),
+    productType,
     category: String(form.get("category") ?? ""),
     subcategory: String(form.get("subcategory") ?? ""),
     spec: String(form.get("spec") ?? ""),
@@ -1047,16 +1119,17 @@ function materialPayload(form: FormData, fallbackStatus: string): MaterialPayloa
     casNo: String(form.get("casNo") ?? ""),
     grade: String(form.get("grade") ?? ""),
     concentration: String(form.get("concentration") ?? ""),
-    parentMaterialId: String(form.get("parentMaterialId") ?? ""),
-    dilutionFactor: String(form.get("dilutionFactor") ?? ""),
-    preparationMethod: String(form.get("preparationMethod") ?? ""),
+    parentMaterialId: productType === "standard" ? "" : String(form.get("parentMaterialId") ?? ""),
+    dilutionFactor: productType === "standard" ? "" : String(form.get("dilutionFactor") ?? ""),
+    preparationMethod: productType === "standard" ? "" : String(form.get("preparationMethod") ?? ""),
     storageCondition: String(form.get("storageCondition") ?? ""),
     storageRoom: String(form.get("storageRoom") ?? ""),
     storageCabinet: String(form.get("storageCabinet") ?? ""),
     storageLayer: String(form.get("storageLayer") ?? ""),
     storageSlot: String(form.get("storageSlot") ?? ""),
-    tenderContract: String(form.get("tenderContract") ?? ""),
-    contractNo: String(form.get("contractNo") ?? ""),
+    tenderContract: procurementProject,
+    contractNo: procurementProject,
+    remark: String(form.get("remark") ?? ""),
     certificateUrl: String(form.get("certificateUrl") ?? ""),
     standardCertificateUrl: String(form.get("standardCertificateUrl") ?? ""),
     attachmentUrl: String(form.get("attachmentUrl") ?? ""),
@@ -1101,7 +1174,7 @@ function productTypeLabel(productType: string) {
   const labels: Record<string, string> = {
     consumable: "耗材",
     reagent: "试剂",
-    standard: "标准品",
+    standard: "标准品/标准物质",
   };
   return labels[productType] ?? productType;
 }

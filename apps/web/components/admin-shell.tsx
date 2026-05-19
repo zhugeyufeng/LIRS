@@ -32,7 +32,7 @@ const adminNavGroups: AdminNavGroup[] = [
     label: "实验资源中心",
     items: [
       { key: "instruments", label: "仪器管理", href: "/admin/instruments", icon: "thermometer", MobileIcon: ThermometerSun },
-      { key: "materials", label: "资源管理", href: "/admin/materials", icon: "package", MobileIcon: PackageSearch },
+      { key: "materials", label: "资源管理", href: "/admin/materials/standards", icon: "package", MobileIcon: PackageSearch },
       { key: "maintenance", label: "设备维护", href: "/maintenance", icon: "wrench", MobileIcon: Wrench },
     ],
   },

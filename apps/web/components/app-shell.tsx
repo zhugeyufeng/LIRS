@@ -39,8 +39,7 @@ const primaryNavGroups: PrimaryNavGroup[] = [
   {
     label: "资源",
     items: [
-      { href: "/materials", label: "资源目录" },
-      { href: "/materials/standards", label: "标准品目录" },
+      { href: "/materials/standards", label: "标准品/标准物质目录" },
       { href: "/materials/reagents", label: "试剂目录" },
       { href: "/materials/consumables", label: "耗材目录" },
       { href: "/materials/requests", label: "资源申领", requiresAuth: true },

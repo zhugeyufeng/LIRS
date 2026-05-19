@@ -58,3 +58,23 @@ body {
   color: hsl(var(--foreground));
   overflow-x: hidden;
 }
+
+@media print {
+  body:has([data-material-qr-print]) * {
+    visibility: hidden;
+  }
+
+  [data-material-qr-print],
+  [data-material-qr-print] * {
+    visibility: visible;
+  }
+
+  [data-material-qr-print] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 72mm;
+    border: 0;
+    box-shadow: none;
+  }
+}

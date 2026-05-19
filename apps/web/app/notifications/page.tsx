@@ -11,7 +11,7 @@ export default async function NotificationsPage() {
     <AppShell mainClassName="mx-auto w-full max-w-[88rem] px-4 pt-6 pb-4 sm:px-6 sm:pt-8 sm:pb-4 lg:px-8">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">消息中心</h1>
-        <p className="mt-2 text-sm text-muted-foreground">查看系统通知、审批提醒、预约提醒和库存预警。</p>
+        <p className="mt-2 text-sm text-muted-foreground">查看系统通知、审批提醒、预约提醒、库存预警和管理员公告。</p>
       </div>
       <Card className="min-w-0 overflow-hidden">
         <CardHeader className="p-4 sm:p-6">
@@ -30,6 +30,8 @@ export default async function NotificationsPage() {
                   <p className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500">
                     <span>{formatDateTime(item.createdAt)}</span>
                     <span>{levelLabel(item.level)}</span>
+                    <span>{sourceLabel(item.source)}</span>
+                    {item.source === "announcement" ? <span>发送人：{item.publisher || "管理员"}</span> : null}
                   </p>
                 </div>
                 <MarkNotificationRead id={item.id} read={item.read} />
@@ -55,6 +57,10 @@ function levelLabel(level: string) {
     success: "成功",
   };
   return labels[level] ?? level;
+}
+
+function sourceLabel(source: string) {
+  return source === "announcement" ? "管理员公告" : "系统通知";
 }
 
 function formatDateTime(value: string) {

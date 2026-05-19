@@ -473,6 +473,8 @@ export type Notification = {
   groupName?: string;
   department?: string;
   targetScope: string;
+  source: "system" | "announcement";
+  publisher: string;
   title: string;
   body: string;
   level: string;
@@ -513,6 +515,7 @@ export type FooterSettings = {
   key: string;
   brandName: string;
   brandTagline: string;
+  baseUrl: string;
   description: string;
   sections: FooterSection[];
   copyright: string;
@@ -523,6 +526,7 @@ export type FooterSettings = {
 export type FooterSettingsPayload = {
   brandName: string;
   brandTagline: string;
+  baseUrl: string;
   description: string;
   sections: FooterSection[];
   copyright: string;
@@ -547,26 +551,33 @@ export type CopySettingsPayload = {
   entries: CopyEntry[];
 };
 
-export type SMTPSettings = {
+export type GraphMailSettings = {
   enabled: boolean;
-  host: string;
-  port: number;
-  username: string;
-  fromEmail: string;
-  fromName: string;
-  passwordConfigured: boolean;
+  tenantId: string;
+  clientId: string;
+  senderUserPrincipalName: string;
+  saveToSentItems: boolean;
+  clientSecretConfigured: boolean;
   updatedBy: string;
   updatedAt: string;
 };
 
-export type SMTPSettingsPayload = {
+export type GraphMailSettingsPayload = {
   enabled: boolean;
-  host: string;
-  port: number;
-  username: string;
-  password?: string;
-  fromEmail: string;
-  fromName: string;
+  tenantId: string;
+  clientId: string;
+  clientSecret?: string;
+  senderUserPrincipalName: string;
+  saveToSentItems: boolean;
+};
+
+export type GraphMailTestPayload = {
+  to: string;
+};
+
+export type GraphMailTestResult = {
+  sent: boolean;
+  message: string;
 };
 
 export type WeChatSettings = {
@@ -624,6 +635,11 @@ export type DingTalkSettingsPayload = {
   eventToken?: string;
 };
 
+export type DingTalkTestResult = {
+  sent: boolean;
+  message: string;
+};
+
 export type DingTalkBinding = {
   bound: boolean;
   userId: string;
@@ -641,7 +657,7 @@ export type DingTalkBindingPayload = {
 };
 
 export type NotificationChannelSettings = {
-  smtp: SMTPSettings;
+  graphMail: GraphMailSettings;
   wechat: WeChatSettings;
   dingtalk: DingTalkSettings;
 };
@@ -780,6 +796,7 @@ export type Material = {
   storageSlot: string;
   tenderContract: string;
   contractNo: string;
+  remark: string;
   certificateUrl: string;
   standardCertificateUrl: string;
   attachmentUrl: string;
@@ -831,6 +848,7 @@ export type MaterialImportResult = {
   updated: number;
   skipped: number;
   errors: string[];
+  message: string;
 };
 
 export type MaterialCategory = {
@@ -913,6 +931,7 @@ export type MaterialRequest = {
   batchNo?: string;
   unitId?: string;
   unitCode?: string;
+  location?: string;
   quantity: number;
   purpose: string;
   status: string;
@@ -921,8 +940,19 @@ export type MaterialRequest = {
 
 export type MaterialPurchase = {
   id: string;
-  materialId: string;
+  materialId?: string;
   materialName: string;
+  purchasableMaterialId?: string;
+  purchaseIdNo: string;
+  purchaseSequenceNo: string;
+  purchaseProjectName: string;
+  purchaseItemName: string;
+  purchaseBrand: string;
+  purchaseSpec: string;
+  purchaseUnit: string;
+  purchaseRemark: string;
+  purchaseTechnicalRequirement: string;
+  purchaseMinSpec: string;
   requesterId?: string;
   requester: string;
   groupName: string;
@@ -956,12 +986,51 @@ export type MaterialRequestPayload = {
 };
 
 export type MaterialPurchasePayload = {
-  materialId: string;
+  materialId?: string;
+  purchasableMaterialId?: string;
   requester?: string;
   quantity: number;
   estimatedUnitPrice: number;
   supplier: string;
   reason: string;
+};
+
+export type PurchasableMaterial = {
+  id: string;
+  idNo: string;
+  sequenceNo: string;
+  procurementProjectId: string;
+  procurementProject: string;
+  procurementExpiresAt: string;
+  procurementProjectStatus: string;
+  projectName: string;
+  brand: string;
+  spec: string;
+  unit: string;
+  purchasePrice: number;
+  remark: string;
+  technicalRequirement: string;
+  minSpec: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PurchasableMaterialPayload = Omit<PurchasableMaterial, "id" | "status" | "createdAt" | "updatedAt" | "procurementProjectStatus">;
+
+export type ProcurementProject = {
+  id: string;
+  name: string;
+  expiresAt: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProcurementProjectPayload = {
+  name: string;
+  expiresAt?: string;
+  status?: string;
 };
 
 export type MaterialDamage = {
@@ -1076,6 +1145,44 @@ export type DingTalkQuickLoginPayload = {
   device?: string;
 };
 
+export type DingTalkWebLoginIntentPayload = {
+  tenantId?: string;
+  tenantCode?: string;
+  redirectUri: string;
+  next?: string;
+};
+
+export type DingTalkWebLoginIntent = {
+  authUrl: string;
+  state: string;
+  tenantId: string;
+  tenantCode: string;
+};
+
+export type DingTalkWebLoginPayload = {
+  tenantId?: string;
+  tenantCode?: string;
+  authCode: string;
+  state: string;
+  device?: string;
+};
+
+export type DingTalkWebLoginResult = {
+  bound: boolean;
+  auth?: AuthResponse;
+  bindingToken?: string;
+  tenantId?: string;
+  tenantCode?: string;
+  dingTalkName?: string;
+};
+
+export type DingTalkLoginBindExistingPayload = {
+  bindingToken: string;
+  email: string;
+  password: string;
+  device?: string;
+};
+
 export type UserProfilePayload = {
   name?: string;
   phone?: string;
@@ -1181,7 +1288,7 @@ export const api = {
   assistantQueries: () => businessRequest<AssistantQuery[]>("/api/ai-assistant", "assistant-queries"),
   reservations: () => businessRequest<Reservation[]>("/api/reservations", "reservations"),
   users: () => businessRequest<User[]>("/api/users", "users"),
-  notifications: (tenantId?: string) => businessRequest<Notification[]>(withQuery("/api/notifications", { tenantId }), `notifications:${tenantId ?? ""}`),
+  notifications: (tenantId?: string, source?: "system" | "announcement") => businessRequest<Notification[]>(withQuery("/api/notifications", { tenantId, source }), `notifications:${tenantId ?? ""}:${source ?? ""}`),
   ledger: () => businessRequest<LedgerEntry[]>("/api/ledger", "ledger"),
   financialAccounts: () => businessRequest<FinancialAccount[]>("/api/financial-accounts", "financial-accounts"),
   materials: () => businessRequest<Material[]>("/api/materials", "materials"),
@@ -1191,6 +1298,8 @@ export const api = {
   materialByQRCode: (code: string) => businessRequest<Material>(`/api/materials/scan/${encodeURIComponent(code)}`, "materials"),
   inventoryLedger: () => businessRequest<InventoryLedgerEntry[]>("/api/inventory-ledger", "inventory-ledger"),
   materialRequests: () => businessRequest<MaterialRequest[]>("/api/material-requests", "material-requests"),
+  procurementProjects: () => businessRequest<ProcurementProject[]>("/api/procurement-projects", "procurement-projects"),
+  purchasableMaterials: () => businessRequest<PurchasableMaterial[]>("/api/purchasable-materials", "purchasable-materials"),
   materialPurchases: () => businessRequest<MaterialPurchase[]>("/api/material-purchases", "material-purchases"),
   materialDamages: () => businessRequest<MaterialDamage[]>("/api/material-damages", "material-damages"),
   maintenance: () => businessRequest<MaintenanceOrder[]>("/api/maintenance", "maintenance"),
@@ -1206,6 +1315,7 @@ export function createDefaultFooterSettings(): FooterSettings {
     key: "footer",
     brandName: "LIRS 2026 实验室运营系统",
     brandTagline: "仪器预约、审批、使用、耗材、财务与审计闭环平台",
+    baseUrl: "",
     description:
       "系统数据统一写入 PostgreSQL，登录会话、审批、库存、财务流水和审计记录均从数据库读取；Redis 用于缓存与事件队列。",
     sections: [
@@ -1435,6 +1545,26 @@ export async function browserLogin(payload: LoginPayload): Promise<AuthResponse>
 
 export async function browserDingTalkQuickLogin(payload: DingTalkQuickLoginPayload): Promise<AuthResponse> {
   const auth = await browserRequestWithOptions<AuthResponse>("/api/dingtalk/quick-login", "POST", payload, { skipAuth: true });
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(authTokenKey);
+  }
+  return auth;
+}
+
+export async function browserDingTalkWebLoginIntent(payload: DingTalkWebLoginIntentPayload): Promise<DingTalkWebLoginIntent> {
+  return browserRequestWithOptions<DingTalkWebLoginIntent>("/api/dingtalk/web-login-intent", "POST", payload, { skipAuth: true });
+}
+
+export async function browserDingTalkWebLogin(payload: DingTalkWebLoginPayload): Promise<DingTalkWebLoginResult> {
+  const result = await browserRequestWithOptions<DingTalkWebLoginResult>("/api/dingtalk/web-login", "POST", payload, { skipAuth: true });
+  if (typeof window !== "undefined" && result.bound) {
+    window.localStorage.removeItem(authTokenKey);
+  }
+  return result;
+}
+
+export async function browserDingTalkLoginBindExisting(payload: DingTalkLoginBindExistingPayload): Promise<AuthResponse> {
+  const auth = await browserRequestWithOptions<AuthResponse>("/api/dingtalk/login-bind-existing", "POST", payload, { skipAuth: true });
   if (typeof window !== "undefined") {
     window.localStorage.removeItem(authTokenKey);
   }

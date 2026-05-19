@@ -40,6 +40,7 @@ VALUES (
     jsonb_build_object(
         'brandName', 'LIRS 2026 实验室运营系统',
         'brandTagline', '仪器预约、审批、使用、耗材、财务与审计闭环平台',
+        'baseUrl', '',
         'description', '系统数据统一写入 PostgreSQL，登录会话、审批、库存、财务流水和审计记录均从数据库读取；Redis 用于缓存与事件队列。',
         'sections', jsonb_build_array(
             jsonb_build_object(

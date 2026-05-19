@@ -29,10 +29,12 @@ type repository interface {
 	CopySettings(ctx context.Context) (store.CopySettings, error)
 	SaveCopySettings(ctx context.Context, input store.CopySettingsInput) (store.CopySettings, error)
 	NotificationChannelSettings(ctx context.Context) (store.NotificationChannelSettings, error)
-	SaveSMTPSettings(ctx context.Context, input store.SMTPSettingsInput) (store.SMTPSettings, error)
+	SaveGraphMailSettings(ctx context.Context, input store.GraphMailSettingsInput) (store.GraphMailSettings, error)
+	TestGraphMailSettings(ctx context.Context, input store.GraphMailTestInput) (store.GraphMailTestResult, error)
 	SaveWeChatSettings(ctx context.Context, input store.WeChatSettingsInput) (store.WeChatSettings, error)
 	DingTalkSettings(ctx context.Context) (store.DingTalkSettings, error)
 	SaveDingTalkSettings(ctx context.Context, input store.DingTalkSettingsInput) (store.DingTalkSettings, error)
+	TestDingTalkSettings(ctx context.Context, input store.DingTalkTestInput) (store.DingTalkTestResult, error)
 	HandleDingTalkEventCallback(ctx context.Context, input store.DingTalkEventCallbackInput) (store.DingTalkEventCallbackResponse, error)
 	AccessControlSettings(ctx context.Context) (store.AccessControlSettings, error)
 	SaveAccessControlSettings(ctx context.Context, input store.AccessControlSettingsInput) (store.AccessControlSettings, error)
@@ -108,6 +110,7 @@ type repository interface {
 	MaterialRequest(ctx context.Context, id string) (store.MaterialRequest, error)
 	InventoryLedger(ctx context.Context) ([]store.InventoryLedgerEntry, error)
 	SaveMaterial(ctx context.Context, id string, input store.MaterialInput) (store.Material, error)
+	ImportMaterials(ctx context.Context, input store.MaterialImportInput) (store.MaterialImportResult, error)
 	ImportMaterialsCSV(ctx context.Context, content string, actor string) (store.MaterialImportResult, error)
 	MaterialAnalytics(ctx context.Context) (store.MaterialAnalytics, error)
 	MaterialAlertActions(ctx context.Context) ([]store.MaterialAlertAction, error)
@@ -118,6 +121,13 @@ type repository interface {
 	ApproveMaterialRequest(ctx context.Context, id string, approved bool, actor string, comment string) (store.MaterialRequest, error)
 	OutboundMaterialRequest(ctx context.Context, id string, actor string) (store.MaterialRequest, error)
 	CancelMaterialRequest(ctx context.Context, id string, actor string) (store.MaterialRequest, error)
+	ProcurementProjects(ctx context.Context) ([]store.ProcurementProject, error)
+	SaveProcurementProject(ctx context.Context, id string, input store.ProcurementProjectInput) (store.ProcurementProject, error)
+	DeleteProcurementProject(ctx context.Context, id string, actor string) (store.ProcurementProject, error)
+	PurchasableMaterials(ctx context.Context) ([]store.PurchasableMaterial, error)
+	SavePurchasableMaterial(ctx context.Context, id string, input store.PurchasableMaterialInput) (store.PurchasableMaterial, error)
+	DeletePurchasableMaterial(ctx context.Context, id string, actor string) (store.PurchasableMaterial, error)
+	ImportPurchasableMaterials(ctx context.Context, input store.PurchasableMaterialImportInput) (store.MaterialImportResult, error)
 	MaterialPurchase(ctx context.Context, id string) (store.MaterialPurchase, error)
 	MaterialPurchases(ctx context.Context) ([]store.MaterialPurchase, error)
 	CreateMaterialPurchase(ctx context.Context, input store.MaterialPurchaseInput) (store.MaterialPurchase, error)
@@ -140,6 +150,9 @@ type repository interface {
 	Operations(ctx context.Context) (store.Operations, error)
 	Login(ctx context.Context, input store.LoginInput) (store.AuthResponse, error)
 	DingTalkQuickLogin(ctx context.Context, input store.DingTalkQuickLoginInput) (store.AuthResponse, error)
+	DingTalkWebLoginIntent(ctx context.Context, input store.DingTalkWebLoginIntentInput) (store.DingTalkWebLoginIntent, error)
+	DingTalkWebLogin(ctx context.Context, input store.DingTalkWebLoginInput) (store.DingTalkWebLoginResult, error)
+	BindDingTalkLoginToExistingUser(ctx context.Context, input store.DingTalkLoginBindExistingInput) (store.AuthResponse, error)
 	CurrentUser(ctx context.Context, token string) (store.User, error)
 	Logout(ctx context.Context, token string) error
 	LogoutAll(ctx context.Context, userID string) error
@@ -173,6 +186,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 
 	api := router.Group("/api")
 	api.Use(tenantContextMiddleware(repo))
+	registerUploadRoutes(router, api, repo)
 	api.GET("/dashboard", get(caller(repo.Dashboard)))
 	api.GET("/tenants", func(c *gin.Context) {
 		items, err := repo.Tenants(c.Request.Context())
@@ -241,18 +255,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		item, err := repo.NotificationChannelSettings(c.Request.Context())
 		respond(c, item, err)
 	})
-	api.PATCH("/notification-channel-settings/smtp", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, "super_admin")
-		if !ok {
-			return
-		}
-		var input store.SMTPSettingsInput
-		if bindJSON(c, &input) {
-			input.Actor = actor.Name
-			item, err := repo.SaveSMTPSettings(c.Request.Context(), input)
-			respond(c, item, err)
-		}
-	})
+	registerGraphMailRoutes(api, repo)
 	api.PATCH("/notification-channel-settings/wechat", func(c *gin.Context) {
 		actor, ok := requireAnyRole(c, repo, "super_admin")
 		if !ok {
@@ -293,6 +296,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			respond(c, item, err)
 		}
 	})
+	registerDingTalkNotificationRoutes(api, repo)
 	api.POST("/dingtalk/events", func(c *gin.Context) {
 		var body struct {
 			Encrypt string `json:"encrypt"`
@@ -503,11 +507,17 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			return
 		}
 		ctx := c.Request.Context()
+		if source := strings.TrimSpace(c.Query("source")); source != "" {
+			ctx = store.WithNotificationSourceContext(ctx, source)
+		}
 		if isAdmin(actor) {
 			var contextOK bool
 			ctx, contextOK = tenantAdminRequestContext(c, repo, actor)
 			if !contextOK {
 				return
+			}
+			if source := strings.TrimSpace(c.Query("source")); source != "" {
+				ctx = store.WithNotificationSourceContext(ctx, source)
 			}
 		}
 		item, err := repo.Notifications(ctx, actor)
@@ -518,7 +528,11 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		if !ok {
 			return
 		}
-		count, err := repo.MarkAllNotificationsRead(c.Request.Context(), actor)
+		ctx := c.Request.Context()
+		if source := strings.TrimSpace(c.Query("source")); source != "" {
+			ctx = store.WithNotificationSourceContext(ctx, source)
+		}
+		count, err := repo.MarkAllNotificationsRead(ctx, actor)
 		respond(c, gin.H{"count": count}, err)
 	})
 	api.GET("/ledger", func(c *gin.Context) {
@@ -552,6 +566,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 		c.Header("Content-Type", "text/csv; charset=utf-8")
 		c.Header("Content-Disposition", "attachment; filename=lirs-ledger.csv")
+		writeCSVBOM(c)
 		writer := csv.NewWriter(c.Writer)
 		_ = writer.Write([]string{"id", "user_id", "user_name", "reservation_id", "owner", "description", "entry_type", "amount", "reference_id", "created_at"})
 		for _, entry := range item {
@@ -645,9 +660,10 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 		c.Header("Content-Type", "text/csv; charset=utf-8")
 		c.Header("Content-Disposition", "attachment; filename=lirs-materials-import-template.csv")
+		writeCSVBOM(c)
 		writer := csv.NewWriter(c.Writer)
 		_ = writer.Write(materialImportTemplateHeader())
-		_ = writer.Write([]string{"示例铅工作液", "标准品", "工作液", "金属元素", "100ug/L 50mL", "瓶", "80", "1", "1", "国家标准物质中心", "NIM", "WORK-PB-001", "GBW(E)080129-D", "7439-92-1", "CRM", "100ug/L", "", "1:10", "铅标准溶液稀释配制", "2-8°C 避光", "标准品库", "防爆冰箱", "二层", "A09", "2026-标准品采购合同", "TC-2026-066", "", "/files/certs/pb-standard.pdf", "", "WORK-PB-001", "2026-08-31", "2026-05-15", "30", "0", "5", "是", "30", "正常"})
+		_ = writer.Write([]string{"PCR-0001", "示例铅标准物质", "标准品", "单元素标准品", "金属元素", "100ug/L 50mL", "瓶", "80", "1", "1", "国家标准物质中心", "NIM", "WORK-PB-001", "GBW(E)080129-D", "7439-92-1", "CRM", "100ug/L", "2-8°C 避光", "标准品库", "防爆冰箱", "二层", "A09", "2026-标准品采购项目 编号：STD-2026-066", "首次入库备注", "", "/files/certs/pb-standard.pdf", "", "WORK-PB-001", "2026-08-31", "2026-05-15", "30", "0", "5", "是", "30", "正常"})
 		writer.Flush()
 	})
 	api.GET("/materials/export.csv", func(c *gin.Context) {
@@ -662,8 +678,9 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 		c.Header("Content-Type", "text/csv; charset=utf-8")
 		c.Header("Content-Disposition", "attachment; filename=lirs-materials.csv")
+		writeCSVBOM(c)
 		writer := csv.NewWriter(c.Writer)
-		_ = writer.Write([]string{"资源名称", "资源类型", "一级目录", "二级目录", "CAS号", "规格", "单位", "库存", "低库存线", "损毁数", "供应商", "生产商", "批号", "货号", "母液/来源", "稀释倍数", "配制方法", "库位", "有效期", "开封日期", "开封到期", "冻融次数", "审批", "二维码", "状态"})
+		_ = writer.Write([]string{"资源名称", "资源类型", "一级目录", "二级目录", "CAS号", "规格", "单位", "库存", "低库存线", "损毁数", "供应商", "生产商", "批号", "货号", "库位", "采购项目名称及编号", "备注", "有效期", "开封日期", "开封到期", "冻融次数", "审批", "二维码", "状态"})
 		for _, item := range items {
 			if !canManageMaterials(actor) {
 				continue
@@ -683,10 +700,9 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 				item.Manufacturer,
 				item.BatchNo,
 				item.CatalogNo,
-				item.ParentMaterialName,
-				item.DilutionFactor,
-				item.PreparationMethod,
 				materialLocation(item),
+				firstNonEmptyString(item.TenderContract, item.ContractNo),
+				item.Remark,
 				item.ExpiresAt,
 				item.OpenedAt,
 				item.OpenExpiresAt,
@@ -711,6 +727,24 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		item, err := repo.ImportMaterialsCSV(c.Request.Context(), string(body), actor.Name)
 		respond(c, item, err)
 	})
+	api.POST("/materials/import", func(c *gin.Context) {
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		if !ok {
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 8<<20))
+		if err != nil {
+			respond(c, nil, err)
+			return
+		}
+		item, err := repo.ImportMaterials(c.Request.Context(), store.MaterialImportInput{
+			Filename: c.Query("filename"),
+			Content:  body,
+			Actor:    actor.Name,
+		})
+		respond(c, item, err)
+	})
+	registerProcurementRoutes(api, repo)
 	api.GET("/material-requests/export.csv", func(c *gin.Context) {
 		actor, ok := requireActiveUser(c, repo)
 		if !ok {
@@ -724,6 +758,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		items = filterMaterialRequestsForActor(actor, items)
 		c.Header("Content-Type", "text/csv; charset=utf-8")
 		c.Header("Content-Disposition", "attachment; filename=lirs-material-requests.csv")
+		writeCSVBOM(c)
 		writer := csv.NewWriter(c.Writer)
 		_ = writer.Write([]string{"产品", "申请人", "课题组", "数量", "用途", "状态", "创建时间", "模板类型"})
 		for _, item := range items {
@@ -748,6 +783,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		items = filterMaterialDamagesForActor(actor, items)
 		c.Header("Content-Type", "text/csv; charset=utf-8")
 		c.Header("Content-Disposition", "attachment; filename=lirs-material-damages.csv")
+		writeCSVBOM(c)
 		writer := csv.NewWriter(c.Writer)
 		_ = writer.Write([]string{"资源", "登记人", "课题组", "唯一编号", "批次", "数量", "原因", "照片", "附件", "状态", "审核人", "审核备注", "创建时间"})
 		for _, item := range items {
@@ -1357,6 +1393,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 		c.Header("Content-Type", "text/csv; charset=utf-8")
 		c.Header("Content-Disposition", "attachment; filename=lirs-operations.csv")
+		writeCSVBOM(c)
 		writer := csv.NewWriter(c.Writer)
 		_ = writer.Write([]string{"section", "name", "value"})
 		_ = writer.Write([]string{"dashboard", "today_reservations", strconv.Itoa(item.Dashboard.TodayReservations)})
@@ -1417,6 +1454,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			respond(c, item, err)
 		}
 	})
+	registerDingTalkLoginRoutes(api, repo)
 	api.GET("/me", func(c *gin.Context) {
 		token, ok := bearerToken(c)
 		if !ok {
@@ -2085,6 +2123,10 @@ func intQuery(c *gin.Context, key string, fallback int) int {
 	return value
 }
 
+func writeCSVBOM(c *gin.Context) {
+	_, _ = c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
+}
+
 func bearerToken(c *gin.Context) (string, bool) {
 	header := strings.TrimSpace(c.GetHeader("Authorization"))
 	if header == "" {
@@ -2653,7 +2695,7 @@ func materialProductTypeLabel(productType string) string {
 	labels := map[string]string{
 		"consumable": "耗材",
 		"reagent":    "试剂",
-		"standard":   "标准品",
+		"standard":   "标准品/标准物质",
 	}
 	if label, ok := labels[productType]; ok {
 		return label
@@ -2720,6 +2762,7 @@ func materialLocation(item store.Material) string {
 
 func materialImportTemplateHeader() []string {
 	return []string{
+		"可采购物资ID号",
 		"资源名称",
 		"资源类型",
 		"一级目录",
@@ -2736,16 +2779,13 @@ func materialImportTemplateHeader() []string {
 		"CAS号",
 		"级别",
 		"浓度",
-		"母液ID",
-		"稀释倍数",
-		"配制方法",
 		"保存条件",
 		"库房/冰箱",
 		"柜/架",
 		"层/盒",
 		"孔位",
-		"招标合同",
-		"合同序号",
+		"采购项目名称及编号",
+		"备注",
 		"资源证书地址",
 		"标准证书地址",
 		"附件地址",
@@ -2808,6 +2848,7 @@ func clientSafeError(err error) (string, bool) {
 		"account ",
 		"tenant ",
 		"current ",
+		"mail ",
 		"personal ",
 		"group ",
 		"department ",
@@ -2817,6 +2858,10 @@ func clientSafeError(err error) (string, bool) {
 		"maintenance ",
 		"insufficient ",
 		"dingtalk ",
+		"graph ",
+		"标准品证书",
+		"无法",
+		"不支持",
 	}
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(message, prefix) {

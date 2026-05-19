@@ -181,6 +181,30 @@ paths:
       responses:
         "200":
           description: Notification channel settings
+  /api/notification-channel-settings/graph-mail:
+    patch:
+      summary: Save Microsoft Graph mail settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GraphMailSettingsInput"
+      responses:
+        "200":
+          description: Microsoft Graph mail settings saved
+  /api/notification-channel-settings/graph-mail/test:
+    post:
+      summary: Send a Microsoft Graph mail test message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GraphMailTestInput"
+      responses:
+        "200":
+          description: Microsoft Graph mail test result
   /api/notification-channel-settings/dingtalk:
     get:
       summary: Read current tenant DingTalk application settings
@@ -399,6 +423,100 @@ paths:
       responses:
         "200":
           description: Request outbound
+  /api/procurement-projects:
+    get:
+      summary: List procurement project names and numbers for purchasable materials
+      responses:
+        "200":
+          description: Procurement project list
+    post:
+      summary: Create or update a procurement project by name
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProcurementProjectInput"
+      responses:
+        "200":
+          description: Procurement project saved
+  /api/procurement-projects/{id}:
+    patch:
+      summary: Update a procurement project, including expiry and status
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProcurementProjectInput"
+      responses:
+        "200":
+          description: Procurement project updated
+    delete:
+      summary: Disable a procurement project
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Procurement project disabled
+  /api/purchasable-materials:
+    get:
+      summary: List purchasable material catalog with procurement project status
+      responses:
+        "200":
+          description: Purchasable material list
+    post:
+      summary: Create or update a purchasable material and auto-create missing procurement project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasableMaterialInput"
+      responses:
+        "200":
+          description: Purchasable material saved
+  /api/purchasable-materials/{id}:
+    patch:
+      summary: Update a purchasable material and auto-create missing procurement project
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasableMaterialInput"
+      responses:
+        "200":
+          description: Purchasable material updated
+    delete:
+      summary: Delete a purchasable material
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Purchasable material deleted
+  /api/purchasable-materials/import:
+    post:
+      summary: Import purchasable materials from CSV or XLSX and auto-create missing procurement projects
+      responses:
+        "200":
+          description: Purchasable material import result
+  /api/purchasable-materials/export.csv:
+    get:
+      summary: Export purchasable material catalog as UTF-8 BOM CSV
+      responses:
+        "200":
+          description: Purchasable material CSV
+  /api/purchasable-materials/import-template.csv:
+    get:
+      summary: Download purchasable material import template CSV
+      responses:
+        "200":
+          description: Purchasable material import template CSV
   /api/material-damages:
     get:
       summary: List material damage reports
@@ -528,6 +646,45 @@ components:
       type: object
       properties:
         comment: { type: string }
+    GraphMailSettingsInput:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        tenantId: { type: string }
+        clientId: { type: string }
+        clientSecret: { type: string }
+        senderUserPrincipalName: { type: string, format: email }
+        saveToSentItems: { type: boolean }
+    GraphMailTestInput:
+      type: object
+      required: [to]
+      properties:
+        to: { type: string, format: email }
+    ProcurementProjectInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        expiresAt: { type: string, format: date }
+        status:
+          type: string
+          enum: [active, disabled]
+    PurchasableMaterialInput:
+      type: object
+      required: [idNo, sequenceNo, projectName, brand, spec, unit, purchasePrice]
+      properties:
+        idNo: { type: string }
+        sequenceNo: { type: string }
+        procurementProjectId: { type: string, format: uuid }
+        procurementProject: { type: string }
+        projectName: { type: string }
+        brand: { type: string }
+        spec: { type: string }
+        unit: { type: string }
+        purchasePrice: { type: number }
+        remark: { type: string }
+        technicalRequirement: { type: string }
+        minSpec: { type: string }
     DingTalkSettingsInput:
       type: object
       properties:

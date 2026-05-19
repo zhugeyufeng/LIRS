@@ -29,7 +29,7 @@ export default async function DashboardPage({
   const currentUser = await api.me();
   const [reservationsResult, notificationsResult, ledgerResult] = await Promise.allSettled([
     api.reservations(),
-    api.notifications(),
+    api.notifications(undefined, "announcement"),
     currentUser.role === "super_admin" || currentUser.financeEnabled ? api.ledger() : Promise.resolve([]),
   ]);
   const reservations = reservationsResult.status === "fulfilled" ? reservationsResult.value : [];
@@ -47,7 +47,7 @@ export default async function DashboardPage({
     return !["completed", "rejected", "cancelled"].includes(item.status);
   });
   const activeAuthorization = reservations.find((item) => item.status === "approved" || item.status === "in_use");
-  const warning = notifications.find((item) => item.level === "warning" && !item.read);
+  const globalAnnouncement = notifications.find((item) => item.targetScope === "global");
   const totalSpend = ledger.reduce((sum, item) => sum + (item.amount ?? 0), 0);
   const now = new Date();
   const monthlyReservations = reservations.filter((item) => {
@@ -104,14 +104,22 @@ export default async function DashboardPage({
             <Metric label="待处理事项" value={`${activeReservations.length} 项`} note="审批/使用中预约" />
           </div>
 
-          {warning ? (
+          {globalAnnouncement ? (
             <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-800 sm:flex-row sm:items-center sm:gap-4">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100">
                 <Clock3 className="h-5 w-5" aria-hidden="true" />
               </div>
               <div className="min-w-0 flex-1">
-                <h4 className="break-words text-sm font-bold">{warning.title}</h4>
-                <p className="mt-0.5 break-words text-xs">{warning.body}</p>
+                <dl className="grid gap-2 text-xs sm:grid-cols-[72px_minmax(0,1fr)]">
+                  <dt className="font-medium text-amber-700">标题</dt>
+                  <dd className="break-words font-bold text-amber-900">{globalAnnouncement.title}</dd>
+                  <dt className="font-medium text-amber-700">内容</dt>
+                  <dd className="break-words leading-5">{globalAnnouncement.body}</dd>
+                  <dt className="font-medium text-amber-700">发送人</dt>
+                  <dd className="break-words">{globalAnnouncement.publisher || "管理员"}</dd>
+                  <dt className="font-medium text-amber-700">发送时间</dt>
+                  <dd>{formatFullDateTime(globalAnnouncement.createdAt)}</dd>
+                </dl>
               </div>
             </div>
           ) : null}
@@ -295,4 +303,26 @@ function formatDateTime(value: string) {
     minute: "2-digit",
     timeZone: "Asia/Shanghai",
   });
+}
+
+function formatFullDateTime(value: string) {
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) {
+    return value;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Shanghai",
+  }).formatToParts(date);
+  const getPart = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${getPart("year")}-${getPart("month")}-${getPart("day")} ${getPart("hour")}:${getPart("minute")}:${getPart("second")}`;
 }

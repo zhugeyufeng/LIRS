@@ -55,16 +55,10 @@ const resourceModules: ModuleEntry[] = [
     icon: CalendarCheck2,
   },
   {
-    href: "/materials",
-    title: "资源目录",
-    description: "分区查看标准品、试剂和耗材目录、唯一编号、库存状态和预警信息。",
-    icon: PackageSearch,
-  },
-  {
     href: "/materials/standards",
-    title: "标准品目录",
-    description: "按批次和唯一编号查看标准品，申领时选择具体编号。",
-    icon: TestTube2,
+    title: "标准品/标准物质目录",
+    description: "按批次和唯一编号查看标准品/标准物质，申领时选择具体编号。",
+    icon: PackageSearch,
   },
   {
     href: "/materials/reagents",
@@ -263,9 +257,9 @@ const resourceAdminModules: ModuleEntry[] = [
     adminSection: "instruments",
   },
   {
-    href: "/admin/materials",
+    href: "/admin/materials/standards",
     title: "资源管理后台",
-    description: "维护一级目录、二级目录，并进入标准品、试剂和耗材独立管理页。",
+    description: "维护一级目录、二级目录，并进入标准品/标准物质、试剂和耗材独立管理页。",
     icon: PackageSearch,
     adminSection: "materials",
   },
@@ -316,8 +310,8 @@ export default async function HomePage() {
   const showFinance = currentUser?.role === "super_admin" || currentUser?.financeEnabled === true;
   const visibleAdminModules = (modules: ModuleEntry[]) =>
     isAdmin ? modules.filter((module) => module.adminSection && canAccessAdminSection(currentUser?.role, module.adminSection, currentUser?.financeEnabled === true)) : [];
-  const publicResourceModules = resourceModules.filter((module) => module.href === "/instruments" || module.href === "/materials" || module.href === "/materials/standards" || module.href === "/materials/reagents" || module.href === "/materials/consumables");
-  const resourceCatalogModules = [resourceModules[1], resourceModules[2], resourceModules[3], resourceModules[4]];
+  const publicResourceModules = resourceModules.filter((module) => module.href === "/instruments" || module.href === "/materials/standards" || module.href === "/materials/reagents" || module.href === "/materials/consumables");
+  const resourceCatalogModules = [resourceModules[1], resourceModules[2], resourceModules[3]];
   const userWorkflowModules = canReview ? workflowModules : workflowModules.filter((module) => module.href !== "/approvals");
   const adminGroups: ModuleGroup[] = [
     {
@@ -358,7 +352,7 @@ export default async function HomePage() {
     },
     {
       title: "实验资源中心",
-      description: "仪器、标准品、试剂和耗材的统一前台入口，覆盖查询、预约、申领和申购。",
+      description: "仪器、标准品/标准物质、试剂和耗材的统一前台入口，覆盖查询、预约、申领和申购。",
       modules: resourceModules,
     },
     {

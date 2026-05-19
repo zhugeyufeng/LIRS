@@ -13,13 +13,13 @@ export default async function MaterialPurchasesPage({
 }) {
   const params = (await searchParams) ?? {};
   const query = (params.q ?? "").trim().toLowerCase();
-  const [materials, purchases, currentUser] = await Promise.all([api.materials(), api.materialPurchases(), api.me()]);
+  const [materials, purchasableMaterials, purchases, currentUser] = await Promise.all([api.materials(), api.purchasableMaterials(), api.materialPurchases(), api.me()]);
   const isAdmin = isMaterialAdminRole(currentUser.role);
   const canReview = isAdmin || currentUser.role === "group_leader";
   const visiblePurchases = purchases.filter((item) => {
     const matchesSearch =
       query === "" ||
-      [item.materialName, item.requester, item.groupName, item.supplier, item.reason].some((value) => value.toLowerCase().includes(query));
+      [item.materialName, item.purchaseIdNo, item.purchaseProjectName, item.purchaseItemName, item.purchaseBrand, item.purchaseSpec, item.requester, item.groupName, item.supplier, item.reason].some((value) => value.toLowerCase().includes(query));
     const matchesStatus = !params.status || item.status === params.status;
     return matchesSearch && matchesStatus;
   });
@@ -28,7 +28,7 @@ export default async function MaterialPurchasesPage({
     <AppShell currentUser={currentUser}>
       <div className="mb-6">
         <h1 className="text-2xl font-bold">资源申购</h1>
-        <p className="mt-1 text-sm text-muted-foreground">提交标准品、试剂或耗材采购申请，跟踪审批、下单和到货入库状态。</p>
+        <p className="mt-1 text-sm text-muted-foreground">提交标准品/标准物质、试剂或耗材采购申请，跟踪审批、下单和到货入库状态。</p>
       </div>
 
       <MaterialsNav active="purchases" />
@@ -42,7 +42,7 @@ export default async function MaterialPurchasesPage({
             <form action="/materials/purchases" className="mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto]">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-                <input className="h-10 w-full rounded-md border bg-white pl-10 pr-3 text-sm" defaultValue={params.q ?? ""} name="q" placeholder="搜索资源、申请人、供应商、原因" />
+                <input className="h-10 w-full rounded-md border bg-white pl-10 pr-3 text-sm" defaultValue={params.q ?? ""} name="q" placeholder="搜索ID号、项目、品牌、规格、申请人" />
               </div>
               <select className="h-10 min-w-0 rounded-md border bg-white px-3 text-sm" defaultValue={params.status ?? ""} name="status">
                 <option value="">全部状态</option>
@@ -80,8 +80,9 @@ export default async function MaterialPurchasesPage({
                   {visiblePurchases.map((item) => (
                     <tr key={item.id}>
                       <td className="break-words p-3 align-top">
-                        <p className="font-bold">{item.materialName}</p>
-                        <p className="mt-1 text-xs text-slate-500">数量 {item.quantity} / {item.supplier || "未指定供应商"}</p>
+                        <p className="font-bold">{purchaseTitle(item)}</p>
+                        <p className="mt-1 text-xs text-slate-500">数量 {item.quantity} / {item.purchaseBrand || item.supplier || "未指定品牌"}</p>
+                        {item.purchaseProjectName ? <p className="mt-1 break-words text-xs text-slate-500">{item.purchaseProjectName}</p> : null}
                       </td>
                       <td className="break-words p-3 align-top">
                         <p className="font-medium">{item.requester}</p>
@@ -96,7 +97,7 @@ export default async function MaterialPurchasesPage({
                         <MaterialPurchaseActions
                           canCancel={isAdmin || item.requesterId === currentUser.id}
                           canOrder={isAdmin}
-                          canReceive={isAdmin}
+                          canReceive={isAdmin && Boolean(item.materialId)}
                           canReview={canReview}
                           id={item.id}
                           status={item.status}
@@ -117,7 +118,7 @@ export default async function MaterialPurchasesPage({
               <CardTitle>新建申购</CardTitle>
             </CardHeader>
             <CardContent>
-              <MaterialPurchaseForm materials={materials} />
+              <MaterialPurchaseForm materials={materials} purchasableMaterials={purchasableMaterials} />
             </CardContent>
           </Card>
         </aside>
@@ -141,21 +142,22 @@ function MaterialPurchaseCard({
     <div className="rounded-lg border bg-white p-4">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
         <div className="min-w-0">
-          <p className="break-words font-bold text-slate-900">{item.materialName} x{item.quantity}</p>
+          <p className="break-words font-bold text-slate-900">{purchaseTitle(item)} x{item.quantity}</p>
           <p className="mt-1 break-words text-sm text-slate-500">{item.requester} / {item.groupName}</p>
+          {item.purchaseProjectName ? <p className="mt-1 break-words text-xs text-slate-500">{item.purchaseProjectName}</p> : null}
         </div>
         <span className="w-fit shrink-0 rounded bg-slate-100 px-2 py-1 text-xs font-bold">{purchaseStatusLabel(item.status)}</span>
       </div>
       <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
         <InfoItem label="预计金额" value={formatMoney(item.estimatedUnitPrice * item.quantity)} />
-        <InfoItem label="供应商" value={item.supplier || "未指定供应商"} />
+        <InfoItem label="品牌/规格" value={`${item.purchaseBrand || "未指定品牌"} / ${item.purchaseSpec || "未登记规格"}`} />
       </div>
       <p className="mt-3 break-words text-sm text-slate-600">{item.reason}</p>
       <div className="mt-3">
         <MaterialPurchaseActions
           canCancel={isAdmin || item.requesterId === currentUserId}
           canOrder={isAdmin}
-          canReceive={isAdmin}
+          canReceive={isAdmin && Boolean(item.materialId)}
           canReview={canReview}
           id={item.id}
           status={item.status}
@@ -188,4 +190,8 @@ function purchaseStatusLabel(status: string) {
 
 function formatMoney(value: number) {
   return `¥${value.toFixed(2)}`;
+}
+
+function purchaseTitle(item: MaterialPurchase) {
+  return item.purchaseItemName || item.materialName || item.purchaseProjectName;
 }

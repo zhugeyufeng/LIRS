@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, PackageSearch, ShoppingCart } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { MaterialQRCodeCard } from "@/components/material-qr-code-card";
 import { MaterialRequestDialog } from "@/components/material-request-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,9 +20,9 @@ export default async function MaterialDetailPage({ params }: { params: Promise<{
 
   return (
     <AppShell>
-      <Link className="mb-5 inline-flex items-center gap-2 text-sm text-slate-600 hover:text-primary" href="/materials">
+      <Link className="mb-5 inline-flex items-center gap-2 text-sm text-slate-600 hover:text-primary" href={`/materials/${materialTypePath(material.productType)}`}>
         <ArrowLeft className="h-4 w-4" />
-        返回资源目录
+        返回分类目录
       </Link>
 
       <div className="mb-6 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
@@ -67,17 +68,17 @@ export default async function MaterialDetailPage({ params }: { params: Promise<{
               <Info label="开封日期" value={material.openedAt} />
               <Info label="开封到期" value={material.openExpiresAt} />
               <Info label="冻融次数" value={`${material.freezeThawCount}/${material.freezeThawLimit || "不限"}`} />
-              <Info label="母液/来源" value={material.parentMaterialName || material.parentMaterialId} />
-              <Info label="稀释倍数" value={material.dilutionFactor} />
-              <Info label="配制方法" value={material.preparationMethod} />
+              {material.productType !== "standard" ? <Info label="母液/来源" value={material.parentMaterialName || material.parentMaterialId} /> : null}
+              {material.productType !== "standard" ? <Info label="稀释倍数" value={material.dilutionFactor} /> : null}
+              {material.productType !== "standard" ? <Info label="配制方法" value={material.preparationMethod} /> : null}
               <Info label="二维码" value={material.qrCode} />
               <Info label="审批策略" value={material.approvalRequired ? "申领需要审批" : "默认免审"} />
               <Info label="单价" value={`¥${material.unitPrice.toFixed(2)}`} />
-              <Info label="招标合同" value={material.tenderContract} />
-              <Info label="合同序号" value={material.contractNo} />
+              <Info label="采购项目名称及编号" value={material.tenderContract || material.contractNo} />
               <Info label="状态" value={materialStatusLabel(material.status)} />
+              <Info label="备注" value={material.remark} />
               <Info label="资源证书" value={material.certificateUrl} />
-              <Info label="标准证书" value={material.standardCertificateUrl} />
+              <Info label="标准品/标准物质证书" value={material.standardCertificateUrl} />
             </CardContent>
           </Card>
 
@@ -152,6 +153,12 @@ export default async function MaterialDetailPage({ params }: { params: Promise<{
               <CardTitle>库存状态</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <MaterialQRCodeCard
+                materialLocation={materialLocation(material)}
+                materialName={material.name}
+                materialSpec={material.spec}
+                qrCode={material.qrCode}
+              />
               <div className="rounded-lg border bg-slate-50 p-4">
                 <p className="text-sm text-slate-500">当前库存</p>
                 <p className="mt-2 text-3xl font-bold">
@@ -216,9 +223,19 @@ function productTypeLabel(productType: string) {
   const labels: Record<string, string> = {
     consumable: "耗材",
     reagent: "试剂",
-    standard: "标准品",
+    standard: "标准品/标准物质",
   };
   return labels[productType] ?? productType;
+}
+
+function materialTypePath(productType: string) {
+  if (productType === "standard") {
+    return "standards";
+  }
+  if (productType === "reagent") {
+    return "reagents";
+  }
+  return "consumables";
 }
 
 function materialLocation(item: Pick<Material, "storageRoom" | "storageCabinet" | "storageLayer" | "storageSlot">) {

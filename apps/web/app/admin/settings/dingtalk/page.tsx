@@ -11,7 +11,10 @@ type SearchParams = {
 export default async function DingTalkSettingsPage({ searchParams }: { searchParams?: Promise<SearchParams> }) {
   const currentUser = await requireAdminSection("settings");
   const params = (await searchParams) ?? {};
-  const tenants = currentUser.role === "super_admin" ? await api.tenants().catch(() => []) : [];
+  const [tenants, users] = await Promise.all([
+    currentUser.role === "super_admin" ? api.tenants().catch(() => []) : Promise.resolve([]),
+    api.users().catch(() => []),
+  ]);
   const selectedTenantId = resolveSelectedTenantId(currentUser.tenantId, currentUser.role, tenants, params.tenantId);
   const selectedTenant = tenants.find((tenant) => tenant.id === selectedTenantId) ?? {
     id: currentUser.tenantId,
@@ -34,6 +37,7 @@ export default async function DingTalkSettingsPage({ searchParams }: { searchPar
         selectedTenant={selectedTenant}
         settings={settings}
         tenants={tenants}
+        users={users.filter((user) => user.tenantId === selectedTenant.id && user.status === "active")}
       />
     </AdminShell>
   );

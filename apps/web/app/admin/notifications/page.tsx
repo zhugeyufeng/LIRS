@@ -25,15 +25,14 @@ export default async function AdminNotificationsPage({ searchParams }: { searchP
     updatedAt: "",
   };
   const [notifications, organizationUnits] = await Promise.all([
-    api.notifications(selectedTenantId).catch(() => []),
+    api.notifications(selectedTenantId, "announcement").catch(() => []),
     api.organizationUnits(undefined, selectedTenantId).catch(() => []),
   ]);
   const departments = organizationUnits.filter((item) => item.kind === "department").map((item) => item.name);
   const groups = organizationUnits.filter((item) => item.kind === "group").map((item) => item.name);
-  const unread = notifications.filter((item) => !item.read).length;
 
   return (
-    <AdminShell active="notifications" title="通知管理" description="管理员在这里按机构发布、修改和删除公告；所有通知和告警都会同步推送到钉钉对应人员。">
+    <AdminShell active="notifications" title="通知管理" description="管理员在这里按机构发布、修改和删除公告；系统流程通知在消息中心只读展示。">
       <div className="mb-6 space-y-4">
         {currentUser.role === "super_admin" ? (
           <TenantSelector selectedTenant={selectedTenant} tenants={tenants} />
@@ -45,7 +44,7 @@ export default async function AdminNotificationsPage({ searchParams }: { searchP
         )}
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Metric label="全部通知" value={notifications.length} />
-          <Metric label="未读通知" value={unread} />
+          <Metric label="发布公告" value={notifications.length} />
           <Metric label="部门/团队" value={`${departments.length}/${groups.length}`} />
           <Metric label="个人通知" value={notifications.filter((item) => item.targetScope === "personal").length} />
         </div>
@@ -56,7 +55,7 @@ export default async function AdminNotificationsPage({ searchParams }: { searchP
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Bell className="h-5 w-5 text-primary" aria-hidden="true" />
-              最近通知
+              已发布公告
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -91,7 +90,7 @@ export default async function AdminNotificationsPage({ searchParams }: { searchP
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm leading-6 text-slate-600">
-              <p>普通用户和管理员都在消息中心查看自己的通知，发布入口已经迁移到当前管理页面。</p>
+              <p>消息中心展示系统通知；管理员发布的公告会在用户个人中心展示，并标明发布人。</p>
               <Link className="inline-flex h-10 w-full items-center justify-center rounded-md border px-4 text-sm font-bold text-slate-700 hover:bg-slate-50" href="/notifications">
                 查看消息中心
               </Link>
@@ -120,9 +119,10 @@ function NotificationCard({
         <div className="min-w-0">
           <p className="break-words font-bold text-slate-900">{item.title}</p>
           <p className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500">
-            <span>{formatDateTime(item.createdAt)}</span>
-            <span>{levelLabel(item.level)}</span>
-            <span>{scopeLabel(item)}</span>
+        <span>{formatDateTime(item.createdAt)}</span>
+        <span>{levelLabel(item.level)}</span>
+        <span>{scopeLabel(item)}</span>
+        <span>发布人：{item.publisher || "管理员"}</span>
             <span className="inline-flex items-center gap-1">
               <Building2 className="h-3 w-3" aria-hidden="true" />
               {item.tenantName || item.tenantId}

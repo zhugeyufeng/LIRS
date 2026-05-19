@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -122,7 +123,11 @@ func TestNormalizeMaterialLifecycleFields(t *testing.T) {
 		ProductType:            " standard ",
 		Category:               "  单元素标准品 ",
 		CASNo:                  " 50-00-0 ",
+		ParentMaterialID:       " 00000000-0000-0000-0000-000000000001 ",
+		DilutionFactor:         " 1:10 ",
+		PreparationMethod:      " 稀释 ",
 		StorageRoom:            " 冰箱A ",
+		Remark:                 " 首次入库 ",
 		CertificateURL:         " https://example.test/cert.pdf ",
 		StandardCertificateURL: " https://example.test/std.pdf ",
 		AttachmentURL:          " https://example.test/file.pdf ",
@@ -134,6 +139,41 @@ func TestNormalizeMaterialLifecycleFields(t *testing.T) {
 	}
 	if input.StorageRoom != "冰箱A" || input.QRCode != "SJ-001" || input.OpenedAt != "2026-05-15" {
 		t.Fatalf("expected trimmed material lifecycle fields, got %#v", input)
+	}
+	if input.ParentMaterialID != "" || input.DilutionFactor != "" || input.PreparationMethod != "" {
+		t.Fatalf("标准品不应保留母液和稀释字段：%#v", input)
+	}
+	if input.Remark != "首次入库" {
+		t.Fatalf("expected trimmed remark, got %#v", input)
+	}
+}
+
+func TestMaterialInputFromCSVRowUsesProcurementProjectAndRemark(t *testing.T) {
+	t.Parallel()
+
+	header := materialImportHeaderIndex([]string{"资源名称", "资源类型", "一级目录", "规格", "单位", "采购项目名称及编号", "备注", "母液ID", "稀释倍数", "配制方法"})
+	input := materialInputFromCSVRow(header, []string{"铅标准物质", "标准品", "单元素标准品", "100ug/L", "瓶", "2026-标准品采购项目 编号：STD-001", "证书随货", "00000000-0000-0000-0000-000000000001", "1:10", "稀释"})
+	if input.TenderContract != "2026-标准品采购项目 编号：STD-001" || input.ContractNo != input.TenderContract || input.Remark != "证书随货" {
+		t.Fatalf("采购项目或备注解析错误：%#v", input)
+	}
+	if input.ParentMaterialID != "" || input.DilutionFactor != "" || input.PreparationMethod != "" {
+		t.Fatalf("标准品导入不应保留母液和稀释字段：%#v", input)
+	}
+}
+
+func TestMaterialImportRecordsSupportXLSX(t *testing.T) {
+	t.Parallel()
+
+	content, err := os.ReadFile("../../../../2026.xlsx")
+	if err != nil {
+		t.Skipf("跳过真实 XLSX 解析测试：%v", err)
+	}
+	records, err := purchasableMaterialImportRecords("materials。xlsx", content)
+	if err != nil {
+		t.Fatalf("读取 XLSX 失败：%v", err)
+	}
+	if len(records) == 0 {
+		t.Fatal("expected records from xlsx")
 	}
 }
 
@@ -179,6 +219,216 @@ func TestMaterialBatchHelpers(t *testing.T) {
 	}
 }
 
+func TestPurchasableMaterialImportProjectHeader(t *testing.T) {
+	t.Parallel()
+
+	row := []string{"9-病毒PCR试剂类采购项目 编号：WXCDCQTCG2021-029（满足采购人要求20210929）", "", ""}
+	if got := purchasableMaterialProjectHeader(row); !strings.Contains(got, "病毒PCR试剂类采购项目") {
+		t.Fatalf("expected project header, got %q", got)
+	}
+	header := materialImportHeaderIndex([]string{"ID号", "序号", "项目名称", "品牌", "规格", "单位", "采购价（元）", "备注", "技术要求", "最小规格"})
+	input := purchasableMaterialInputFromRow(header, []string{"PCR-001", "1", "病毒核酸检测试剂盒", "品牌A", "200T/盒", "盒", "1200.5", "", "满足要求", "1盒"}, "项目头")
+	if input.ProcurementProject != "项目头" || input.ProjectName != "病毒核酸检测试剂盒" || input.PurchasePrice != 1200.5 || input.IDNo != "PCR-001" {
+		t.Fatalf("unexpected purchasable material row: %#v", input)
+	}
+}
+
+func TestPurchasableMaterialImportRecordsFrom2026XLSX(t *testing.T) {
+	t.Parallel()
+
+	content, err := os.ReadFile("../../../../2026.xlsx")
+	if err != nil {
+		t.Skipf("跳过真实采购目录解析测试：%v", err)
+	}
+	records, err := purchasableMaterialImportRecords("2026.xlsx", content)
+	if err != nil {
+		t.Fatalf("read xlsx: %v", err)
+	}
+	if len(records) < 4 {
+		t.Fatalf("expected xlsx rows, got %d", len(records))
+	}
+	headerIndex := -1
+	for i, row := range records {
+		if purchasableMaterialLooksLikeHeader(row) {
+			headerIndex = i
+			break
+		}
+	}
+	if headerIndex != 1 {
+		t.Fatalf("unexpected header index: %d", headerIndex)
+	}
+	project := purchasableMaterialProjectHeader(records[headerIndex+1])
+	if !strings.Contains(project, "细菌性传染病PCR检测试剂类采购项目") {
+		t.Fatalf("unexpected project header: %q", project)
+	}
+	input := purchasableMaterialInputFromRow(materialImportHeaderIndex(records[headerIndex]), records[headerIndex+2], project)
+	if input.IDNo != "634" || input.SequenceNo != "1" || input.ProcurementProject != project || !strings.Contains(input.ProjectName, "副溶血性弧菌") || input.Brand != "生科原" || input.Spec != "1T" || input.Unit != "人份" || input.PurchasePrice != 80 {
+		t.Fatalf("unexpected parsed row: %#v", input)
+	}
+}
+
+func TestPurchasableMaterialImportRecordsDetectsChineseDotXLSX(t *testing.T) {
+	t.Parallel()
+
+	content, err := os.ReadFile("../../../../2026.xlsx")
+	if err != nil {
+		t.Skipf("跳过真实采购目录解析测试：%v", err)
+	}
+	records, err := purchasableMaterialImportRecords("2026。xlsx", content)
+	if err != nil {
+		t.Fatalf("read chinese-dot xlsx: %v", err)
+	}
+	if len(records) < 4 || !purchasableMaterialLooksLikeHeader(records[1]) {
+		t.Fatalf("unexpected records from chinese-dot xlsx: rows=%d", len(records))
+	}
+}
+
+func TestPurchasableMaterialImportPlanFrom2026XLSX(t *testing.T) {
+	t.Parallel()
+
+	content, err := os.ReadFile("../../../../2026.xlsx")
+	if err != nil {
+		t.Skipf("跳过真实采购目录解析测试：%v", err)
+	}
+	records, err := purchasableMaterialImportRecords("2026.xlsx", content)
+	if err != nil {
+		t.Fatalf("read xlsx: %v", err)
+	}
+	headerIndex := -1
+	for i, row := range records {
+		if purchasableMaterialLooksLikeHeader(row) {
+			headerIndex = i
+			break
+		}
+	}
+	if headerIndex < 0 {
+		t.Fatal("missing purchasable material header")
+	}
+	header := materialImportHeaderIndex(records[headerIndex])
+	currentProject := ""
+	valid := 0
+	invalidRows := 0
+	for _, row := range records[headerIndex+1:] {
+		if rowBlank(row) {
+			continue
+		}
+		if project := purchasableMaterialProjectHeader(row); project != "" {
+			currentProject = project
+			continue
+		}
+		input := purchasableMaterialInputFromRow(header, row, currentProject)
+		if input.IDNo == "" || input.SequenceNo == "" || input.ProjectName == "" || input.Brand == "" || input.Spec == "" || input.Unit == "" {
+			invalidRows++
+			continue
+		}
+		valid++
+	}
+	if valid < 5150 {
+		t.Fatalf("expected at least 5150 valid rows, got %d", valid)
+	}
+	if invalidRows > 5 {
+		t.Fatalf("expected only a few invalid rows, got %d", invalidRows)
+	}
+}
+
+func TestScanPurchasableMaterialIncludesProcurementProjectStatus(t *testing.T) {
+	t.Parallel()
+
+	createdAt := time.Date(2026, 5, 19, 1, 2, 3, 0, time.UTC)
+	updatedAt := createdAt.Add(time.Minute)
+	item, err := scanPurchasableMaterial(notificationScanRow{values: []any{
+		"material-1",
+		"ID-001",
+		"1",
+		"project-1",
+		"采购项目 编号：A",
+		"2026-12-31",
+		"disabled",
+		"试剂盒",
+		"品牌A",
+		"1T",
+		"盒",
+		float64(80),
+		"备注",
+		"技术要求",
+		"最小规格",
+		"active",
+		createdAt,
+		updatedAt,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.ProcurementProjectStatus != "disabled" || item.ProcurementExpiresAt != "2026-12-31" {
+		t.Fatalf("采购项目状态或有效期扫描错误：%#v", item)
+	}
+}
+
+func TestScanMaterialIncludesRemark(t *testing.T) {
+	t.Parallel()
+
+	item, err := scanMaterial(notificationScanRow{values: []any{
+		"material-1",
+		"铅标准物质",
+		"standard",
+		"单元素标准品",
+		"金属元素",
+		"100ug/L",
+		"瓶",
+		float64(80),
+		1,
+		1,
+		"供应商",
+		"生产商",
+		"BATCH-1",
+		"CAT-1",
+		"7439-92-1",
+		"CRM",
+		"100ug/L",
+		"",
+		"",
+		"",
+		"",
+		"2-8°C",
+		"标准品库",
+		"冰箱",
+		"二层",
+		"A01",
+		"采购项目 编号：STD-001",
+		"采购项目 编号：STD-001",
+		"随货证书",
+		"",
+		"",
+		"",
+		"QR-1",
+		"2026-12-31",
+		"2026-05-19",
+		30,
+		"2026-06-18",
+		0,
+		5,
+		true,
+		30,
+		0,
+		"normal",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.Remark != "随货证书" || item.TenderContract == "" {
+		t.Fatalf("资源备注或采购项目扫描错误：%#v", item)
+	}
+}
+
+func TestPurchasableMaterialImportRecordsUnsupportedTypeMessage(t *testing.T) {
+	t.Parallel()
+
+	_, err := purchasableMaterialImportRecords("2026.txt", []byte("not,a,catalog"))
+	if err == nil || !strings.Contains(err.Error(), "不支持的文件类型") {
+		t.Fatalf("expected unsupported type error, got %v", err)
+	}
+}
+
 func TestDingTalkOAuthURLUsesConfiguredRedirectURI(t *testing.T) {
 	t.Parallel()
 
@@ -202,7 +452,7 @@ func TestDingTalkOAuthURLUsesConfiguredRedirectURI(t *testing.T) {
 	}
 }
 
-func TestDingTalkSettingsFromValueCanExposeSecretsOnDemand(t *testing.T) {
+func TestDingTalkSettingsFromValueDoesNotExposeSecrets(t *testing.T) {
 	t.Parallel()
 
 	settings := dingTalkSettingsFromValue(dingTalkSettingsValue{
@@ -218,11 +468,21 @@ func TestDingTalkSettingsFromValueCanExposeSecretsOnDemand(t *testing.T) {
 		EventToken:       "token",
 	}, "系统", time.Time{})
 
-	if settings.SchemaVersion != 2 || !settings.Enabled || settings.ClientID != "client-id" || settings.ClientSecret != "client-secret" || settings.RobotCode != "robot-code" || settings.OAuthRedirectURI == "" || settings.EventCallbackURL == "" {
+	if settings.SchemaVersion != 2 || !settings.Enabled || settings.ClientID != "client-id" || settings.ClientSecret != "" || settings.RobotCode != "robot-code" || settings.OAuthRedirectURI == "" || settings.EventCallbackURL == "" || settings.EventAesKey != "" || settings.EventToken != "" {
 		t.Fatalf("unexpected dingtalk settings projection: %#v", settings)
 	}
 	if !settings.ClientSecretConfigured || !settings.EventAesKeyConfigured || !settings.EventTokenConfigured {
 		t.Fatalf("expected secret configured flags: %#v", settings)
+	}
+}
+
+func TestGeneratedDingTalkEventCallbackURLUsesTenantCode(t *testing.T) {
+	t.Parallel()
+
+	got := generatedDingTalkEventCallbackURL("https://lirs.example.com/settings/dingtalk", "tenant-a")
+	want := "https://lirs.example.com/api/dingtalk/events/tenant-a"
+	if got != want {
+		t.Fatalf("事件订阅 URL 生成错误：got %q want %q", got, want)
 	}
 }
 
@@ -440,6 +700,104 @@ func TestDingTalkWorkNotificationUsesRobotBatchSend(t *testing.T) {
 	}
 }
 
+func TestGraphMailAccessTokenUsesClientCredentials(t *testing.T) {
+	t.Parallel()
+
+	var requestedPath string
+	var requestedBody string
+	repo := &Repository{
+		http: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			requestedPath = request.URL.Path
+			body, err := io.ReadAll(request.Body)
+			if err != nil {
+				t.Fatalf("read token body: %v", err)
+			}
+			requestedBody = string(body)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"access_token":"graph-token"}`)),
+			}, nil
+		})},
+	}
+
+	token, err := repo.graphMailAccessToken(context.Background(), graphMailSettingsValue{TenantID: "tenant-id", ClientID: "client-id", ClientSecret: "client-secret"})
+	if err != nil {
+		t.Fatalf("unexpected graph token error: %v", err)
+	}
+	if token != "graph-token" || requestedPath != "/tenant-id/oauth2/v2.0/token" {
+		t.Fatalf("unexpected graph token request: token=%s path=%s body=%s", token, requestedPath, requestedBody)
+	}
+	for _, fragment := range []string{"client_id=client-id", "client_secret=client-secret", "grant_type=client_credentials", "scope=https%3A%2F%2Fgraph.microsoft.com%2F.default"} {
+		if !strings.Contains(requestedBody, fragment) {
+			t.Fatalf("graph token body missing %s: %s", fragment, requestedBody)
+		}
+	}
+}
+
+func TestSendGraphMailUsesUserSendMailEndpoint(t *testing.T) {
+	t.Parallel()
+
+	var paths []string
+	var mailBody string
+	repo := &Repository{
+		http: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			paths = append(paths, request.URL.Path)
+			if strings.HasSuffix(request.URL.Path, "/sendMail") {
+				body, err := io.ReadAll(request.Body)
+				if err != nil {
+					t.Fatalf("read graph mail body: %v", err)
+				}
+				mailBody = string(body)
+				if got := request.Header.Get("Authorization"); got != "Bearer graph-token" {
+					t.Fatalf("unexpected graph token header: %s", got)
+				}
+				return &http.Response{
+					StatusCode: http.StatusAccepted,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader("")),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"access_token":"graph-token"}`)),
+			}, nil
+		})},
+	}
+
+	err := repo.sendGraphMail(context.Background(), graphMailSettingsValue{
+		Enabled:                 true,
+		TenantID:                "tenant-id",
+		ClientID:                "client-id",
+		ClientSecret:            "client-secret",
+		SenderUserPrincipalName: "sender@example.com",
+		SaveToSentItems:         true,
+	}, "user@example.com", "标题", "正文")
+	if err != nil {
+		t.Fatalf("unexpected graph send error: %v", err)
+	}
+	if len(paths) != 2 || paths[0] != "/tenant-id/oauth2/v2.0/token" || paths[1] != "/v1.0/users/sender@example.com/sendMail" {
+		t.Fatalf("unexpected graph paths: %#v", paths)
+	}
+	for _, fragment := range []string{`"subject":"标题"`, `"content":"正文"`, `"address":"user@example.com"`, `"saveToSentItems":true`} {
+		if !strings.Contains(mailBody, fragment) {
+			t.Fatalf("graph mail body missing %s: %s", fragment, mailBody)
+		}
+	}
+}
+
+func TestGraphHTTPErrorMessageExtractsMicrosoftError(t *testing.T) {
+	t.Parallel()
+
+	message := graphHTTPErrorMessage(http.StatusUnauthorized, []byte(`{"error":{"code":"InvalidAuthenticationToken","message":"Access token is empty."}}`))
+	for _, fragment := range []string{"status=401", "code=InvalidAuthenticationToken", "message=Access token is empty."} {
+		if !strings.Contains(message, fragment) {
+			t.Fatalf("graph error message missing %s: %s", fragment, message)
+		}
+	}
+}
+
 func TestNotificationTargetUserIDsRespectScope(t *testing.T) {
 	t.Parallel()
 
@@ -448,7 +806,7 @@ func TestNotificationTargetUserIDsRespectScope(t *testing.T) {
 		TenantID:    defaultTenantID,
 		UserID:      "user-1",
 		TargetScope: "personal",
-	})
+	}, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +817,7 @@ func TestNotificationTargetUserIDsRespectScope(t *testing.T) {
 	unknown, err := repo.notificationTargetUserIDs(context.Background(), Notification{
 		TenantID:    defaultTenantID,
 		TargetScope: "unknown",
-	})
+	}, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,6 +837,10 @@ func (r notificationScanRow) Scan(dest ...any) error {
 			*target = value.(string)
 		case *bool:
 			*target = value.(bool)
+		case *float64:
+			*target = value.(float64)
+		case *int:
+			*target = value.(int)
 		case *time.Time:
 			*target = value.(time.Time)
 		default:
@@ -501,6 +863,8 @@ func TestScanNotificationIncludesTenantAndUpdatedAt(t *testing.T) {
 		"团队一",
 		"部门一",
 		"personal",
+		"system",
+		"",
 		"标题",
 		"正文",
 		"info",
@@ -667,6 +1031,7 @@ func TestNormalizeFooterSettingsValueTrimsAndDropsBlankSections(t *testing.T) {
 
 	value := normalizeFooterSettingsValue(footerSettingsValue{
 		BrandName:   "  自定义系统  ",
+		BaseURL:     "  https://lirs.example.cn/  ",
 		Description: "  简介  ",
 		Sections: []FooterSection{
 			{Title: "  技术栈 ", Lines: []string{"  Go  ", "", " Next.js "}},
@@ -682,6 +1047,40 @@ func TestNormalizeFooterSettingsValueTrimsAndDropsBlankSections(t *testing.T) {
 	}
 	if len(value.Sections[0].Lines) != 2 {
 		t.Fatalf("expected blank lines to be removed, got %#v", value.Sections[0].Lines)
+	}
+	if value.BaseURL != "https://lirs.example.cn" {
+		t.Fatalf("expected base url to be trimmed, got %q", value.BaseURL)
+	}
+}
+
+func TestMaterialDetailURL(t *testing.T) {
+	t.Parallel()
+
+	if got := materialDetailURL(" https://lirs.example.cn/ ", "abc-123"); got != "https://lirs.example.cn/materials/abc-123" {
+		t.Fatalf("expected absolute material detail url, got %q", got)
+	}
+	if got := materialDetailURL("", "abc 123"); got != "/materials/abc%20123" {
+		t.Fatalf("expected relative material detail url, got %q", got)
+	}
+	if got := materialDetailURL("https://lirs.example.cn", ""); got != "" {
+		t.Fatalf("expected empty url without material id, got %q", got)
+	}
+}
+
+func TestValidSiteBaseURL(t *testing.T) {
+	t.Parallel()
+
+	if !validSiteBaseURL("https://lirs.example.cn") {
+		t.Fatal("expected https base url to be valid")
+	}
+	if validSiteBaseURL("ftp://lirs.example.cn") {
+		t.Fatal("expected non-http base url to be invalid")
+	}
+	if validSiteBaseURL("lirs.example.cn") {
+		t.Fatal("expected missing scheme base url to be invalid")
+	}
+	if validSiteBaseURL("https://lirs.example.cn?x=1") {
+		t.Fatal("expected base url with query to be invalid")
 	}
 }
 

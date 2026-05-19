@@ -1,5 +1,6 @@
 import { Search } from "lucide-react";
 import { AdminShell, requireAdminSection } from "@/components/admin-shell";
+import { MaterialPurchaseAdminNav } from "@/components/material-purchase-admin-nav";
 import { MaterialPurchaseActions, MaterialPurchaseForm } from "@/components/material-purchase-form";
 import { MaterialsNav } from "@/components/materials-nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,31 +15,29 @@ export default async function AdminMaterialPurchasesPage({
   const currentUser = await requireAdminSection("materials");
   const params = (await searchParams) ?? {};
   const query = (params.q ?? "").trim().toLowerCase();
-  const [materials, purchases] = await Promise.all([
+  const [materials, purchasableMaterials, purchases] = await Promise.all([
     api.materials().catch(() => []),
+    api.purchasableMaterials().catch(() => []),
     api.materialPurchases().catch(() => []),
   ]);
   const canManageActions = isTenantAdminRole(currentUser.role) || currentUser.role === "material_admin";
   const visiblePurchases = purchases.filter((item) => {
     const matchesSearch =
       query === "" ||
-      [item.materialName, item.requester, item.groupName, item.supplier, item.reason].some((value) => value.toLowerCase().includes(query));
+      [item.materialName, item.purchaseIdNo, item.purchaseProjectName, item.purchaseItemName, item.purchaseBrand, item.purchaseSpec, item.requester, item.groupName, item.supplier, item.reason].some((value) => value.toLowerCase().includes(query));
     const matchesStatus = !params.status || item.status === params.status;
     return matchesSearch && matchesStatus;
   });
-  const pendingAmount = purchases
-    .filter((item) => item.status === "pending" || item.status === "approved" || item.status === "ordered")
-    .reduce((sum, item) => sum + item.estimatedUnitPrice * item.quantity, 0);
-
   return (
-    <AdminShell active="materials" title="资源申购管理" description="独立处理标准品、试剂和耗材申购、审批、下单和到货入库；到货会自动增加库存并写入库存流水。">
+    <AdminShell active="materials" title="资源申购管理" description="独立处理标准品/标准物质、试剂和耗材申购、审批、下单和到货入库；到货会自动增加库存并写入库存流水。">
       <MaterialsNav active="purchases" admin />
+      <MaterialPurchaseAdminNav active="orders" />
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="全部申购" value={purchases.length} />
+        <Metric label="可采购目录" value={purchasableMaterials.length} />
         <Metric label="待审批" value={purchases.filter((item) => item.status === "pending").length} />
-        <Metric label="待入库" value={purchases.filter((item) => item.status === "approved" || item.status === "ordered").length} />
-        <Metric label="在途金额" value={formatMoney(pendingAmount)} />
+        <Metric label="待入库" value={purchases.filter((item) => item.materialId && (item.status === "approved" || item.status === "ordered")).length} />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -50,7 +49,7 @@ export default async function AdminMaterialPurchasesPage({
             <form action="/admin/materials/purchases" className="mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto]">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-                <input className="h-10 w-full rounded-md border bg-white pl-10 pr-3 text-sm" defaultValue={params.q ?? ""} name="q" placeholder="搜索资源、申请人、供应商、原因" />
+                <input className="h-10 w-full rounded-md border bg-white pl-10 pr-3 text-sm" defaultValue={params.q ?? ""} name="q" placeholder="搜索ID号、项目、品牌、规格、申请人" />
               </div>
               <select className="h-10 min-w-0 rounded-md border bg-white px-3 text-sm" defaultValue={params.status ?? ""} name="status">
                 <option value="">全部状态</option>
@@ -76,7 +75,7 @@ export default async function AdminMaterialPurchasesPage({
               <table className="w-full table-fixed text-left text-sm">
                 <thead className="bg-slate-50 text-slate-500">
                   <tr>
-                    <th className="p-3">耗材</th>
+                    <th className="p-3">采购物资</th>
                     <th className="p-3">申请人</th>
                     <th className="p-3">金额</th>
                     <th className="p-3">原因</th>
@@ -88,8 +87,9 @@ export default async function AdminMaterialPurchasesPage({
                   {visiblePurchases.map((item) => (
                     <tr key={item.id}>
                       <td className="break-words p-3 align-top">
-                        <p className="font-bold">{item.materialName}</p>
-                        <p className="mt-1 text-xs text-slate-500">数量 {item.quantity} / {item.supplier || "未指定供应商"}</p>
+                        <p className="font-bold">{purchaseTitle(item)}</p>
+                        <p className="mt-1 text-xs text-slate-500">数量 {item.quantity} / {item.purchaseBrand || item.supplier || "未指定品牌"}</p>
+                        {item.purchaseProjectName ? <p className="mt-1 break-words text-xs text-slate-500">{item.purchaseProjectName}</p> : null}
                       </td>
                       <td className="break-words p-3 align-top">
                         <p className="font-medium">{item.requester}</p>
@@ -101,7 +101,7 @@ export default async function AdminMaterialPurchasesPage({
                         <span className="rounded bg-slate-100 px-2 py-1 text-xs font-bold">{purchaseStatusLabel(item.status)}</span>
                       </td>
                       <td className="p-3 align-top">
-                        <MaterialPurchaseActions canOrder={canManageActions} canReceive={canManageActions} canReview={canManageActions} id={item.id} status={item.status} />
+                        <MaterialPurchaseActions canOrder={canManageActions} canReceive={canManageActions && Boolean(item.materialId)} canReview={canManageActions} id={item.id} status={item.status} />
                       </td>
                     </tr>
                   ))}
@@ -118,7 +118,10 @@ export default async function AdminMaterialPurchasesPage({
               <CardTitle>新建申购</CardTitle>
             </CardHeader>
             <CardContent>
-              <MaterialPurchaseForm materials={materials} />
+              <MaterialPurchaseForm materials={materials} purchasableMaterials={purchasableMaterials} />
+              <div className="mt-4">
+                <DownloadMonthlyButton />
+              </div>
             </CardContent>
           </Card>
         </aside>
@@ -132,18 +135,19 @@ function MaterialPurchaseCard({ canManageActions, item }: { canManageActions: bo
     <div className="rounded-lg border bg-white p-4">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
         <div className="min-w-0">
-          <p className="break-words font-bold text-slate-900">{item.materialName} x{item.quantity}</p>
+          <p className="break-words font-bold text-slate-900">{purchaseTitle(item)} x{item.quantity}</p>
           <p className="mt-1 break-words text-sm text-slate-500">{item.requester} / {item.groupName}</p>
+          {item.purchaseProjectName ? <p className="mt-1 break-words text-xs text-slate-500">{item.purchaseProjectName}</p> : null}
         </div>
         <span className="w-fit shrink-0 rounded bg-slate-100 px-2 py-1 text-xs font-bold">{purchaseStatusLabel(item.status)}</span>
       </div>
       <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
         <InfoItem label="预计金额" value={formatMoney(item.estimatedUnitPrice * item.quantity)} />
-        <InfoItem label="供应商" value={item.supplier || "未指定供应商"} />
+        <InfoItem label="品牌/规格" value={`${item.purchaseBrand || "未指定品牌"} / ${item.purchaseSpec || "未登记规格"}`} />
       </div>
       <p className="mt-3 break-words text-sm text-slate-600">{item.reason}</p>
       <div className="mt-3">
-        <MaterialPurchaseActions canOrder={canManageActions} canReceive={canManageActions} canReview={canManageActions} id={item.id} status={item.status} />
+        <MaterialPurchaseActions canOrder={canManageActions} canReceive={canManageActions && Boolean(item.materialId)} canReview={canManageActions} id={item.id} status={item.status} />
       </div>
     </div>
   );
@@ -181,4 +185,17 @@ function purchaseStatusLabel(status: string) {
 
 function formatMoney(value: number) {
   return `¥${value.toFixed(2)}`;
+}
+
+function purchaseTitle(item: MaterialPurchase) {
+  return item.purchaseItemName || item.materialName || item.purchaseProjectName;
+}
+
+function DownloadMonthlyButton() {
+  const month = new Date().toISOString().slice(0, 7);
+  return (
+    <a className="inline-flex h-10 w-full items-center justify-center rounded-md border px-4 text-sm font-bold text-slate-700 hover:bg-slate-50" href={`/api/material-purchases/monthly-export.csv?month=${month}`}>
+      导出本月申购清单
+    </a>
+  );
 }

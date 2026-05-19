@@ -10,9 +10,9 @@ export const resourceTypeSections: { type: ResourceProductType; slug: string; ti
   {
     type: "standard",
     slug: "standards",
-    title: "标准品",
-    description: "标准品按批次和唯一编号独立展示，可直接选择可用编号申领。",
-    adminDescription: "标准品按批次、唯一编号、有效期和库位独立维护。",
+    title: "标准品/标准物质",
+    description: "标准品/标准物质按批次和唯一编号独立展示，可直接选择可用编号申领。",
+    adminDescription: "标准品/标准物质按批次、唯一编号、有效期、库位和证书独立维护。",
   },
   {
     type: "reagent",
@@ -46,7 +46,7 @@ export function filterMaterials(
   return materials.filter((item) => {
     const matchesSearch =
       query === "" ||
-      [item.name, item.category, item.spec, item.supplier, item.manufacturer, item.batchNo, item.catalogNo, item.casNo, item.qrCode, item.tenderContract, item.contractNo, materialLocation(item), materialBatchSummary(item), materialUnitCodes(item)].some((value) => value.toLowerCase().includes(query));
+      [item.name, item.category, item.spec, item.supplier, item.manufacturer, item.batchNo, item.catalogNo, item.casNo, item.qrCode, item.tenderContract, item.contractNo, item.remark, materialLocation(item), materialBatchSummary(item), materialUnitCodes(item)].some((value) => value.toLowerCase().includes(query));
     const matchesCategory = !params.category || item.category === params.category;
     const matchesProductType = !params.productType || item.productType === params.productType;
     const matchesStatus = !params.status || item.status === params.status;
@@ -99,9 +99,9 @@ export function ResourceMaterialSection({ title, description, items, total }: { 
                 <InfoItem label="编号/批次" value={materialBatchSummary(item)} />
                 <InfoItem label="库位" value={materialLocation(item)} />
                 <InfoItem label="开封/冻融" value={`${item.openedAt || "未开封"} / ${item.freezeThawCount}/${item.freezeThawLimit || "不限"}`} />
-                <InfoItem label="招标合同" value={item.tenderContract} />
-                <InfoItem label="合同序号" value={item.contractNo} />
-                <InfoItem label="来源/稀释" value={`${item.parentMaterialName || "无"} / ${item.dilutionFactor || "未登记"}`} />
+                <InfoItem label="采购项目名称及编号" value={materialProcurementProject(item)} />
+                <InfoItem label="备注" value={item.remark} />
+                {item.productType !== "standard" ? <InfoItem label="来源/稀释" value={`${item.parentMaterialName || "无"} / ${item.dilutionFactor || "未登记"}`} /> : null}
                 <InfoItem label="状态" value={materialStatusLabel(item.status)} />
                 <InfoItem label="单价" value={`¥${item.unitPrice.toFixed(2)}`} />
               </div>
@@ -147,8 +147,10 @@ export function ResourceMaterialSection({ title, description, items, total }: { 
                   <td className="break-words px-3 py-3 align-top text-xs text-slate-500">
                     <p>{materialBatchSummary(item)}</p>
                     <p className="mt-1">{materialLocation(item) || "未登记库位"}</p>
+                    <p className="mt-1">采购项目：{materialProcurementProject(item) || "未登记"}</p>
+                    {item.remark ? <p className="mt-1">备注：{item.remark}</p> : null}
                     <p className="mt-1">开封：{item.openedAt || "未开封"}{item.openExpiresAt ? ` / 到期 ${item.openExpiresAt}` : ""}</p>
-                    {item.parentMaterialName || item.dilutionFactor ? <p className="mt-1">来源：{item.parentMaterialName || item.parentMaterialId || "未登记"} / {item.dilutionFactor || "未登记"}</p> : null}
+                    {item.productType !== "standard" && (item.parentMaterialName || item.dilutionFactor) ? <p className="mt-1">来源：{item.parentMaterialName || item.parentMaterialId || "未登记"} / {item.dilutionFactor || "未登记"}</p> : null}
                   </td>
                   <td className="whitespace-nowrap px-3 py-3 text-right align-top font-bold">¥{item.unitPrice.toFixed(2)}</td>
                   <td className="px-3 py-3 align-top">
@@ -214,9 +216,9 @@ export function AdminResourceMaterialSection({
                 <InfoItem label="库位" value={materialLocation(item)} />
                 <InfoItem label="开封/冻融" value={`${item.openedAt || "未开封"} / ${item.freezeThawCount}/${item.freezeThawLimit || "不限"}`} />
                 <InfoItem label="库存告警线" value={`${item.warningLine}${item.unit}`} />
-                <InfoItem label="招标合同" value={item.tenderContract} />
-                <InfoItem label="合同序号" value={item.contractNo} />
-                <InfoItem label="来源/稀释" value={`${item.parentMaterialName || "无"} / ${item.dilutionFactor || "未登记"}`} />
+                <InfoItem label="采购项目名称及编号" value={materialProcurementProject(item)} />
+                <InfoItem label="备注" value={item.remark} />
+                {item.productType !== "standard" ? <InfoItem label="来源/稀释" value={`${item.parentMaterialName || "无"} / ${item.dilutionFactor || "未登记"}`} /> : null}
                 <InfoItem label="单价" value={`¥${item.unitPrice.toFixed(2)}`} />
                 <InfoItem label="二维码" value={item.qrCode} />
               </div>
@@ -267,9 +269,11 @@ export function AdminResourceMaterialSection({
                   <td className="break-words p-3 align-top text-xs text-slate-500">
                     <p>{materialBatchSummary(item)}</p>
                     <p className="mt-1">{materialLocation(item) || "未登记库位"}</p>
+                    <p className="mt-1">采购项目：{materialProcurementProject(item) || "未登记"}</p>
+                    {item.remark ? <p className="mt-1">备注：{item.remark}</p> : null}
                     <p className="mt-1">开封：{item.openedAt || "未开封"}{item.openExpiresAt ? ` / 到期 ${item.openExpiresAt}` : ""}</p>
                     <p className="mt-1">冻融：{item.freezeThawCount}/{item.freezeThawLimit || "不限"}</p>
-                    {item.parentMaterialName || item.dilutionFactor ? <p className="mt-1">来源：{item.parentMaterialName || item.parentMaterialId || "未登记"} / {item.dilutionFactor || "未登记"}</p> : null}
+                    {item.productType !== "standard" && (item.parentMaterialName || item.dilutionFactor) ? <p className="mt-1">来源：{item.parentMaterialName || item.parentMaterialId || "未登记"} / {item.dilutionFactor || "未登记"}</p> : null}
                   </td>
                   <td className="p-3 align-top"><StatusPill status={item.status} /></td>
                   <td className="whitespace-nowrap p-3 text-right align-top font-bold">¥{item.unitPrice.toFixed(2)}</td>
@@ -330,6 +334,10 @@ export function materialBatchSummary(item: Material) {
 
 export function materialUnitCodes(item: Material) {
   return (item.units ?? []).map((unit) => unit.unitCode).join(" ");
+}
+
+function materialProcurementProject(item: Material) {
+  return item.tenderContract || item.contractNo;
 }
 
 export function materialStatusLabel(status: string) {

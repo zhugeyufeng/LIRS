@@ -20,7 +20,6 @@ import (
 	"math/big"
 	"net/http"
 	"net/mail"
-	"net/smtp"
 	"net/url"
 	"sort"
 	"strconv"
@@ -31,6 +30,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/xuri/excelize/v2"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -44,7 +44,7 @@ const (
 	defaultTenantID          = "00000000-0000-0000-0000-000000000001"
 	footerSettingsKey        = "footer"
 	copySettingsKey          = "copy"
-	smtpSettingsKey          = "smtp"
+	graphMailSettingsKey     = "graph_mail"
 	wechatSettingsKey        = "wechat"
 	dingTalkSettingsKey      = "dingtalk"
 	accessControlSettingsKey = "access_control"
@@ -59,6 +59,7 @@ func tenantScopedDingTalkSettingsKey(tenantID string) string {
 }
 
 type tenantContextKey struct{}
+type notificationSourceContextKey struct{}
 
 type TenantContext struct {
 	TenantID       string
@@ -83,6 +84,15 @@ func TenantFromContext(ctx context.Context) TenantContext {
 	return tenant
 }
 
+func WithNotificationSourceContext(ctx context.Context, source string) context.Context {
+	return context.WithValue(ctx, notificationSourceContextKey{}, strings.TrimSpace(source))
+}
+
+func notificationSourceFromContext(ctx context.Context) string {
+	source, _ := ctx.Value(notificationSourceContextKey{}).(string)
+	return strings.TrimSpace(source)
+}
+
 func dashboardCacheKey(ctx context.Context) string {
 	tenant := TenantFromContext(ctx)
 	if tenant.AllTenants {
@@ -94,6 +104,7 @@ func dashboardCacheKey(ctx context.Context) string {
 type footerSettingsValue struct {
 	BrandName    string          `json:"brandName"`
 	BrandTagline string          `json:"brandTagline"`
+	BaseURL      string          `json:"baseUrl"`
 	Description  string          `json:"description"`
 	Sections     []FooterSection `json:"sections"`
 	Copyright    string          `json:"copyright"`
@@ -103,14 +114,13 @@ type copySettingsValue struct {
 	Entries []CopyEntry `json:"entries"`
 }
 
-type smtpSettingsValue struct {
-	Enabled   bool   `json:"enabled"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	Username  string `json:"username"`
-	Password  string `json:"password"`
-	FromEmail string `json:"fromEmail"`
-	FromName  string `json:"fromName"`
+type graphMailSettingsValue struct {
+	Enabled                 bool   `json:"enabled"`
+	TenantID                string `json:"tenantId"`
+	ClientID                string `json:"clientId"`
+	ClientSecret            string `json:"clientSecret"`
+	SenderUserPrincipalName string `json:"senderUserPrincipalName"`
+	SaveToSentItems         bool   `json:"saveToSentItems"`
 }
 
 type wechatSettingsValue struct {
@@ -150,6 +160,13 @@ type accessControlSettingsValue struct {
 
 func NewRepository(db *pgxpool.Pool, redisClient *redis.Client) *Repository {
 	return &Repository{db: db, redis: redisClient, http: &http.Client{Timeout: 10 * time.Second}}
+}
+
+func (r *Repository) httpClient() *http.Client {
+	if r.http != nil {
+		return r.http
+	}
+	return http.DefaultClient
 }
 
 func (r *Repository) Health(ctx context.Context) error {
@@ -378,10 +395,14 @@ func (r *Repository) SaveFooterSettings(ctx context.Context, input FooterSetting
 	value := normalizeFooterSettingsValue(footerSettingsValue{
 		BrandName:    input.BrandName,
 		BrandTagline: input.BrandTagline,
+		BaseURL:      input.BaseURL,
 		Description:  input.Description,
 		Sections:     input.Sections,
 		Copyright:    input.Copyright,
 	})
+	if value.BaseURL != "" && !validSiteBaseURL(value.BaseURL) {
+		return FooterSettings{}, errors.New("invalid footer settings base url")
+	}
 	payload, err := json.Marshal(value)
 	if err != nil {
 		return FooterSettings{}, err
@@ -489,7 +510,7 @@ RETURNING value, updated_by, updated_at
 }
 
 func (r *Repository) NotificationChannelSettings(ctx context.Context) (NotificationChannelSettings, error) {
-	smtpValue, smtpMeta, err := r.readSMTPSettings(ctx)
+	graphMailValue, graphMailMeta, err := r.readGraphMailSettings(ctx)
 	if err != nil {
 		return NotificationChannelSettings{}, err
 	}
@@ -502,9 +523,9 @@ func (r *Repository) NotificationChannelSettings(ctx context.Context) (Notificat
 		return NotificationChannelSettings{}, err
 	}
 	return NotificationChannelSettings{
-		SMTP:     smtpSettingsFromValue(smtpValue, smtpMeta.updatedBy, smtpMeta.updatedAt),
-		WeChat:   wechatSettingsFromValue(wechatValue, wechatMeta.updatedBy, wechatMeta.updatedAt),
-		DingTalk: dingTalkSettingsFromValue(dingTalkValue, dingTalkMeta.updatedBy, dingTalkMeta.updatedAt),
+		GraphMail: graphMailSettingsFromValue(graphMailValue, graphMailMeta.updatedBy, graphMailMeta.updatedAt),
+		WeChat:    wechatSettingsFromValue(wechatValue, wechatMeta.updatedBy, wechatMeta.updatedAt),
+		DingTalk:  dingTalkSettingsFromValue(dingTalkValue, dingTalkMeta.updatedBy, dingTalkMeta.updatedAt),
 	}, nil
 }
 
@@ -516,53 +537,77 @@ func (r *Repository) DingTalkSettings(ctx context.Context) (DingTalkSettings, er
 	return dingTalkSettingsFromValue(value, meta.updatedBy, meta.updatedAt), nil
 }
 
-func (r *Repository) SaveSMTPSettings(ctx context.Context, input SMTPSettingsInput) (SMTPSettings, error) {
-	input.Host = strings.TrimSpace(input.Host)
-	input.Username = strings.TrimSpace(input.Username)
-	input.Password = strings.TrimSpace(input.Password)
-	input.FromEmail = strings.TrimSpace(input.FromEmail)
-	input.FromName = strings.TrimSpace(input.FromName)
+func (r *Repository) SaveGraphMailSettings(ctx context.Context, input GraphMailSettingsInput) (GraphMailSettings, error) {
+	input.TenantID = strings.TrimSpace(input.TenantID)
+	input.ClientID = strings.TrimSpace(input.ClientID)
+	input.ClientSecret = strings.TrimSpace(input.ClientSecret)
+	input.SenderUserPrincipalName = strings.TrimSpace(input.SenderUserPrincipalName)
 	input.Actor = strings.TrimSpace(input.Actor)
 	if input.Actor == "" {
 		input.Actor = "system"
 	}
-	if input.Port <= 0 {
-		input.Port = 587
-	}
-	oldValue, _, err := r.readSMTPSettings(ctx)
+	oldValue, _, err := r.readGraphMailSettings(ctx)
 	if err != nil {
-		return SMTPSettings{}, err
+		return GraphMailSettings{}, err
 	}
-	if input.Password == "" {
-		input.Password = oldValue.Password
+	if input.ClientSecret == "" {
+		input.ClientSecret = oldValue.ClientSecret
 	}
 	if input.Enabled {
-		if input.Host == "" || input.FromEmail == "" {
-			return SMTPSettings{}, errors.New("smtp host and sender are required")
+		if input.TenantID == "" || input.ClientID == "" || input.ClientSecret == "" || input.SenderUserPrincipalName == "" {
+			return GraphMailSettings{}, errors.New("graph mail tenant, client, secret, and sender are required")
 		}
-		if _, err := mail.ParseAddress(input.FromEmail); err != nil {
-			return SMTPSettings{}, errors.New("smtp sender email is invalid")
+		if _, err := mail.ParseAddress(input.SenderUserPrincipalName); err != nil {
+			return GraphMailSettings{}, errors.New("graph mail sender email is invalid")
 		}
 	}
-	value := smtpSettingsValue{
-		Enabled:   input.Enabled,
-		Host:      input.Host,
-		Port:      input.Port,
-		Username:  input.Username,
-		Password:  input.Password,
-		FromEmail: input.FromEmail,
-		FromName:  input.FromName,
+	value := graphMailSettingsValue{
+		Enabled:                 input.Enabled,
+		TenantID:                input.TenantID,
+		ClientID:                input.ClientID,
+		ClientSecret:            input.ClientSecret,
+		SenderUserPrincipalName: input.SenderUserPrincipalName,
+		SaveToSentItems:         input.SaveToSentItems,
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return SMTPSettings{}, err
+		return GraphMailSettings{}, err
 	}
-	meta, err := r.saveJSONSetting(ctx, smtpSettingsKey, raw, input.Actor)
+	meta, err := r.saveJSONSetting(ctx, graphMailSettingsKey, raw, input.Actor)
 	if err != nil {
-		return SMTPSettings{}, err
+		return GraphMailSettings{}, err
 	}
-	r.audit(ctx, input.Actor, "notification.smtp_settings", "site_setting", smtpSettingsKey, "", input.Host)
-	return smtpSettingsFromValue(value, meta.updatedBy, meta.updatedAt), nil
+	r.audit(ctx, input.Actor, "notification.graph_mail_settings", "site_setting", graphMailSettingsKey, "", input.TenantID+"/"+input.SenderUserPrincipalName)
+	return graphMailSettingsFromValue(value, meta.updatedBy, meta.updatedAt), nil
+}
+
+func (r *Repository) TestGraphMailSettings(ctx context.Context, input GraphMailTestInput) (GraphMailTestResult, error) {
+	input.To = strings.TrimSpace(input.To)
+	input.Actor = strings.TrimSpace(input.Actor)
+	if input.Actor == "" {
+		input.Actor = "system"
+	}
+	settings, err := r.graphMailSettingsValue(ctx)
+	if err != nil {
+		return GraphMailTestResult{}, err
+	}
+	if input.To == "" {
+		return GraphMailTestResult{}, errors.New("graph mail test recipient is required")
+	}
+	if _, err := mail.ParseAddress(input.To); err != nil {
+		return GraphMailTestResult{}, errors.New("graph mail test recipient email is invalid")
+	}
+	if !settings.Enabled {
+		return GraphMailTestResult{}, errors.New("graph mail is not enabled")
+	}
+	if settings.TenantID == "" || settings.ClientID == "" || settings.ClientSecret == "" || settings.SenderUserPrincipalName == "" {
+		return GraphMailTestResult{}, errors.New("graph mail tenant, client, secret, and sender are required")
+	}
+	if err := r.sendGraphMail(ctx, settings, input.To, "实验室运营系统 Microsoft Graph 邮件测试", fmt.Sprintf("这是一封 Microsoft Graph API 发送测试邮件。\n\n发送人：%s\n发送时间：%s", input.Actor, time.Now().UTC().Format(time.RFC3339))); err != nil {
+		return GraphMailTestResult{}, fmt.Errorf("graph mail test send failed: %w", err)
+	}
+	r.audit(ctx, input.Actor, "notification.graph_mail_test", "site_setting", graphMailSettingsKey, "", input.To)
+	return GraphMailTestResult{Sent: true, Message: "Microsoft Graph 测试邮件已发送。"}, nil
 }
 
 func (r *Repository) SaveWeChatSettings(ctx context.Context, input WeChatSettingsInput) (WeChatSettings, error) {
@@ -654,6 +699,11 @@ func (r *Repository) SaveDingTalkSettings(ctx context.Context, input DingTalkSet
 	if input.EventAesKey != "" && len(input.EventAesKey) != 43 {
 		return DingTalkSettings{}, errors.New("dingtalk event aes key must be 43 characters")
 	}
+	tenantCode := tenant.TenantID
+	if currentTenant, err := r.resolveActiveTenant(ctx, tenant.TenantID, ""); err == nil && currentTenant.Code != "" {
+		tenantCode = currentTenant.Code
+	}
+	input.EventCallbackURL = firstNonEmpty(generatedDingTalkEventCallbackURL(input.OAuthRedirectURI, tenantCode), input.EventCallbackURL)
 	value := dingTalkSettingsValue{
 		SchemaVersion:    2,
 		Enabled:          input.Enabled,
@@ -677,6 +727,43 @@ func (r *Repository) SaveDingTalkSettings(ctx context.Context, input DingTalkSet
 	}
 	r.audit(WithTenantContext(ctx, TenantContext{TenantID: tenant.TenantID, TenantName: tenant.TenantName, FinanceEnabled: tenant.FinanceEnabled}), input.Actor, "notification.dingtalk_settings", "site_setting", settingKey, "", input.ClientID)
 	return dingTalkSettingsFromValue(value, meta.updatedBy, meta.updatedAt), nil
+}
+
+func (r *Repository) TestDingTalkSettings(ctx context.Context, input DingTalkTestInput) (DingTalkTestResult, error) {
+	tenant := TenantFromContext(ctx)
+	input.UserID = strings.TrimSpace(input.UserID)
+	input.Actor = strings.TrimSpace(input.Actor)
+	if input.Actor == "" {
+		input.Actor = "system"
+	}
+	if tenant.TenantID == "" {
+		tenant.TenantID = defaultTenantID
+	}
+	if input.UserID == "" {
+		return DingTalkTestResult{}, errors.New("dingtalk test user is required")
+	}
+	settings, err := r.dingTalkSettingsValue(ctx)
+	if err != nil {
+		return DingTalkTestResult{}, err
+	}
+	if !settings.Enabled {
+		return DingTalkTestResult{}, errors.New("dingtalk notification is not enabled")
+	}
+	if settings.ClientID == "" || settings.ClientSecret == "" || settings.CorpID == "" || settings.RobotCode == "" {
+		return DingTalkTestResult{}, errors.New("dingtalk client id, client secret, corp id and robot code are required")
+	}
+	target, err := r.dingTalkBoundUser(ctx, tenant.TenantID, input.UserID)
+	if err != nil {
+		return DingTalkTestResult{}, err
+	}
+	title := "实验室运营系统钉钉测试推送"
+	body := fmt.Sprintf("这是一条钉钉企业应用测试推送。\n\n接收人：%s\n发送人：%s\n发送时间：%s", target.Name, input.Actor, time.Now().UTC().Format(time.RFC3339))
+	if err := r.sendDingTalkWorkNotification(ctx, settings, target.DingTalkUserID, title, body); err != nil {
+		return DingTalkTestResult{}, fmt.Errorf("dingtalk test send failed: %w", err)
+	}
+	settingKey := tenantScopedDingTalkSettingsKey(tenant.TenantID)
+	r.audit(WithTenantContext(ctx, TenantContext{TenantID: tenant.TenantID, TenantName: tenant.TenantName, FinanceEnabled: tenant.FinanceEnabled}), input.Actor, "notification.dingtalk_test", "site_setting", settingKey, "", input.UserID)
+	return DingTalkTestResult{Sent: true, Message: "钉钉测试推送已发送。"}, nil
 }
 
 func (r *Repository) AccessControlSettings(ctx context.Context) (AccessControlSettings, error) {
@@ -1350,7 +1437,7 @@ RETURNING id::text, tenant_id::text, (SELECT name FROM tenants WHERE id = users.
 	}
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: user.TenantID, TenantName: user.TenantName, FinanceEnabled: user.FinanceEnabled})
 	r.audit(auditCtx, input.Actor, "user.review", "user", user.ID, fmt.Sprintf("%s/%s/%s/%s/%s/%s/%s", oldTenantID, oldRole, oldStatus, oldGroup, oldDepartment, oldEmail, oldPhone), fmt.Sprintf("%s/%s/%s/%s/%s/%s/%s", user.TenantID, user.Role, user.Status, user.GroupName, user.Department, user.Email, user.Phone))
-	_, err = r.createNotification(ctx, user.TenantID, user.ID, user.GroupName, user.Department, "personal", "账号审核结果", fmt.Sprintf("%s 的账号已更新为 %s / %s。", user.Name, user.Status, roleName(user.Role)), "success")
+	_, err = r.createNotification(ctx, user.TenantID, user.ID, user.GroupName, user.Department, "personal", "账号状态更新", fmt.Sprintf("%s 的账号状态已更新为%s，角色为%s。", user.Name, userStatusLabel(user.Status), roleName(user.Role)), notificationLevelForStatus(user.Status))
 	if err != nil {
 		return User{}, err
 	}
@@ -1445,7 +1532,7 @@ RETURNING id::text, tenant_id::text, (SELECT name FROM tenants WHERE id = users.
 	}
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: user.TenantID, TenantName: user.TenantName, FinanceEnabled: user.FinanceEnabled})
 	r.audit(auditCtx, input.Actor, "user.membership.save", "user", user.ID, sourceTenantID+"/"+sourceEmail, fmt.Sprintf("%s/%s/%s", user.TenantID, user.Role, user.Status))
-	_, err = r.createNotification(ctx, user.TenantID, user.ID, user.GroupName, user.Department, "personal", "机构权限已更新", fmt.Sprintf("%s 已获得 %s 的 %s 权限。", user.Name, user.TenantName, roleName(user.Role)), "success")
+	_, err = r.createNotification(ctx, user.TenantID, user.ID, user.GroupName, user.Department, "personal", "机构权限更新", fmt.Sprintf("%s 在%s的机构权限已更新为%s，账号状态为%s。", user.Name, user.TenantName, roleName(user.Role), userStatusLabel(user.Status)), notificationLevelForStatus(user.Status))
 	if err != nil {
 		return User{}, err
 	}
@@ -1714,9 +1801,10 @@ WHERE user_id IN (SELECT id FROM users WHERE lower(email) = lower($1))
 
 func (r *Repository) Notifications(ctx context.Context, actor Actor) ([]Notification, error) {
 	tenant := TenantFromContext(ctx)
+	source := strings.TrimSpace(notificationSourceFromContext(ctx))
 	rows, err := r.db.Query(ctx, `
 SELECT n.id::text, n.tenant_id::text, COALESCE(t.name, ''), COALESCE(n.user_id::text, ''), n.group_name, n.department, n.target_scope,
-       n.title, n.body, n.level, COALESCE(nr.read_at IS NOT NULL, false), n.created_at, n.updated_at
+       n.source, n.publisher, n.title, n.body, n.level, COALESCE(nr.read_at IS NOT NULL, false), n.created_at, n.updated_at
 FROM notifications n
 LEFT JOIN tenants t ON t.id = n.tenant_id
 LEFT JOIN notification_reads nr ON nr.notification_id = n.id AND nr.user_id = NULLIF($1, '')::uuid
@@ -1726,9 +1814,10 @@ WHERE ($4 IN ('tenant_admin', 'lab_admin', 'super_admin')
    OR (n.target_scope = 'group' AND n.group_name <> '' AND n.group_name = $2)
    OR (n.target_scope = 'department' AND n.department <> '' AND n.department = $3))
   AND ($5::boolean OR n.tenant_id = $6::uuid)
+  AND ($7 = '' OR n.source = $7)
 ORDER BY n.created_at DESC
 LIMIT 50
-`, actor.UserID, actor.GroupName, actor.Department, actor.Role, tenant.AllTenants, tenant.TenantID)
+`, actor.UserID, actor.GroupName, actor.Department, actor.Role, tenant.AllTenants, tenant.TenantID, source)
 	if err != nil {
 		return nil, err
 	}
@@ -1755,6 +1844,8 @@ func scanNotification(row scanner) (Notification, error) {
 		&item.GroupName,
 		&item.Department,
 		&item.TargetScope,
+		&item.Source,
+		&item.Publisher,
 		&item.Title,
 		&item.Body,
 		&item.Level,
@@ -1788,7 +1879,7 @@ marked AS (
     RETURNING notification_id
 )
 SELECT a.id::text, a.tenant_id::text, COALESCE(t.name, ''), COALESCE(a.user_id::text, ''), a.group_name, a.department, a.target_scope,
-       a.title, a.body, a.level, true, a.created_at, a.updated_at
+       a.source, a.publisher, a.title, a.body, a.level, true, a.created_at, a.updated_at
 FROM accessible a
 LEFT JOIN tenants t ON t.id = a.tenant_id
 JOIN marked m ON m.notification_id = a.id
@@ -1801,6 +1892,7 @@ JOIN marked m ON m.notification_id = a.id
 
 func (r *Repository) MarkAllNotificationsRead(ctx context.Context, actor Actor) (int, error) {
 	tenant := TenantFromContext(ctx)
+	source := strings.TrimSpace(notificationSourceFromContext(ctx))
 	actor.UserID = strings.TrimSpace(actor.UserID)
 	if actor.UserID == "" {
 		return 0, errors.New("user must be active")
@@ -1820,6 +1912,7 @@ WITH accessible AS (
         OR (n.target_scope = 'department' AND n.department <> '' AND n.department = $3)
       )
       AND ($5::boolean OR n.tenant_id = $6::uuid)
+      AND ($7 = '' OR n.source = $7)
 ),
 marked AS (
     INSERT INTO notification_reads (tenant_id, notification_id, user_id)
@@ -1829,7 +1922,7 @@ marked AS (
     RETURNING 1
 )
 SELECT count(*)::int FROM marked
-`, actor.UserID, actor.GroupName, actor.Department, actor.Role, tenant.AllTenants, tenant.TenantID).Scan(&count)
+`, actor.UserID, actor.GroupName, actor.Department, actor.Role, tenant.AllTenants, tenant.TenantID, source).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
@@ -1847,10 +1940,11 @@ WITH deleted AS (
     DELETE FROM notifications n
     WHERE n.id = $1
       AND ($2::boolean OR n.tenant_id = $3::uuid)
+      AND n.source = 'announcement'
     RETURNING n.*
 )
 SELECT d.id::text, d.tenant_id::text, COALESCE(t.name, ''), COALESCE(d.user_id::text, ''), d.group_name, d.department, d.target_scope,
-       d.title, d.body, d.level, false, d.created_at, d.updated_at
+       d.source, d.publisher, d.title, d.body, d.level, false, d.created_at, d.updated_at
 FROM deleted d
 LEFT JOIN tenants t ON t.id = d.tenant_id
 `, id, tenant.AllTenants, tenant.TenantID))
@@ -1866,19 +1960,19 @@ type notificationWriter interface {
 }
 
 func (r *Repository) createNotification(ctx context.Context, tenantID string, userID string, groupName string, department string, targetScope string, title string, body string, level string) (Notification, error) {
-	item, err := r.insertNotification(ctx, r.db, tenantID, userID, groupName, department, targetScope, title, body, level)
+	item, err := r.insertNotification(ctx, r.db, tenantID, userID, groupName, department, targetScope, title, body, level, "system", "")
 	if err != nil {
 		return Notification{}, err
 	}
-	r.enqueueDingTalkNotification(item)
+	r.enqueueNotificationDelivery(item)
 	return item, nil
 }
 
 func (r *Repository) createNotificationTx(ctx context.Context, tx pgx.Tx, tenantID string, userID string, groupName string, department string, targetScope string, title string, body string, level string) (Notification, error) {
-	return r.insertNotification(ctx, tx, tenantID, userID, groupName, department, targetScope, title, body, level)
+	return r.insertNotification(ctx, tx, tenantID, userID, groupName, department, targetScope, title, body, level, "system", "")
 }
 
-func (r *Repository) insertNotification(ctx context.Context, writer notificationWriter, tenantID string, userID string, groupName string, department string, targetScope string, title string, body string, level string) (Notification, error) {
+func (r *Repository) insertNotification(ctx context.Context, writer notificationWriter, tenantID string, userID string, groupName string, department string, targetScope string, title string, body string, level string, source string, publisher string) (Notification, error) {
 	tenantID = strings.TrimSpace(tenantID)
 	if tenantID == "" {
 		tenantID = TenantFromContext(ctx).TenantID
@@ -1890,18 +1984,26 @@ func (r *Repository) insertNotification(ctx context.Context, writer notification
 	title = strings.TrimSpace(title)
 	body = strings.TrimSpace(body)
 	level = strings.TrimSpace(level)
+	source = strings.TrimSpace(source)
+	publisher = strings.TrimSpace(publisher)
 	if targetScope == "" {
 		targetScope = "global"
 	}
 	if level == "" {
 		level = "info"
 	}
+	if source == "" {
+		source = "system"
+	}
+	if source != "system" && source != "announcement" {
+		return Notification{}, errors.New("invalid notification source")
+	}
 	item, err := scanNotification(writer.QueryRow(ctx, `
-INSERT INTO notifications (tenant_id, user_id, group_name, department, title, body, level, target_scope)
-VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7, $8)
+INSERT INTO notifications (tenant_id, user_id, group_name, department, title, body, level, target_scope, source, publisher)
+VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id::text, tenant_id::text, COALESCE((SELECT name FROM tenants WHERE id = notifications.tenant_id), ''),
-          COALESCE(user_id::text, ''), group_name, department, target_scope, title, body, level, is_read, created_at, updated_at
-`, tenantID, userID, groupName, department, title, body, level, targetScope))
+          COALESCE(user_id::text, ''), group_name, department, target_scope, source, publisher, title, body, level, is_read, created_at, updated_at
+`, tenantID, userID, groupName, department, title, body, level, targetScope, source, publisher))
 	if err != nil {
 		return Notification{}, err
 	}
@@ -1914,10 +2016,11 @@ func (r *Repository) Announce(ctx context.Context, input AnnouncementInput) (Not
 		return Notification{}, err
 	}
 	tenant := TenantFromContext(ctx)
-	item, err := r.createNotification(ctx, tenant.TenantID, input.UserID, input.GroupName, input.Department, input.TargetScope, input.Title, input.Body, input.Level)
+	item, err := r.insertNotification(ctx, r.db, tenant.TenantID, input.UserID, input.GroupName, input.Department, input.TargetScope, input.Title, input.Body, input.Level, "announcement", input.Actor)
 	if err != nil {
 		return Notification{}, err
 	}
+	r.enqueueNotificationDelivery(item)
 	r.audit(ctx, input.Actor, "notification.announce", "notification", item.ID, "", input.TargetScope)
 	return item, nil
 }
@@ -1937,16 +2040,18 @@ SET user_id = NULLIF($2, '')::uuid,
     title = $6,
     body = $7,
     level = $8,
+    publisher = $11,
     updated_at = now()
 WHERE id = $1
   AND ($9::boolean OR tenant_id = $10::uuid)
+  AND source = 'announcement'
 RETURNING id::text, tenant_id::text, COALESCE((SELECT name FROM tenants WHERE id = notifications.tenant_id), ''),
-          COALESCE(user_id::text, ''), group_name, department, target_scope, title, body, level, is_read, created_at, updated_at
-`, id, input.UserID, input.GroupName, input.Department, input.TargetScope, input.Title, input.Body, input.Level, tenant.AllTenants, tenant.TenantID))
+          COALESCE(user_id::text, ''), group_name, department, target_scope, source, publisher, title, body, level, is_read, created_at, updated_at
+`, id, input.UserID, input.GroupName, input.Department, input.TargetScope, input.Title, input.Body, input.Level, tenant.AllTenants, tenant.TenantID, input.Actor))
 	if err != nil {
 		return Notification{}, err
 	}
-	r.enqueueDingTalkNotification(item)
+	r.enqueueNotificationDelivery(item)
 	r.audit(ctx, input.Actor, "notification.update", "notification", item.ID, "", input.TargetScope)
 	return item, nil
 }
@@ -2015,13 +2120,13 @@ LIMIT 1
 	return input, nil
 }
 
-func (r *Repository) enqueueDingTalkNotification(item Notification) {
-	go r.pushDingTalkNotificationTargets(context.Background(), item)
+func (r *Repository) enqueueNotificationDelivery(item Notification) {
+	go r.pushNotificationTargets(context.Background(), item)
 }
 
 func (r *Repository) enqueueDingTalkNotifications(items ...Notification) {
 	for _, item := range items {
-		r.enqueueDingTalkNotification(item)
+		r.enqueueNotificationDelivery(item)
 	}
 }
 
@@ -2364,14 +2469,14 @@ RETURNING id::text, tenant_id::text, (SELECT name FROM tenants WHERE id = users.
 		return User{}, err
 	}
 
-	notification, err := r.createNotificationTx(ctx, tx, user.TenantID, "", "", "", "global", "新用户待审核", fmt.Sprintf("%s 已提交%s注册申请，所属机构：%s，等待管理员审核。", user.Name, requestLabel, tenant.Name), "info")
+	notification, err := r.createNotificationTx(ctx, tx, user.TenantID, "", "", "", "global", "账号状态更新", fmt.Sprintf("%s 已提交%s注册申请，所属机构：%s，当前状态：待审核。", user.Name, requestLabel, tenant.Name), "info")
 	if err != nil {
 		return User{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return User{}, err
 	}
-	r.enqueueDingTalkNotification(notification)
+	r.enqueueNotificationDelivery(notification)
 	r.invalidateDashboard(ctx)
 	r.enqueueEvent(ctx, "user.registered", map[string]any{
 		"userId":      user.ID,
@@ -2411,15 +2516,15 @@ VALUES ($1, $2, $3, now() + interval '10 minutes')
 	if err != nil {
 		return EmailVerificationCodeResponse{}, err
 	}
-	settings, err := r.smtpSettingsValue(ctx)
+	settings, err := r.graphMailSettingsValue(ctx)
 	if err != nil {
 		return EmailVerificationCodeResponse{}, err
 	}
-	if !settings.Enabled || settings.Host == "" || settings.FromEmail == "" {
-		slog.Warn("email verification code generated but smtp is not enabled", "email", input.Email, "code", code)
-		return EmailVerificationCodeResponse{Sent: false, Message: "验证码已生成，但 SMTP 尚未启用，请在后台配置 SMTP 邮箱。"}, nil
+	if !graphMailReady(settings) {
+		slog.Warn("email verification code generated but graph mail is not enabled", "email", input.Email, "code", code)
+		return EmailVerificationCodeResponse{Sent: false, Message: "验证码已生成，但 Microsoft Graph 邮件尚未启用，请在后台配置 Graph API 邮件通道。"}, nil
 	}
-	if err := sendSMTPMail(settings, input.Email, "实验室运营系统注册验证码", fmt.Sprintf("您的注册验证码是：%s。10 分钟内有效。", code)); err != nil {
+	if err := r.sendGraphMail(ctx, settings, input.Email, "实验室运营系统注册验证码", fmt.Sprintf("您的注册验证码是：%s。10 分钟内有效。", code)); err != nil {
 		return EmailVerificationCodeResponse{}, fmt.Errorf("email verification send failed: %w", err)
 	}
 	return EmailVerificationCodeResponse{Sent: true, Message: "验证码已发送，请检查邮箱。"}, nil
@@ -2548,6 +2653,142 @@ func (r *Repository) DingTalkQuickLogin(ctx context.Context, input DingTalkQuick
 	return r.createUserSession(ctx, user, firstNonEmpty(input.Device, "dingtalk"), "auth.dingtalk_quick_login")
 }
 
+func (r *Repository) DingTalkWebLoginIntent(ctx context.Context, input DingTalkWebLoginIntentInput) (DingTalkWebLoginIntent, error) {
+	input.TenantID = strings.TrimSpace(input.TenantID)
+	input.TenantCode = strings.TrimSpace(strings.ToLower(input.TenantCode))
+	input.RedirectURI = strings.TrimSpace(input.RedirectURI)
+	if input.RedirectURI == "" {
+		return DingTalkWebLoginIntent{}, errors.New("dingtalk redirect uri is required")
+	}
+	tenant, settings, err := r.dingTalkQuickLoginTenantSettings(ctx, DingTalkQuickLoginInput{
+		TenantID:   input.TenantID,
+		TenantCode: input.TenantCode,
+	})
+	if err != nil {
+		return DingTalkWebLoginIntent{}, err
+	}
+	settings.OAuthRedirectURI = input.RedirectURI
+	state, err := randomToken()
+	if err != nil {
+		return DingTalkWebLoginIntent{}, err
+	}
+	if err := r.saveDingTalkWebLoginState(ctx, tenant.ID, state); err != nil {
+		return DingTalkWebLoginIntent{}, err
+	}
+	return DingTalkWebLoginIntent{
+		AuthURL:    dingTalkOAuthURL(settings, state),
+		State:      state,
+		TenantID:   tenant.ID,
+		TenantCode: tenant.Code,
+	}, nil
+}
+
+func (r *Repository) DingTalkWebLogin(ctx context.Context, input DingTalkWebLoginInput) (DingTalkWebLoginResult, error) {
+	input.TenantID = strings.TrimSpace(input.TenantID)
+	input.TenantCode = strings.TrimSpace(strings.ToLower(input.TenantCode))
+	input.AuthCode = strings.TrimSpace(input.AuthCode)
+	input.State = strings.TrimSpace(input.State)
+	input.Device = strings.TrimSpace(input.Device)
+	if input.AuthCode == "" {
+		return DingTalkWebLoginResult{}, errors.New("dingtalk auth code is required")
+	}
+
+	stateTenantID, err := r.consumeDingTalkWebLoginState(ctx, input.State)
+	if err != nil {
+		return DingTalkWebLoginResult{}, err
+	}
+	tenant, settings, err := r.dingTalkQuickLoginTenantSettings(ctx, DingTalkQuickLoginInput{
+		TenantID:   firstNonEmpty(input.TenantID, stateTenantID),
+		TenantCode: input.TenantCode,
+	})
+	if err != nil {
+		return DingTalkWebLoginResult{}, err
+	}
+	identity, err := r.dingTalkIdentityByAuthCode(ctx, settings, input.AuthCode)
+	if err != nil {
+		return DingTalkWebLoginResult{}, err
+	}
+	user, err := r.userByDingTalkIdentity(ctx, tenant.ID, identity)
+	if err != nil {
+		if err.Error() != "dingtalk account is not bound to a LIRS user" {
+			return DingTalkWebLoginResult{}, err
+		}
+		token, tokenErr := r.saveDingTalkLoginBindingIntent(ctx, dingTalkLoginBindingIntentValue{
+			TenantID:     tenant.ID,
+			TenantCode:   tenant.Code,
+			Identity:     identity,
+			DingTalkName: firstNonEmpty(identity.Name, identity.UserID, identity.UnionID),
+		})
+		if tokenErr != nil {
+			return DingTalkWebLoginResult{}, tokenErr
+		}
+		return DingTalkWebLoginResult{
+			Bound:        false,
+			BindingToken: token,
+			TenantID:     tenant.ID,
+			TenantCode:   tenant.Code,
+			DingTalkName: firstNonEmpty(identity.Name, identity.UserID, identity.UnionID),
+		}, nil
+	}
+	if user.Status == "disabled" {
+		return DingTalkWebLoginResult{}, errors.New("account is disabled")
+	}
+	auth, err := r.createUserSession(ctx, user, firstNonEmpty(input.Device, "dingtalk-web"), "auth.dingtalk_web_login")
+	if err != nil {
+		return DingTalkWebLoginResult{}, err
+	}
+	return DingTalkWebLoginResult{Bound: true, Auth: &auth, TenantID: tenant.ID, TenantCode: tenant.Code, DingTalkName: firstNonEmpty(identity.Name, user.DingTalkName)}, nil
+}
+
+func (r *Repository) BindDingTalkLoginToExistingUser(ctx context.Context, input DingTalkLoginBindExistingInput) (AuthResponse, error) {
+	input.BindingToken = strings.TrimSpace(input.BindingToken)
+	input.Email = strings.TrimSpace(strings.ToLower(input.Email))
+	input.Device = strings.TrimSpace(input.Device)
+	if input.BindingToken == "" || input.Email == "" || input.Password == "" {
+		return AuthResponse{}, errors.New("invalid dingtalk binding input")
+	}
+	intent, err := r.consumeDingTalkLoginBindingIntent(ctx, input.BindingToken)
+	if err != nil {
+		return AuthResponse{}, err
+	}
+	user, passwordHash, err := r.loginUserForTenant(ctx, intent.TenantID, input.Email)
+	if err != nil {
+		return AuthResponse{}, err
+	}
+	if !passwordMatches(passwordHash, input.Password) {
+		return AuthResponse{}, errors.New("invalid email or password")
+	}
+	if user.Status == "disabled" {
+		return AuthResponse{}, errors.New("account is disabled")
+	}
+	identity := intent.Identity
+	identity.UserID = strings.TrimSpace(identity.UserID)
+	identity.UnionID = strings.TrimSpace(identity.UnionID)
+	identity.Name = strings.TrimSpace(identity.Name)
+	if identity.UserID == "" {
+		return AuthResponse{}, errors.New("dingtalk user id is required")
+	}
+	if _, err := r.db.Exec(ctx, `
+UPDATE users
+SET dingtalk_user_id = $2,
+    dingtalk_union_id = $3,
+    dingtalk_name = $4,
+    dingtalk_bound_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND tenant_id = $5::uuid
+`, user.ID, identity.UserID, identity.UnionID, firstNonEmpty(identity.Name, user.Name), intent.TenantID); err != nil {
+		return AuthResponse{}, err
+	}
+	user.DingTalkUserID = identity.UserID
+	user.DingTalkUnionID = identity.UnionID
+	user.DingTalkName = firstNonEmpty(identity.Name, user.Name)
+	user.DingTalkBound = true
+	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: user.TenantID, TenantName: user.TenantName, FinanceEnabled: user.FinanceEnabled})
+	r.audit(auditCtx, user.Name, "user.dingtalk_login_bind", "user", user.ID, "", identity.UserID)
+	return r.createUserSession(ctx, user, firstNonEmpty(input.Device, "dingtalk-web-bind"), "auth.dingtalk_login_bind")
+}
+
 func (r *Repository) dingTalkQuickLoginTenantSettings(ctx context.Context, input DingTalkQuickLoginInput) (Tenant, dingTalkSettingsValue, error) {
 	tenants, err := r.Tenants(ctx)
 	if err != nil {
@@ -2595,7 +2836,7 @@ func (r *Repository) dingTalkQuickLoginTenantSettings(ctx context.Context, input
 		return Tenant{}, dingTalkSettingsValue{}, errors.New("dingtalk application is not configured")
 	}
 	if matches > 1 {
-		return Tenant{}, dingTalkSettingsValue{}, errors.New("tenant is required when multiple dingtalk applications are configured")
+		return Tenant{}, dingTalkSettingsValue{}, errors.New("tenant is required for dingtalk login")
 	}
 	return matchedTenant, matchedSettings, nil
 }
@@ -2624,6 +2865,32 @@ LIMIT 1
 		return User{}, errors.New("dingtalk account is not bound to a LIRS user")
 	}
 	return user, err
+}
+
+func (r *Repository) loginUserForTenant(ctx context.Context, tenantID string, email string) (User, string, error) {
+	tenantID = strings.TrimSpace(tenantID)
+	email = strings.TrimSpace(strings.ToLower(email))
+	if tenantID == "" || email == "" {
+		return User{}, "", errors.New("invalid login input")
+	}
+	var user User
+	var passwordHash string
+	err := r.db.QueryRow(ctx, `
+SELECT u.id::text, u.tenant_id::text, t.name, t.code, u.name, u.email, u.phone, u.department, u.group_name, u.role, u.status, u.email_verified,
+       u.dingtalk_user_id, u.dingtalk_union_id, u.dingtalk_name, u.dingtalk_user_id <> '',
+       t.finance_enabled, u.auth_epoch, u.password_hash
+FROM users u
+JOIN tenants t ON t.id = u.tenant_id
+WHERE u.tenant_id = $1::uuid
+  AND lower(u.email) = lower($2)
+  AND t.status = 'active'
+ORDER BY u.created_at DESC
+LIMIT 1
+`, tenantID, email).Scan(&user.ID, &user.TenantID, &user.TenantName, &user.TenantCode, &user.Name, &user.Email, &user.Phone, &user.Department, &user.GroupName, &user.Role, &user.Status, &user.EmailVerified, &user.DingTalkUserID, &user.DingTalkUnionID, &user.DingTalkName, &user.DingTalkBound, &user.FinanceEnabled, &user.AuthEpoch, &passwordHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, "", errors.New("invalid email, password, or institution")
+	}
+	return user, passwordHash, err
 }
 
 func (r *Repository) createUserSession(ctx context.Context, user User, device string, action string) (AuthResponse, error) {
@@ -2972,7 +3239,7 @@ RETURNING id::text, tenant_id::text, COALESCE(user_id::text, ''), instrument_id:
 	}
 	reservation.InstrumentName = instrumentName
 
-	notification, err := r.createNotificationTx(ctx, tx, tenant.TenantID, userID, groupName, "", "group", "预约待审批", fmt.Sprintf("%s 提交了 %s 的预约申请。", input.UserName, instrumentName), "info")
+	notification, err := r.createNotificationTx(ctx, tx, tenant.TenantID, userID, groupName, "", "group", "预约状态更新", fmt.Sprintf("%s 提交了 %s 的预约申请，当前状态：待审批。", input.UserName, instrumentName), "info")
 	if err != nil {
 		return Reservation{}, err
 	}
@@ -3041,15 +3308,11 @@ VALUES ($1, $2, $3, $4, $5)
 		return Reservation{}, err
 	}
 
-	title := "预约已拒绝"
-	if approved {
-		title = "预约已通过"
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return Reservation{}, err
 	}
 	if reservation.UserID != "" {
-		if _, err := r.createNotification(ctx, reservation.TenantID, reservation.UserID, reservation.GroupName, "", "personal", title, fmt.Sprintf("%s 的 %s 预约状态已更新为 %s。", reservation.UserName, reservation.InstrumentName, reservation.Status), "success"); err != nil {
+		if _, err := r.createNotification(ctx, reservation.TenantID, reservation.UserID, reservation.GroupName, "", "personal", "预约状态更新", fmt.Sprintf("%s 的 %s 预约状态已更新为%s。", reservation.UserName, reservation.InstrumentName, reservationStatusLabel(reservation.Status)), notificationLevelForStatus(reservation.Status)); err != nil {
 			return Reservation{}, err
 		}
 	}
@@ -3226,7 +3489,7 @@ RETURNING r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), r.instru
 	if err != nil {
 		return Reservation{}, err
 	}
-	_, err = r.createNotification(ctx, reservation.TenantID, reservation.UserID, reservation.GroupName, "", "personal", "预约已取消", fmt.Sprintf("%s 的 %s 预约已取消，原因：%s。", reservation.UserName, reservation.InstrumentName, reason), "info")
+	_, err = r.createNotification(ctx, reservation.TenantID, reservation.UserID, reservation.GroupName, "", "personal", "预约状态更新", fmt.Sprintf("%s 的 %s 预约状态已更新为%s，原因：%s。", reservation.UserName, reservation.InstrumentName, reservationStatusLabel(reservation.Status), reason), notificationLevelForStatus(reservation.Status))
 	if err != nil {
 		return Reservation{}, err
 	}
@@ -3274,7 +3537,7 @@ RETURNING r.id::text, COALESCE(r.user_id::text, ''), r.user_name, r.group_name,
 		}
 		count++
 		if userID != "" {
-			if _, err := r.createNotification(ctx, tenantID, userID, groupName, "", "personal", "预约已自动取消", fmt.Sprintf("%s 的 %s 预约因超过审批时限自动取消。", userName, instrumentName), "warning"); err != nil {
+			if _, err := r.createNotification(ctx, tenantID, userID, groupName, "", "personal", "预约状态更新", fmt.Sprintf("%s 的 %s 预约状态已更新为已取消，原因：审批超时自动取消。", userName, instrumentName), "warning"); err != nil {
 				return count, err
 			}
 		}
@@ -3488,7 +3751,7 @@ func materialSelectColumns(alias string) string {
 		parentName = `COALESCE((SELECT parent.name FROM materials parent WHERE parent.id = materials.parent_material_id), '')`
 	}
 	return fmt.Sprintf(`%s::text, %s, %s, %s, %s, %s, %s, %s::float8, %s, %s, %s, %s, %s,
-       %s, %s, %s, %s, COALESCE(%s::text, ''), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+       %s, %s, %s, %s, COALESCE(%s::text, ''), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
        COALESCE(%s::text, ''), COALESCE(%s::text, ''), %s,
        CASE WHEN %s IS NOT NULL AND %s > 0 THEN (%s + %s)::text ELSE '' END,
        %s, %s, %s, %s, %s, %s`,
@@ -3520,6 +3783,7 @@ func materialSelectColumns(alias string) string {
 		materialColumn(alias, "storage_slot"),
 		materialColumn(alias, "tender_contract"),
 		materialColumn(alias, "contract_no"),
+		materialColumn(alias, "remark"),
 		materialColumn(alias, "certificate_url"),
 		materialColumn(alias, "standard_certificate_url"),
 		materialColumn(alias, "attachment_url"),
@@ -3571,6 +3835,7 @@ func scanMaterial(row scanner) (Material, error) {
 		&item.StorageSlot,
 		&item.TenderContract,
 		&item.ContractNo,
+		&item.Remark,
 		&item.CertificateURL,
 		&item.StandardCertificateURL,
 		&item.AttachmentURL,
@@ -3891,6 +4156,426 @@ RETURNING id::text, name, parent_name, display_order, status, created_at, update
 	return item, nil
 }
 
+func (r *Repository) PurchasableMaterials(ctx context.Context) ([]PurchasableMaterial, error) {
+	tenant := TenantFromContext(ctx)
+	rows, err := r.db.Query(ctx, `
+SELECT pm.id::text, pm.id_no, pm.sequence_no, COALESCE(pm.procurement_project_id::text, ''),
+       COALESCE(pp.name, pm.procurement_project), COALESCE(pp.expires_at::text, ''),
+       COALESCE(pp.status, 'active'),
+       pm.project_name, pm.brand, pm.spec, pm.unit, pm.purchase_price::float8,
+       pm.remark, pm.technical_requirement, pm.min_spec, pm.status, pm.created_at, pm.updated_at
+FROM purchasable_materials pm
+LEFT JOIN procurement_projects pp ON pp.id = pm.procurement_project_id
+WHERE pm.status = 'active'
+  AND ($1::boolean OR pm.tenant_id = $2::uuid)
+ORDER BY pm.project_name, pm.sequence_no, pm.id_no
+`, tenant.AllTenants, tenant.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]PurchasableMaterial, 0)
+	for rows.Next() {
+		item, err := scanPurchasableMaterial(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *Repository) ProcurementProjects(ctx context.Context) ([]ProcurementProject, error) {
+	tenant := TenantFromContext(ctx)
+	rows, err := r.db.Query(ctx, `
+SELECT id::text, name, COALESCE(expires_at::text, ''), status, created_at, updated_at
+FROM procurement_projects
+WHERE ($1::boolean OR tenant_id = $2::uuid)
+ORDER BY name
+`, tenant.AllTenants, tenant.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]ProcurementProject, 0)
+	for rows.Next() {
+		item, err := scanProcurementProject(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *Repository) SaveProcurementProject(ctx context.Context, id string, input ProcurementProjectInput) (ProcurementProject, error) {
+	tenant := TenantFromContext(ctx)
+	input = normalizeProcurementProject(input)
+	if input.Actor == "" {
+		input.Actor = "system"
+	}
+	if input.Name == "" {
+		return ProcurementProject{}, errors.New("material procurement project name is required")
+	}
+	if input.Status == "" {
+		input.Status = "active"
+	}
+	if input.Status != "active" && input.Status != "disabled" {
+		return ProcurementProject{}, errors.New("material procurement project status is invalid")
+	}
+	var item ProcurementProject
+	var err error
+	if id == "" {
+		err = r.db.QueryRow(ctx, `
+INSERT INTO procurement_projects (tenant_id, name, expires_at, status)
+VALUES ($1, $2, NULLIF($3, '')::date, $4)
+ON CONFLICT (tenant_id, name) DO UPDATE
+SET expires_at = EXCLUDED.expires_at,
+    status = EXCLUDED.status,
+    updated_at = now()
+RETURNING id::text, name, COALESCE(expires_at::text, ''), status, created_at, updated_at
+`, tenant.TenantID, input.Name, input.ExpiresAt, input.Status).Scan(&item.ID, &item.Name, &item.ExpiresAt, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+	} else {
+		err = r.db.QueryRow(ctx, `
+UPDATE procurement_projects
+SET name = $2, expires_at = NULLIF($3, '')::date, status = $4, updated_at = now()
+WHERE id = $1
+  AND ($5::boolean OR tenant_id = $6::uuid)
+RETURNING id::text, name, COALESCE(expires_at::text, ''), status, created_at, updated_at
+`, id, input.Name, input.ExpiresAt, input.Status, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &item.Name, &item.ExpiresAt, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+	}
+	if err != nil {
+		return ProcurementProject{}, err
+	}
+	r.audit(ctx, input.Actor, "procurement_project.save", "procurement_project", item.ID, "", item.Name)
+	return item, nil
+}
+
+func (r *Repository) DeleteProcurementProject(ctx context.Context, id string, actor string) (ProcurementProject, error) {
+	tenant := TenantFromContext(ctx)
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		actor = "system"
+	}
+	var item ProcurementProject
+	err := r.db.QueryRow(ctx, `
+UPDATE procurement_projects
+SET status = 'disabled', updated_at = now()
+WHERE id = $1
+  AND ($2::boolean OR tenant_id = $3::uuid)
+RETURNING id::text, name, COALESCE(expires_at::text, ''), status, created_at, updated_at
+`, id, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &item.Name, &item.ExpiresAt, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		return ProcurementProject{}, err
+	}
+	r.audit(ctx, actor, "procurement_project.delete", "procurement_project", item.ID, item.Name, item.Status)
+	return item, nil
+}
+
+func (r *Repository) SavePurchasableMaterial(ctx context.Context, id string, input PurchasableMaterialInput) (PurchasableMaterial, error) {
+	tenant := TenantFromContext(ctx)
+	input = normalizePurchasableMaterial(input)
+	if input.Actor == "" {
+		input.Actor = "system"
+	}
+	if input.IDNo == "" || input.SequenceNo == "" || input.ProjectName == "" || input.Brand == "" || input.Spec == "" || input.Unit == "" || input.PurchasePrice < 0 {
+		return PurchasableMaterial{}, errors.New("invalid purchasable material input")
+	}
+	projectID, projectName, err := r.ensureProcurementProject(ctx, nil, input.ProcurementProjectID, input.ProcurementProject)
+	if err != nil {
+		return PurchasableMaterial{}, err
+	}
+	input.ProcurementProject = projectName
+	if id == "" {
+		var item PurchasableMaterial
+		err := r.db.QueryRow(ctx, `
+INSERT INTO purchasable_materials (
+    tenant_id, id_no, sequence_no, procurement_project_id, procurement_project, project_name, brand, spec, unit, purchase_price,
+    remark, technical_requirement, min_spec, status
+)
+VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'active')
+ON CONFLICT (tenant_id, id_no) DO UPDATE
+SET sequence_no = EXCLUDED.sequence_no,
+    procurement_project_id = EXCLUDED.procurement_project_id,
+    procurement_project = EXCLUDED.procurement_project,
+    project_name = EXCLUDED.project_name,
+    brand = EXCLUDED.brand,
+    spec = EXCLUDED.spec,
+    unit = EXCLUDED.unit,
+    purchase_price = EXCLUDED.purchase_price,
+    remark = EXCLUDED.remark,
+    technical_requirement = EXCLUDED.technical_requirement,
+    min_spec = EXCLUDED.min_spec,
+    status = 'active',
+    updated_at = now()
+RETURNING id::text, id_no, sequence_no, COALESCE(procurement_project_id::text, ''), procurement_project,
+          COALESCE((SELECT expires_at::text FROM procurement_projects WHERE id = purchasable_materials.procurement_project_id), ''),
+          COALESCE((SELECT status FROM procurement_projects WHERE id = purchasable_materials.procurement_project_id), 'active'),
+          project_name, brand, spec, unit, purchase_price::float8,
+          remark, technical_requirement, min_spec, status, created_at, updated_at
+`, tenant.TenantID, input.IDNo, input.SequenceNo, projectID, input.ProcurementProject, input.ProjectName, input.Brand, input.Spec, input.Unit, input.PurchasePrice, input.Remark, input.TechnicalRequirement, input.MinSpec).Scan(
+			&item.ID, &item.IDNo, &item.SequenceNo, &item.ProcurementProjectID, &item.ProcurementProject, &item.ProcurementExpiresAt, &item.ProcurementProjectStatus, &item.ProjectName, &item.Brand, &item.Spec, &item.Unit, &item.PurchasePrice, &item.Remark, &item.TechnicalRequirement, &item.MinSpec, &item.Status, &item.CreatedAt, &item.UpdatedAt,
+		)
+		if err != nil {
+			return PurchasableMaterial{}, err
+		}
+		r.audit(ctx, input.Actor, "purchasable_material.save", "purchasable_material", item.ID, "", item.IDNo)
+		return item, nil
+	}
+
+	var item PurchasableMaterial
+	err = r.db.QueryRow(ctx, `
+UPDATE purchasable_materials
+SET id_no = $2,
+    sequence_no = $3,
+    procurement_project_id = NULLIF($4, '')::uuid,
+    procurement_project = $5,
+    project_name = $6,
+    brand = $7,
+    spec = $8,
+    unit = $9,
+    purchase_price = $10,
+    remark = $11,
+    technical_requirement = $12,
+    min_spec = $13,
+    status = 'active',
+    updated_at = now()
+WHERE id = $1
+  AND ($14::boolean OR tenant_id = $15::uuid)
+RETURNING id::text, id_no, sequence_no, COALESCE(procurement_project_id::text, ''), procurement_project,
+          COALESCE((SELECT expires_at::text FROM procurement_projects WHERE id = purchasable_materials.procurement_project_id), ''),
+          COALESCE((SELECT status FROM procurement_projects WHERE id = purchasable_materials.procurement_project_id), 'active'),
+          project_name, brand, spec, unit, purchase_price::float8,
+          remark, technical_requirement, min_spec, status, created_at, updated_at
+`, id, input.IDNo, input.SequenceNo, projectID, input.ProcurementProject, input.ProjectName, input.Brand, input.Spec, input.Unit, input.PurchasePrice, input.Remark, input.TechnicalRequirement, input.MinSpec, tenant.AllTenants, tenant.TenantID).Scan(
+		&item.ID, &item.IDNo, &item.SequenceNo, &item.ProcurementProjectID, &item.ProcurementProject, &item.ProcurementExpiresAt, &item.ProcurementProjectStatus, &item.ProjectName, &item.Brand, &item.Spec, &item.Unit, &item.PurchasePrice, &item.Remark, &item.TechnicalRequirement, &item.MinSpec, &item.Status, &item.CreatedAt, &item.UpdatedAt,
+	)
+	if err != nil {
+		return PurchasableMaterial{}, err
+	}
+	r.audit(ctx, input.Actor, "purchasable_material.update", "purchasable_material", item.ID, "", item.IDNo)
+	return item, nil
+}
+
+func (r *Repository) DeletePurchasableMaterial(ctx context.Context, id string, actor string) (PurchasableMaterial, error) {
+	tenant := TenantFromContext(ctx)
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		actor = "system"
+	}
+	var item PurchasableMaterial
+	err := r.db.QueryRow(ctx, `
+UPDATE purchasable_materials
+SET status = 'deleted', updated_at = now()
+WHERE id = $1
+  AND ($2::boolean OR tenant_id = $3::uuid)
+RETURNING id::text, id_no, sequence_no, COALESCE(procurement_project_id::text, ''), procurement_project,
+          COALESCE((SELECT expires_at::text FROM procurement_projects WHERE id = purchasable_materials.procurement_project_id), ''),
+          COALESCE((SELECT status FROM procurement_projects WHERE id = purchasable_materials.procurement_project_id), 'active'),
+          project_name, brand, spec, unit, purchase_price::float8,
+          remark, technical_requirement, min_spec, status, created_at, updated_at
+`, id, tenant.AllTenants, tenant.TenantID).Scan(
+		&item.ID, &item.IDNo, &item.SequenceNo, &item.ProcurementProjectID, &item.ProcurementProject, &item.ProcurementExpiresAt, &item.ProcurementProjectStatus, &item.ProjectName, &item.Brand, &item.Spec, &item.Unit, &item.PurchasePrice, &item.Remark, &item.TechnicalRequirement, &item.MinSpec, &item.Status, &item.CreatedAt, &item.UpdatedAt,
+	)
+	if err != nil {
+		return PurchasableMaterial{}, err
+	}
+	r.audit(ctx, actor, "purchasable_material.delete", "purchasable_material", item.ID, item.IDNo, item.Status)
+	return item, nil
+}
+
+func (r *Repository) ImportPurchasableMaterials(ctx context.Context, input PurchasableMaterialImportInput) (MaterialImportResult, error) {
+	input.Actor = strings.TrimSpace(input.Actor)
+	if input.Actor == "" {
+		input.Actor = "system"
+	}
+	records, err := purchasableMaterialImportRecords(input.Filename, input.Content)
+	if err != nil {
+		return MaterialImportResult{}, fmt.Errorf("material purchasable import failed: %w", err)
+	}
+	result := MaterialImportResult{}
+	if len(records) == 0 {
+		return result, errors.New("material purchasable import failed: 文件内容为空")
+	}
+	headerIndex := -1
+	for i, row := range records {
+		if purchasableMaterialLooksLikeHeader(row) {
+			headerIndex = i
+			break
+		}
+	}
+	if headerIndex < 0 {
+		return result, errors.New("material purchasable import failed: 未找到表头，请确认包含 ID号、序号、项目名称、品牌、规格、单位、采购价（元）")
+	}
+	header := materialImportHeaderIndex(records[headerIndex])
+	currentProject := ""
+	items := make([]PurchasableMaterialInput, 0, len(records)-headerIndex-1)
+	for rowIndex, row := range records[headerIndex+1:] {
+		line := headerIndex + rowIndex + 2
+		if rowBlank(row) {
+			continue
+		}
+		if project := purchasableMaterialProjectHeader(row); project != "" {
+			currentProject = project
+			continue
+		}
+		item := purchasableMaterialInputFromRow(header, row, currentProject)
+		item.Actor = input.Actor
+		if item.IDNo == "" || item.SequenceNo == "" || item.ProjectName == "" || item.Brand == "" || item.Spec == "" || item.Unit == "" {
+			if purchasableMaterialLooksLikeNoteRow(row) {
+				result.Skipped++
+				continue
+			}
+			result.Skipped++
+			result.Errors = append(result.Errors, fmt.Sprintf("第%d行缺少ID号、序号、项目名称、品牌、规格或单位；行内容：%s", line, purchasableMaterialRowPreview(row)))
+			continue
+		}
+		items = append(items, item)
+	}
+	if len(items) == 0 {
+		message := "没有导入任何有效物资行"
+		if len(result.Errors) > 0 {
+			message = strings.Join(limitStrings(result.Errors, 5), "；")
+		}
+		return result, fmt.Errorf("material purchasable import failed: %s", message)
+	}
+	created, updated, err := r.savePurchasableMaterialsBulk(ctx, items)
+	if err != nil {
+		return result, fmt.Errorf("material purchasable import failed: 数据库写入失败：%w", err)
+	}
+	result.Created = created
+	result.Updated = updated
+	result.Message = fmt.Sprintf("导入完成：有效 %d 行，新增 %d 行，更新 %d 行，跳过 %d 行。", len(items), created, updated, result.Skipped)
+	return result, nil
+}
+
+func (r *Repository) savePurchasableMaterialsBulk(ctx context.Context, items []PurchasableMaterialInput) (int, int, error) {
+	if len(items) == 0 {
+		return 0, 0, nil
+	}
+	tenant := TenantFromContext(ctx)
+	idNos := make([]string, 0, len(items))
+	for _, item := range items {
+		idNos = append(idNos, item.IDNo)
+	}
+	existingRows, err := r.db.Query(ctx, `
+SELECT id_no
+FROM purchasable_materials
+WHERE tenant_id = $1::uuid AND id_no = ANY($2)
+`, tenant.TenantID, idNos)
+	if err != nil {
+		return 0, 0, err
+	}
+	existing := make(map[string]struct{}, len(items))
+	for existingRows.Next() {
+		var idNo string
+		if err := existingRows.Scan(&idNo); err != nil {
+			existingRows.Close()
+			return 0, 0, err
+		}
+		existing[idNo] = struct{}{}
+	}
+	existingRows.Close()
+	if err := existingRows.Err(); err != nil {
+		return 0, 0, err
+	}
+
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+	projectIDs, err := ensureProcurementProjectsTx(ctx, tx, tenant.TenantID, items)
+	if err != nil {
+		return 0, 0, err
+	}
+	batch := &pgx.Batch{}
+	for _, item := range items {
+		projectID := projectIDs[item.ProcurementProject]
+		batch.Queue(`
+INSERT INTO purchasable_materials (
+    tenant_id, id_no, sequence_no, procurement_project_id, procurement_project, project_name, brand, spec, unit, purchase_price,
+    remark, technical_requirement, min_spec, status
+)
+VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'active')
+ON CONFLICT (tenant_id, id_no) DO UPDATE
+SET sequence_no = EXCLUDED.sequence_no,
+    procurement_project_id = EXCLUDED.procurement_project_id,
+    procurement_project = EXCLUDED.procurement_project,
+    project_name = EXCLUDED.project_name,
+    brand = EXCLUDED.brand,
+    spec = EXCLUDED.spec,
+    unit = EXCLUDED.unit,
+    purchase_price = EXCLUDED.purchase_price,
+    remark = EXCLUDED.remark,
+    technical_requirement = EXCLUDED.technical_requirement,
+    min_spec = EXCLUDED.min_spec,
+    status = 'active',
+    updated_at = now()
+`, tenant.TenantID, item.IDNo, item.SequenceNo, projectID, item.ProcurementProject, item.ProjectName, item.Brand, item.Spec, item.Unit, item.PurchasePrice, item.Remark, item.TechnicalRequirement, item.MinSpec)
+	}
+	results := tx.SendBatch(ctx, batch)
+	for range items {
+		if _, err := results.Exec(); err != nil {
+			_ = results.Close()
+			return 0, 0, err
+		}
+	}
+	if err := results.Close(); err != nil {
+		return 0, 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, err
+	}
+	updated := 0
+	for _, item := range items {
+		if _, ok := existing[item.IDNo]; ok {
+			updated++
+		}
+	}
+	created := len(items) - updated
+	actor := items[0].Actor
+	if actor == "" {
+		actor = "system"
+	}
+	r.audit(ctx, actor, "purchasable_material.import", "purchasable_material", "", "", fmt.Sprintf("created=%d updated=%d", created, updated))
+	return created, updated, nil
+}
+
+func scanPurchasableMaterial(row scanner) (PurchasableMaterial, error) {
+	var item PurchasableMaterial
+	err := row.Scan(
+		&item.ID,
+		&item.IDNo,
+		&item.SequenceNo,
+		&item.ProcurementProjectID,
+		&item.ProcurementProject,
+		&item.ProcurementExpiresAt,
+		&item.ProcurementProjectStatus,
+		&item.ProjectName,
+		&item.Brand,
+		&item.Spec,
+		&item.Unit,
+		&item.PurchasePrice,
+		&item.Remark,
+		&item.TechnicalRequirement,
+		&item.MinSpec,
+		&item.Status,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	return item, err
+}
+
+func scanProcurementProject(row scanner) (ProcurementProject, error) {
+	var item ProcurementProject
+	err := row.Scan(&item.ID, &item.Name, &item.ExpiresAt, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+	return item, err
+}
+
 func (r *Repository) SaveMaterial(ctx context.Context, id string, input MaterialInput) (Material, error) {
 	tenant := TenantFromContext(ctx)
 	input = normalizeMaterial(input)
@@ -3916,6 +4601,13 @@ func (r *Repository) SaveMaterial(ctx context.Context, id string, input Material
 	if input.OpenExpireDays < 0 || input.FreezeThawCount < 0 || input.FreezeThawLimit < 0 || input.NearExpiryDays < 0 {
 		return Material{}, errors.New("invalid material lifecycle input")
 	}
+	footerSettings, err := r.FooterSettings(ctx)
+	if err != nil {
+		return Material{}, err
+	}
+	if id != "" && input.QRCode == "" {
+		input.QRCode = materialDetailURL(footerSettings.BaseURL, id)
+	}
 
 	if id == "" {
 		tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
@@ -3932,23 +4624,33 @@ INSERT INTO materials (
     supplier, manufacturer, batch_no, catalog_no, cas_no, grade, concentration,
     parent_material_id, dilution_factor, preparation_method,
     storage_condition, storage_room, storage_cabinet, storage_layer, storage_slot,
-    tender_contract, contract_no, certificate_url, standard_certificate_url, attachment_url,
+    tender_contract, contract_no, remark, certificate_url, standard_certificate_url, attachment_url,
     qr_code, expires_at, opened_at, open_expire_days, freeze_thaw_count, freeze_thaw_limit,
     approval_required, near_expiry_days, status
 )
 VALUES (
-    $39, $1, $2, $3, $4, $5, $6, $7, $8, $9,
+    $40, $1, $2, $3, $4, $5, $6, $7, $8, $9,
     $10, $11, $12, $13, $14, $15, $16,
     NULLIF($17, '')::uuid, $18, $19,
     $20, $21, $22, $23, $24,
     $25, $26, $27, $28, $29,
-    $30, NULLIF($31, '')::date, NULLIF($32, '')::date, $33, $34, $35,
-    $36, $37, $38
+    $30, $31, NULLIF($32, '')::date, NULLIF($33, '')::date, $34, $35, $36,
+    $37, $38, $39
 )
 RETURNING %s
-`, materialSelectColumns("materials")), input.Name, input.ProductType, input.Category, input.Subcategory, input.Spec, input.Unit, input.UnitPrice, input.Stock, input.WarningLine, input.Supplier, input.Manufacturer, input.BatchNo, input.CatalogNo, input.CASNo, input.Grade, input.Concentration, input.ParentMaterialID, input.DilutionFactor, input.PreparationMethod, input.StorageCondition, input.StorageRoom, input.StorageCabinet, input.StorageLayer, input.StorageSlot, input.TenderContract, input.ContractNo, input.CertificateURL, input.StandardCertificateURL, input.AttachmentURL, input.QRCode, input.ExpiresAt, input.OpenedAt, input.OpenExpireDays, input.FreezeThawCount, input.FreezeThawLimit, input.ApprovalRequired, input.NearExpiryDays, input.Status, tenant.TenantID))
+`, materialSelectColumns("materials")), input.Name, input.ProductType, input.Category, input.Subcategory, input.Spec, input.Unit, input.UnitPrice, input.Stock, input.WarningLine, input.Supplier, input.Manufacturer, input.BatchNo, input.CatalogNo, input.CASNo, input.Grade, input.Concentration, input.ParentMaterialID, input.DilutionFactor, input.PreparationMethod, input.StorageCondition, input.StorageRoom, input.StorageCabinet, input.StorageLayer, input.StorageSlot, input.TenderContract, input.ContractNo, input.Remark, input.CertificateURL, input.StandardCertificateURL, input.AttachmentURL, input.QRCode, input.ExpiresAt, input.OpenedAt, input.OpenExpireDays, input.FreezeThawCount, input.FreezeThawLimit, input.ApprovalRequired, input.NearExpiryDays, input.Status, tenant.TenantID))
 		if err != nil {
 			return Material{}, err
+		}
+		if input.QRCode == "" {
+			item.QRCode = materialDetailURL(footerSettings.BaseURL, item.ID)
+			if _, err := tx.Exec(ctx, `
+UPDATE materials
+SET qr_code = $1
+WHERE id = $2 AND tenant_id = $3::uuid
+`, item.QRCode, item.ID, tenant.TenantID); err != nil {
+				return Material{}, err
+			}
 		}
 		if input.ProductType == "standard" && input.Stock > 0 {
 			batchNo := input.BatchNo
@@ -4050,13 +4752,13 @@ SET name = $2, product_type = $3, category = $4, subcategory = $5, spec = $6, un
     supplier = $10, manufacturer = $11, batch_no = $12, catalog_no = $13, cas_no = $14, grade = $15,
     concentration = $16, parent_material_id = NULLIF($17, '')::uuid, dilution_factor = $18, preparation_method = $19,
     storage_condition = $20, storage_room = $21, storage_cabinet = $22, storage_layer = $23, storage_slot = $24,
-    tender_contract = $25, contract_no = $26, certificate_url = $27, standard_certificate_url = $28, attachment_url = $29, qr_code = $30,
-    expires_at = NULLIF($31, '')::date, opened_at = NULLIF($32, '')::date,
-    open_expire_days = $33, freeze_thaw_count = $34, freeze_thaw_limit = $35,
-    approval_required = $36, near_expiry_days = $37, status = $38
-WHERE id = $1 AND ($39::boolean OR tenant_id = $40::uuid)
+    tender_contract = $25, contract_no = $26, remark = $27, certificate_url = $28, standard_certificate_url = $29, attachment_url = $30, qr_code = $31,
+    expires_at = NULLIF($32, '')::date, opened_at = NULLIF($33, '')::date,
+    open_expire_days = $34, freeze_thaw_count = $35, freeze_thaw_limit = $36,
+    approval_required = $37, near_expiry_days = $38, status = $39
+WHERE id = $1 AND ($40::boolean OR tenant_id = $41::uuid)
 RETURNING %s
-`, materialSelectColumns("materials")), id, input.Name, input.ProductType, input.Category, input.Subcategory, input.Spec, input.Unit, input.UnitPrice, input.WarningLine, input.Supplier, input.Manufacturer, input.BatchNo, input.CatalogNo, input.CASNo, input.Grade, input.Concentration, input.ParentMaterialID, input.DilutionFactor, input.PreparationMethod, input.StorageCondition, input.StorageRoom, input.StorageCabinet, input.StorageLayer, input.StorageSlot, input.TenderContract, input.ContractNo, input.CertificateURL, input.StandardCertificateURL, input.AttachmentURL, input.QRCode, input.ExpiresAt, input.OpenedAt, input.OpenExpireDays, input.FreezeThawCount, input.FreezeThawLimit, input.ApprovalRequired, input.NearExpiryDays, input.Status, tenant.AllTenants, tenant.TenantID))
+`, materialSelectColumns("materials")), id, input.Name, input.ProductType, input.Category, input.Subcategory, input.Spec, input.Unit, input.UnitPrice, input.WarningLine, input.Supplier, input.Manufacturer, input.BatchNo, input.CatalogNo, input.CASNo, input.Grade, input.Concentration, input.ParentMaterialID, input.DilutionFactor, input.PreparationMethod, input.StorageCondition, input.StorageRoom, input.StorageCabinet, input.StorageLayer, input.StorageSlot, input.TenderContract, input.ContractNo, input.Remark, input.CertificateURL, input.StandardCertificateURL, input.AttachmentURL, input.QRCode, input.ExpiresAt, input.OpenedAt, input.OpenExpireDays, input.FreezeThawCount, input.FreezeThawLimit, input.ApprovalRequired, input.NearExpiryDays, input.Status, tenant.AllTenants, tenant.TenantID))
 	if err != nil {
 		return Material{}, err
 	}
@@ -4064,38 +4766,55 @@ RETURNING %s
 	return item, nil
 }
 
-func (r *Repository) ImportMaterialsCSV(ctx context.Context, content string, actor string) (MaterialImportResult, error) {
-	actor = strings.TrimSpace(actor)
-	if actor == "" {
-		actor = "system"
+func (r *Repository) ImportMaterials(ctx context.Context, input MaterialImportInput) (MaterialImportResult, error) {
+	input.Actor = strings.TrimSpace(input.Actor)
+	if input.Actor == "" {
+		input.Actor = "system"
 	}
-	reader := csv.NewReader(strings.NewReader(content))
-	reader.FieldsPerRecord = -1
-	records, err := reader.ReadAll()
+	records, err := purchasableMaterialImportRecords(input.Filename, input.Content)
 	if err != nil {
-		return MaterialImportResult{}, err
+		return MaterialImportResult{}, fmt.Errorf("material import failed: %w", err)
 	}
 	result := MaterialImportResult{}
-	if len(records) <= 1 {
-		return result, nil
+	if len(records) == 0 {
+		return result, errors.New("material import failed: 文件内容为空")
 	}
-	header := materialImportHeaderIndex(records[0])
-	for rowIndex, row := range records[1:] {
-		line := rowIndex + 2
-		input := materialInputFromCSVRow(header, row)
-		input.Actor = actor
-		if input.Name == "" || input.Category == "" || input.Spec == "" || input.Unit == "" {
+	headerIndex := -1
+	for i, row := range records {
+		if materialLooksLikeHeader(row) {
+			headerIndex = i
+			break
+		}
+	}
+	if headerIndex < 0 {
+		return result, errors.New("material import failed: 未找到表头，请确认包含资源名称、一级目录、规格、单位")
+	}
+	header := materialImportHeaderIndex(records[headerIndex])
+	for rowIndex, row := range records[headerIndex+1:] {
+		line := headerIndex + rowIndex + 2
+		if rowBlank(row) {
+			continue
+		}
+		materialInput := materialInputFromCSVRow(header, row)
+		materialInput.Actor = input.Actor
+		materialInput, err = r.applyPurchasableMaterialToMaterialInput(ctx, materialInput, materialCSVValue(header, row, "可采购物资ID号", "采购目录ID号", "ID号", "idNo"))
+		if err != nil {
+			result.Skipped++
+			result.Errors = append(result.Errors, fmt.Sprintf("第%d行匹配采购目录失败：%s", line, err.Error()))
+			continue
+		}
+		if materialInput.Name == "" || materialInput.Category == "" || materialInput.Spec == "" || materialInput.Unit == "" {
 			result.Skipped++
 			result.Errors = append(result.Errors, fmt.Sprintf("第%d行缺少资源名称、一级目录、规格或单位", line))
 			continue
 		}
-		id, err := r.materialIDByImportKey(ctx, input)
+		id, err := r.materialIDByImportKey(ctx, materialInput)
 		if err != nil {
 			result.Skipped++
 			result.Errors = append(result.Errors, fmt.Sprintf("第%d行查询现有产品失败", line))
 			continue
 		}
-		if _, err := r.SaveMaterial(ctx, id, input); err != nil {
+		if _, err := r.SaveMaterial(ctx, id, materialInput); err != nil {
 			result.Skipped++
 			result.Errors = append(result.Errors, fmt.Sprintf("第%d行导入失败：%s", line, err.Error()))
 			continue
@@ -4106,7 +4825,54 @@ func (r *Repository) ImportMaterialsCSV(ctx context.Context, content string, act
 			result.Updated++
 		}
 	}
+	result.Message = fmt.Sprintf("导入完成：新增 %d 行，更新 %d 行，跳过 %d 行。", result.Created, result.Updated, result.Skipped)
 	return result, nil
+}
+
+func (r *Repository) ImportMaterialsCSV(ctx context.Context, content string, actor string) (MaterialImportResult, error) {
+	return r.ImportMaterials(ctx, MaterialImportInput{Filename: "materials.csv", Content: []byte(content), Actor: actor})
+}
+
+func (r *Repository) applyPurchasableMaterialToMaterialInput(ctx context.Context, input MaterialInput, purchasableIDNo string) (MaterialInput, error) {
+	purchasableIDNo = strings.TrimSpace(purchasableIDNo)
+	if purchasableIDNo == "" {
+		return normalizeMaterial(input), nil
+	}
+	tenant := TenantFromContext(ctx)
+	var purchasable PurchasableMaterial
+	err := r.db.QueryRow(ctx, `
+SELECT pm.id::text, pm.id_no, pm.sequence_no, COALESCE(pm.procurement_project_id::text, ''),
+       COALESCE(pp.name, pm.procurement_project), COALESCE(pp.expires_at::text, ''),
+       COALESCE(pp.status, 'active'),
+       pm.project_name, pm.brand, pm.spec, pm.unit, pm.purchase_price::float8,
+       pm.remark, pm.technical_requirement, pm.min_spec, pm.status, pm.created_at, pm.updated_at
+FROM purchasable_materials pm
+LEFT JOIN procurement_projects pp ON pp.id = pm.procurement_project_id
+WHERE pm.status = 'active'
+  AND pm.id_no = $1
+  AND ($2::boolean OR pm.tenant_id = $3::uuid)
+LIMIT 1
+`, purchasableIDNo, tenant.AllTenants, tenant.TenantID).Scan(
+		&purchasable.ID, &purchasable.IDNo, &purchasable.SequenceNo, &purchasable.ProcurementProjectID, &purchasable.ProcurementProject, &purchasable.ProcurementExpiresAt, &purchasable.ProcurementProjectStatus, &purchasable.ProjectName, &purchasable.Brand, &purchasable.Spec, &purchasable.Unit, &purchasable.PurchasePrice, &purchasable.Remark, &purchasable.TechnicalRequirement, &purchasable.MinSpec, &purchasable.Status, &purchasable.CreatedAt, &purchasable.UpdatedAt,
+	)
+	if err != nil {
+		return input, err
+	}
+	if input.Name == "" {
+		input.Name = purchasable.ProjectName
+	}
+	input.Spec = firstNonEmpty(input.Spec, purchasable.Spec)
+	input.Unit = firstNonEmpty(input.Unit, purchasable.Unit)
+	if input.UnitPrice <= 0 {
+		input.UnitPrice = purchasable.PurchasePrice
+	}
+	input.Supplier = firstNonEmpty(input.Supplier, purchasable.Brand)
+	input.Manufacturer = firstNonEmpty(input.Manufacturer, purchasable.Brand)
+	input.CatalogNo = firstNonEmpty(input.CatalogNo, purchasable.IDNo)
+	input.TenderContract = firstNonEmpty(input.TenderContract, purchasable.ProcurementProject)
+	input.ContractNo = firstNonEmpty(input.ContractNo, purchasable.ProcurementProject)
+	input.Remark = firstNonEmpty(input.Remark, purchasable.Remark)
+	return normalizeMaterial(input), nil
 }
 
 func (r *Repository) materialIDByImportKey(ctx context.Context, input MaterialInput) (string, error) {
@@ -5028,7 +5794,7 @@ func (r *Repository) MaterialRequests(ctx context.Context) ([]MaterialRequest, e
 	rows, err := r.db.Query(ctx, `
 SELECT mr.id::text, mr.material_id::text, m.name, COALESCE(mr.requester_id::text, ''),
        mr.requester, mr.group_name, COALESCE(mr.batch_id::text, ''), COALESCE(mb.batch_no, ''),
-       COALESCE(mr.unit_id::text, ''), COALESCE(mu.unit_code, ''),
+       COALESCE(mr.unit_id::text, ''), COALESCE(mu.unit_code, ''), COALESCE(mu.location, mb.location, ''),
        mr.quantity, mr.purpose, mr.status, mr.created_at
 FROM material_requests mr
 JOIN materials m ON m.id = mr.material_id
@@ -5059,7 +5825,7 @@ func (r *Repository) MaterialRequest(ctx context.Context, id string) (MaterialRe
 	return scanMaterialRequest(r.db.QueryRow(ctx, `
 SELECT mr.id::text, mr.material_id::text, m.name, COALESCE(mr.requester_id::text, ''),
        mr.requester, mr.group_name, COALESCE(mr.batch_id::text, ''), COALESCE(mb.batch_no, ''),
-       COALESCE(mr.unit_id::text, ''), COALESCE(mu.unit_code, ''),
+       COALESCE(mr.unit_id::text, ''), COALESCE(mu.unit_code, ''), COALESCE(mu.location, mb.location, ''),
        mr.quantity, mr.purpose, mr.status, mr.created_at
 FROM material_requests mr
 JOIN materials m ON m.id = mr.material_id
@@ -5072,7 +5838,7 @@ WHERE mr.id = $1
 
 func scanMaterialRequest(row scanner) (MaterialRequest, error) {
 	var item MaterialRequest
-	err := row.Scan(&item.ID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.BatchID, &item.BatchNo, &item.UnitID, &item.UnitCode, &item.Quantity, &item.Purpose, &item.Status, &item.CreatedAt)
+	err := row.Scan(&item.ID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.BatchID, &item.BatchNo, &item.UnitID, &item.UnitCode, &item.Location, &item.Quantity, &item.Purpose, &item.Status, &item.CreatedAt)
 	return item, err
 }
 
@@ -5150,6 +5916,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 	var batchNo string
 	unitID := ""
 	var unitCode string
+	var unitLocation string
 	if input.UnitID == "" {
 		return MaterialRequest{}, errors.New("material request requires unit")
 	}
@@ -5157,14 +5924,14 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 		return MaterialRequest{}, errors.New("material unit request quantity must be 1")
 	}
 	if err := r.db.QueryRow(ctx, `
-SELECT mu.id::text, COALESCE(mu.batch_id::text, ''), COALESCE(mb.batch_no, ''), mu.unit_code, COALESCE(mu.expires_at::text, '')
+SELECT mu.id::text, COALESCE(mu.batch_id::text, ''), COALESCE(mb.batch_no, ''), mu.unit_code, COALESCE(mu.location, mb.location, ''), COALESCE(mu.expires_at::text, '')
 FROM material_units mu
 LEFT JOIN material_batches mb ON mb.id = mu.batch_id
 WHERE mu.id = $1
   AND mu.material_id = $2
   AND mu.tenant_id = $3::uuid
   AND mu.status = 'available'
-`, input.UnitID, input.MaterialID, materialTenantID).Scan(&unitID, &batchID, &batchNo, &unitCode, &expiresAt); err != nil {
+`, input.UnitID, input.MaterialID, materialTenantID).Scan(&unitID, &batchID, &batchNo, &unitCode, &unitLocation, &expiresAt); err != nil {
 		return MaterialRequest{}, err
 	}
 	availableStock = 1
@@ -5219,15 +5986,15 @@ INSERT INTO material_requests (tenant_id, material_id, requester_id, requester, 
 VALUES ($7, $1, $2, $3, $4, $5, $6, $8, CASE WHEN $8 = 'approved' THEN now() ELSE NULL END, NULLIF($9, '')::uuid, NULLIF($11, '')::uuid)
 RETURNING id::text, material_id::text, (SELECT name FROM materials WHERE id = material_id),
           COALESCE(requester_id::text, ''), requester, group_name, COALESCE(batch_id::text, ''), $10,
-          COALESCE(unit_id::text, ''), $12,
+          COALESCE(unit_id::text, ''), $12, $13,
           quantity, purpose, status, created_at
-`, input.MaterialID, requesterID, requesterName, groupName, input.Quantity, input.Purpose, materialTenantID, requestStatus, batchID, batchNo, unitID, unitCode).Scan(
-		&item.ID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.BatchID, &item.BatchNo, &item.UnitID, &item.UnitCode, &item.Quantity, &item.Purpose, &item.Status, &item.CreatedAt,
+`, input.MaterialID, requesterID, requesterName, groupName, input.Quantity, input.Purpose, materialTenantID, requestStatus, batchID, batchNo, unitID, unitCode, unitLocation).Scan(
+		&item.ID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.BatchID, &item.BatchNo, &item.UnitID, &item.UnitCode, &item.Location, &item.Quantity, &item.Purpose, &item.Status, &item.CreatedAt,
 	)
 	if err != nil {
 		return MaterialRequest{}, err
 	}
-	notification, err := r.createNotificationTx(ctx, tx, materialTenantID, item.RequesterID, item.GroupName, "", "group", materialRequestNotificationTitle(item.Status), fmt.Sprintf("%s 提交了 %s x%d 的申领。", item.Requester, item.MaterialName, item.Quantity), "info")
+	notification, err := r.createNotificationTx(ctx, tx, materialTenantID, item.RequesterID, item.GroupName, "", "group", "耗材申领状态更新", fmt.Sprintf("%s 提交了 %s x%d 的申领，当前状态：%s。", item.Requester, item.MaterialName, item.Quantity, materialWorkflowStatusLabel(item.Status)), "info")
 	if err != nil {
 		return MaterialRequest{}, err
 	}
@@ -5259,13 +6026,6 @@ type queryRower interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-func materialRequestNotificationTitle(status string) string {
-	if status == "approved" {
-		return "耗材申领已自动通过"
-	}
-	return "耗材申领待审批"
-}
-
 func (r *Repository) OutboundMaterialRequest(ctx context.Context, id string, actor string) (MaterialRequest, error) {
 	tenant := TenantFromContext(ctx)
 	actor = strings.TrimSpace(actor)
@@ -5288,13 +6048,14 @@ SELECT mr.id::text, mr.tenant_id::text, mr.material_id::text, m.name, COALESCE(m
        mr.requester, mr.group_name, COALESCE(mr.batch_id::text, ''),
        COALESCE((SELECT batch_no FROM material_batches WHERE id = mr.batch_id), ''),
        COALESCE(mr.unit_id::text, ''), COALESCE((SELECT unit_code FROM material_units WHERE id = mr.unit_id), ''),
+       COALESCE((SELECT location FROM material_units WHERE id = mr.unit_id), (SELECT location FROM material_batches WHERE id = mr.batch_id), ''),
        mr.quantity, mr.purpose, mr.status, mr.created_at
 FROM material_requests mr
 JOIN materials m ON m.id = mr.material_id
 WHERE mr.id = $1 AND mr.status = 'approved'
   AND ($2::boolean OR mr.tenant_id = $3::uuid)
 FOR UPDATE OF mr, m
-`, id, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &itemTenantID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.BatchID, &item.BatchNo, &item.UnitID, &item.UnitCode, &item.Quantity, &item.Purpose, &item.Status, &item.CreatedAt)
+`, id, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &itemTenantID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.BatchID, &item.BatchNo, &item.UnitID, &item.UnitCode, &item.Location, &item.Quantity, &item.Purpose, &item.Status, &item.CreatedAt)
 	if err != nil {
 		return MaterialRequest{}, err
 	}
@@ -5304,11 +6065,11 @@ FOR UPDATE OF mr, m
 		return MaterialRequest{}, errors.New("material request missing unit")
 	}
 	if err := tx.QueryRow(ctx, `
-SELECT COALESCE(batch_id::text, ''), unit_code
+SELECT COALESCE(batch_id::text, ''), unit_code, COALESCE(location, '')
 FROM material_units
 WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'reserved'
 FOR UPDATE
-`, item.UnitID, item.MaterialID, itemTenantID).Scan(&item.BatchID, &item.UnitCode); err != nil {
+`, item.UnitID, item.MaterialID, itemTenantID).Scan(&item.BatchID, &item.UnitCode, &item.Location); err != nil {
 		return MaterialRequest{}, err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -5350,14 +6111,14 @@ SET status = 'outbound'
 WHERE mr.id = $1 AND mr.tenant_id = $2::uuid
 RETURNING mr.id::text, mr.material_id::text, (SELECT name FROM materials WHERE id = mr.material_id),
           COALESCE(mr.requester_id::text, ''), mr.requester, mr.group_name, COALESCE(mr.batch_id::text, ''), $3,
-          COALESCE(mr.unit_id::text, ''), $4,
+          COALESCE(mr.unit_id::text, ''), $4, $5,
           mr.quantity, mr.purpose, mr.status, mr.created_at
-`, id, itemTenantID, item.BatchNo, item.UnitCode).Scan(&item.ID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.BatchID, &item.BatchNo, &item.UnitID, &item.UnitCode, &item.Quantity, &item.Purpose, &item.Status, &item.CreatedAt)
+`, id, itemTenantID, item.BatchNo, item.UnitCode, item.Location).Scan(&item.ID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.BatchID, &item.BatchNo, &item.UnitID, &item.UnitCode, &item.Location, &item.Quantity, &item.Purpose, &item.Status, &item.CreatedAt)
 	if err != nil {
 		return MaterialRequest{}, err
 	}
 	if item.RequesterID != "" {
-		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材已出库", fmt.Sprintf("%s x%d 已完成出库。", item.MaterialName, item.Quantity), "success")
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申领状态更新", fmt.Sprintf("%s x%d 的申领状态已更新为%s，储存位置：%s。", item.MaterialName, item.Quantity, materialWorkflowStatusLabel(item.Status), firstNonEmpty(item.Location, "未登记")), "success")
 		if err != nil {
 			return MaterialRequest{}, err
 		}
@@ -5397,8 +6158,9 @@ RETURNING mr.id::text, mr.tenant_id::text, mr.material_id::text, (SELECT name FR
           COALESCE(mr.requester_id::text, ''), mr.requester, mr.group_name, COALESCE(mr.batch_id::text, ''),
           COALESCE((SELECT batch_no FROM material_batches WHERE id = mr.batch_id), ''),
           COALESCE(mr.unit_id::text, ''), COALESCE((SELECT unit_code FROM material_units WHERE id = mr.unit_id), ''),
+          COALESCE((SELECT location FROM material_units WHERE id = mr.unit_id), (SELECT location FROM material_batches WHERE id = mr.batch_id), ''),
           mr.quantity, mr.purpose, mr.status, mr.created_at
-`, id, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &itemTenantID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.BatchID, &item.BatchNo, &item.UnitID, &item.UnitCode, &item.Quantity, &item.Purpose, &item.Status, &item.CreatedAt)
+`, id, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &itemTenantID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.BatchID, &item.BatchNo, &item.UnitID, &item.UnitCode, &item.Location, &item.Quantity, &item.Purpose, &item.Status, &item.CreatedAt)
 	if err != nil {
 		return MaterialRequest{}, err
 	}
@@ -5418,7 +6180,7 @@ WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'reserv
 		}
 	}
 	if item.RequesterID != "" {
-		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申领已取消", fmt.Sprintf("%s x%d 的申领已取消。", item.MaterialName, item.Quantity), "info")
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申领状态更新", fmt.Sprintf("%s x%d 的申领状态已更新为%s。", item.MaterialName, item.Quantity, materialWorkflowStatusLabel(item.Status)), notificationLevelForStatus(item.Status))
 		if err != nil {
 			return MaterialRequest{}, err
 		}
@@ -5435,16 +6197,14 @@ WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'reserv
 
 func (r *Repository) MaterialPurchases(ctx context.Context) ([]MaterialPurchase, error) {
 	tenant := TenantFromContext(ctx)
-	rows, err := r.db.Query(ctx, `
-SELECT mp.id::text, mp.material_id::text, m.name, COALESCE(mp.requester_id::text, ''),
-       mp.requester, mp.group_name, mp.quantity, mp.estimated_unit_price::float8,
-       mp.supplier, mp.reason, mp.status, mp.created_at
+	rows, err := r.db.Query(ctx, fmt.Sprintf(`
+SELECT %s
 FROM material_purchases mp
-JOIN materials m ON m.id = mp.material_id
+LEFT JOIN materials m ON m.id = mp.material_id
 WHERE ($1::boolean OR mp.tenant_id = $2::uuid)
 ORDER BY mp.created_at DESC
 LIMIT 100
-`, tenant.AllTenants, tenant.TenantID)
+`, materialPurchaseSelectColumns()), tenant.AllTenants, tenant.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -5463,15 +6223,13 @@ LIMIT 100
 
 func (r *Repository) MaterialPurchase(ctx context.Context, id string) (MaterialPurchase, error) {
 	tenant := TenantFromContext(ctx)
-	return scanMaterialPurchase(r.db.QueryRow(ctx, `
-SELECT mp.id::text, mp.material_id::text, m.name, COALESCE(mp.requester_id::text, ''),
-       mp.requester, mp.group_name, mp.quantity, mp.estimated_unit_price::float8,
-       mp.supplier, mp.reason, mp.status, mp.created_at
+	return scanMaterialPurchase(r.db.QueryRow(ctx, fmt.Sprintf(`
+SELECT %s
 FROM material_purchases mp
-JOIN materials m ON m.id = mp.material_id
+LEFT JOIN materials m ON m.id = mp.material_id
 WHERE mp.id = $1
   AND ($2::boolean OR mp.tenant_id = $3::uuid)
-`, id, tenant.AllTenants, tenant.TenantID))
+`, materialPurchaseSelectColumns()), id, tenant.AllTenants, tenant.TenantID))
 }
 
 func scanMaterialPurchase(row scanner) (MaterialPurchase, error) {
@@ -5480,6 +6238,17 @@ func scanMaterialPurchase(row scanner) (MaterialPurchase, error) {
 		&item.ID,
 		&item.MaterialID,
 		&item.MaterialName,
+		&item.PurchasableMaterialID,
+		&item.PurchaseIDNo,
+		&item.PurchaseSequenceNo,
+		&item.PurchaseProjectName,
+		&item.PurchaseItemName,
+		&item.PurchaseBrand,
+		&item.PurchaseSpec,
+		&item.PurchaseUnit,
+		&item.PurchaseRemark,
+		&item.PurchaseTechnicalRequirement,
+		&item.PurchaseMinSpec,
 		&item.RequesterID,
 		&item.Requester,
 		&item.GroupName,
@@ -5493,9 +6262,36 @@ func scanMaterialPurchase(row scanner) (MaterialPurchase, error) {
 	return item, err
 }
 
+func materialPurchaseSelectColumns() string {
+	return `mp.id::text,
+       COALESCE(mp.material_id::text, ''),
+       COALESCE(NULLIF(mp.purchase_item_name, ''), NULLIF(mp.purchase_project_name, ''), m.name, ''),
+       COALESCE(mp.purchasable_material_id::text, ''),
+       mp.purchase_id_no,
+       mp.purchase_sequence_no,
+       COALESCE(NULLIF(mp.purchase_project_name, ''), m.name, ''),
+       COALESCE(NULLIF(mp.purchase_item_name, ''), NULLIF(mp.purchase_project_name, ''), m.name, ''),
+       COALESCE(NULLIF(mp.purchase_brand, ''), m.manufacturer, ''),
+       COALESCE(NULLIF(mp.purchase_spec, ''), m.spec, ''),
+       COALESCE(NULLIF(mp.purchase_unit, ''), m.unit, ''),
+       mp.purchase_remark,
+       mp.purchase_technical_requirement,
+       mp.purchase_min_spec,
+       COALESCE(mp.requester_id::text, ''),
+       mp.requester,
+       mp.group_name,
+       mp.quantity,
+       mp.estimated_unit_price::float8,
+       mp.supplier,
+       mp.reason,
+       mp.status,
+       mp.created_at`
+}
+
 func (r *Repository) CreateMaterialPurchase(ctx context.Context, input MaterialPurchaseInput) (MaterialPurchase, error) {
 	tenant := TenantFromContext(ctx)
 	input.MaterialID = strings.TrimSpace(input.MaterialID)
+	input.PurchasableMaterialID = strings.TrimSpace(input.PurchasableMaterialID)
 	input.RequesterID = strings.TrimSpace(input.RequesterID)
 	input.Requester = strings.TrimSpace(input.Requester)
 	input.Supplier = strings.TrimSpace(input.Supplier)
@@ -5506,7 +6302,7 @@ func (r *Repository) CreateMaterialPurchase(ctx context.Context, input MaterialP
 	if input.Requester == "" {
 		input.Requester = strings.TrimSpace(tenant.Actor.Name)
 	}
-	if input.MaterialID == "" || input.Quantity <= 0 || input.EstimatedUnitPrice < 0 || input.Reason == "" || (input.RequesterID == "" && input.Requester == "") {
+	if (input.MaterialID == "" && input.PurchasableMaterialID == "") || input.Quantity <= 0 || input.EstimatedUnitPrice < 0 || input.Reason == "" || (input.RequesterID == "" && input.Requester == "") {
 		return MaterialPurchase{}, errors.New("invalid material purchase input")
 	}
 
@@ -5538,25 +6334,69 @@ LIMIT 1
 		return MaterialPurchase{}, errors.New("email must be verified before purchasing materials")
 	}
 
+	var item MaterialPurchase
 	var materialTenantID, materialStatus, defaultSupplier string
-	if err := r.db.QueryRow(ctx, `
-SELECT tenant_id::text, status, supplier
+	if input.PurchasableMaterialID != "" {
+		var purchasable PurchasableMaterial
+		err := r.db.QueryRow(ctx, `
+SELECT pm.id::text, pm.id_no, pm.sequence_no, COALESCE(pm.procurement_project_id::text, ''),
+       COALESCE(pp.name, pm.procurement_project), COALESCE(pp.expires_at::text, ''),
+       COALESCE(pp.status, 'active'),
+       pm.project_name, pm.brand, pm.spec, pm.unit, pm.purchase_price::float8,
+       pm.remark, pm.technical_requirement, pm.min_spec, pm.status, pm.created_at, pm.updated_at
+FROM purchasable_materials pm
+LEFT JOIN procurement_projects pp ON pp.id = pm.procurement_project_id
+WHERE pm.id = $1
+  AND pm.status = 'active'
+  AND (pp.id IS NULL OR pp.status = 'active')
+  AND (pp.expires_at IS NULL OR pp.expires_at >= CURRENT_DATE)
+  AND ($2::boolean OR pm.tenant_id = $3::uuid)
+`, input.PurchasableMaterialID, tenant.AllTenants, tenant.TenantID).Scan(
+			&purchasable.ID, &purchasable.IDNo, &purchasable.SequenceNo, &purchasable.ProcurementProjectID, &purchasable.ProcurementProject, &purchasable.ProcurementExpiresAt, &purchasable.ProcurementProjectStatus, &purchasable.ProjectName, &purchasable.Brand, &purchasable.Spec, &purchasable.Unit, &purchasable.PurchasePrice, &purchasable.Remark, &purchasable.TechnicalRequirement, &purchasable.MinSpec, &purchasable.Status, &purchasable.CreatedAt, &purchasable.UpdatedAt,
+		)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return MaterialPurchase{}, errors.New("material procurement project expired or unavailable")
+			}
+			return MaterialPurchase{}, err
+		}
+		materialTenantID = tenant.TenantID
+		if requesterTenantID != materialTenantID {
+			return MaterialPurchase{}, errors.New("requester and purchasable material must belong to the same tenant")
+		}
+		item.PurchasableMaterialID = purchasable.ID
+		item.PurchaseIDNo = purchasable.IDNo
+		item.PurchaseSequenceNo = purchasable.SequenceNo
+		item.PurchaseProjectName = firstNonEmpty(purchasable.ProcurementProject, purchasable.ProjectName)
+		item.PurchaseItemName = purchasable.ProjectName
+		item.PurchaseBrand = purchasable.Brand
+		item.PurchaseSpec = purchasable.Spec
+		item.PurchaseUnit = purchasable.Unit
+		item.PurchaseRemark = purchasable.Remark
+		item.PurchaseTechnicalRequirement = purchasable.TechnicalRequirement
+		item.PurchaseMinSpec = purchasable.MinSpec
+		if input.EstimatedUnitPrice == 0 {
+			input.EstimatedUnitPrice = purchasable.PurchasePrice
+		}
+	} else {
+		if err := r.db.QueryRow(ctx, `
+SELECT tenant_id::text, status, supplier, name, name, manufacturer, spec, unit
 FROM materials
 WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
-`, input.MaterialID, tenant.AllTenants, tenant.TenantID).Scan(&materialTenantID, &materialStatus, &defaultSupplier); err != nil {
-		return MaterialPurchase{}, err
-	}
-	if requesterTenantID != materialTenantID {
-		return MaterialPurchase{}, errors.New("requester and material must belong to the same tenant")
-	}
-	if materialStatus == "disabled" {
-		return MaterialPurchase{}, errors.New("material is disabled")
-	}
-	if input.Supplier == "" {
-		input.Supplier = defaultSupplier
+`, input.MaterialID, tenant.AllTenants, tenant.TenantID).Scan(&materialTenantID, &materialStatus, &defaultSupplier, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit); err != nil {
+			return MaterialPurchase{}, err
+		}
+		if requesterTenantID != materialTenantID {
+			return MaterialPurchase{}, errors.New("requester and material must belong to the same tenant")
+		}
+		if materialStatus == "disabled" {
+			return MaterialPurchase{}, errors.New("material is disabled")
+		}
+		if input.Supplier == "" {
+			input.Supplier = defaultSupplier
+		}
 	}
 
-	var item MaterialPurchase
 	notifications := make([]Notification, 0, 1)
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -5565,19 +6405,27 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
-	err = tx.QueryRow(ctx, `
-INSERT INTO material_purchases (tenant_id, material_id, requester_id, requester, group_name, quantity, estimated_unit_price, supplier, reason)
-VALUES ($9, $1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id::text, material_id::text, (SELECT name FROM materials WHERE id = material_id),
-          COALESCE(requester_id::text, ''), requester, group_name, quantity, estimated_unit_price::float8,
-          supplier, reason, status, created_at
-`, input.MaterialID, requesterID, requesterName, groupName, input.Quantity, input.EstimatedUnitPrice, input.Supplier, input.Reason, materialTenantID).Scan(
-		&item.ID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt,
+	err = tx.QueryRow(ctx, fmt.Sprintf(`
+WITH inserted AS (
+  INSERT INTO material_purchases (
+    tenant_id, material_id, purchasable_material_id,
+    purchase_id_no, purchase_sequence_no, purchase_project_name, purchase_item_name, purchase_brand, purchase_spec, purchase_unit,
+    purchase_remark, purchase_technical_requirement, purchase_min_spec,
+    requester_id, requester, group_name, quantity, estimated_unit_price, supplier, reason
+  )
+  VALUES ($1, NULLIF($2, '')::uuid, NULLIF($3, '')::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+  RETURNING *
+)
+SELECT %s
+FROM inserted mp
+LEFT JOIN materials m ON m.id = mp.material_id
+`, materialPurchaseSelectColumns()), materialTenantID, input.MaterialID, item.PurchasableMaterialID, item.PurchaseIDNo, item.PurchaseSequenceNo, item.PurchaseProjectName, item.PurchaseItemName, item.PurchaseBrand, item.PurchaseSpec, item.PurchaseUnit, item.PurchaseRemark, item.PurchaseTechnicalRequirement, item.PurchaseMinSpec, requesterID, requesterName, groupName, input.Quantity, input.EstimatedUnitPrice, input.Supplier, input.Reason).Scan(
+		&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt,
 	)
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
-	notification, err := r.createNotificationTx(ctx, tx, materialTenantID, item.RequesterID, item.GroupName, "", "group", "耗材申购待审批", fmt.Sprintf("%s 提交了 %s x%d 的申购。", item.Requester, item.MaterialName, item.Quantity), "info")
+	notification, err := r.createNotificationTx(ctx, tx, materialTenantID, item.RequesterID, item.GroupName, "", "group", "耗材申购状态更新", fmt.Sprintf("%s 提交了 %s x%d 的申购，当前状态：%s。", item.Requester, item.MaterialName, item.Quantity, materialWorkflowStatusLabel(item.Status)), "info")
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
@@ -5607,16 +6455,19 @@ func (r *Repository) MarkMaterialPurchaseOrdered(ctx context.Context, id string,
 	}
 	var item MaterialPurchase
 	var itemTenantID string
-	err := r.db.QueryRow(ctx, `
-UPDATE material_purchases mp
-SET status = 'ordered', ordered_at = now()
-WHERE mp.id = $1 AND mp.status = 'approved'
-  AND ($2::boolean OR mp.tenant_id = $3::uuid)
-RETURNING mp.id::text, mp.tenant_id::text, mp.material_id::text, (SELECT name FROM materials WHERE id = mp.material_id),
-          COALESCE(mp.requester_id::text, ''), mp.requester, mp.group_name, mp.quantity, mp.estimated_unit_price::float8,
-          mp.supplier, mp.reason, mp.status, mp.created_at
-`, id, tenant.AllTenants, tenant.TenantID).Scan(
-		&item.ID, &itemTenantID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt,
+	err := r.db.QueryRow(ctx, fmt.Sprintf(`
+WITH updated AS (
+  UPDATE material_purchases
+  SET status = 'ordered', ordered_at = now()
+  WHERE id = $1 AND status = 'approved'
+    AND ($2::boolean OR tenant_id = $3::uuid)
+  RETURNING *
+)
+SELECT %s, mp.tenant_id::text
+FROM updated mp
+LEFT JOIN materials m ON m.id = mp.material_id
+`, materialPurchaseSelectColumns()), id, tenant.AllTenants, tenant.TenantID).Scan(
+		&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &itemTenantID,
 	)
 	if err != nil {
 		return MaterialPurchase{}, err
@@ -5628,7 +6479,7 @@ VALUES ($1, $2, $3, 'order', '已下单')
 		return MaterialPurchase{}, err
 	}
 	if item.RequesterID != "" {
-		if _, err := r.createNotification(ctx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申购已下单", fmt.Sprintf("%s x%d 已进入采购下单。", item.MaterialName, item.Quantity), "info"); err != nil {
+		if _, err := r.createNotification(ctx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申购状态更新", fmt.Sprintf("%s x%d 的申购状态已更新为%s。", item.MaterialName, item.Quantity, materialWorkflowStatusLabel(item.Status)), notificationLevelForStatus(item.Status)); err != nil {
 			return MaterialPurchase{}, err
 		}
 	}
@@ -5668,6 +6519,9 @@ FOR UPDATE
 `, id, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &itemTenantID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &productType, &defaultBatchNo, &defaultExpiresAt, &defaultLocation)
 	if err != nil {
 		return MaterialPurchase{}, err
+	}
+	if item.MaterialID == "" {
+		return MaterialPurchase{}, errors.New("material purchase has no inventory material to receive")
 	}
 	oldStatus := item.Status
 	if productType == "standard" {
@@ -5732,14 +6586,17 @@ VALUES ($1, $2, $3, $4, $5)
 `, itemTenantID, item.MaterialID, item.ID, item.Quantity, materialBatchReason("申购到货入库", defaultBatchNo)); err != nil {
 		return MaterialPurchase{}, err
 	}
-	err = tx.QueryRow(ctx, `
-UPDATE material_purchases mp
-SET status = 'received', received_at = now()
-WHERE mp.id = $1 AND mp.tenant_id = $2::uuid
-RETURNING mp.id::text, mp.material_id::text, (SELECT name FROM materials WHERE id = mp.material_id),
-          COALESCE(mp.requester_id::text, ''), mp.requester, mp.group_name, mp.quantity, mp.estimated_unit_price::float8,
-          mp.supplier, mp.reason, mp.status, mp.created_at
-`, id, itemTenantID).Scan(&item.ID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt)
+	err = tx.QueryRow(ctx, fmt.Sprintf(`
+WITH updated AS (
+  UPDATE material_purchases
+  SET status = 'received', received_at = now()
+  WHERE id = $1 AND tenant_id = $2::uuid
+  RETURNING *
+)
+SELECT %s
+FROM updated mp
+LEFT JOIN materials m ON m.id = mp.material_id
+`, materialPurchaseSelectColumns()), id, itemTenantID).Scan(&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt)
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
@@ -5750,7 +6607,7 @@ VALUES ($1, $2, $3, 'receive', '到货入库')
 		return MaterialPurchase{}, err
 	}
 	if item.RequesterID != "" {
-		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申购已到货", fmt.Sprintf("%s x%d 已到货入库。", item.MaterialName, item.Quantity), "success")
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申购状态更新", fmt.Sprintf("%s x%d 的申购状态已更新为%s。", item.MaterialName, item.Quantity, materialWorkflowStatusLabel(item.Status)), notificationLevelForStatus(item.Status))
 		if err != nil {
 			return MaterialPurchase{}, err
 		}
@@ -5773,16 +6630,19 @@ func (r *Repository) CancelMaterialPurchase(ctx context.Context, id string, acto
 	}
 	var item MaterialPurchase
 	var itemTenantID string
-	err := r.db.QueryRow(ctx, `
-UPDATE material_purchases mp
-SET status = 'cancelled'
-WHERE mp.id = $1 AND mp.status IN ('pending', 'approved', 'ordered')
-  AND ($2::boolean OR mp.tenant_id = $3::uuid)
-RETURNING mp.id::text, mp.tenant_id::text, mp.material_id::text, (SELECT name FROM materials WHERE id = mp.material_id),
-          COALESCE(mp.requester_id::text, ''), mp.requester, mp.group_name, mp.quantity, mp.estimated_unit_price::float8,
-          mp.supplier, mp.reason, mp.status, mp.created_at
-`, id, tenant.AllTenants, tenant.TenantID).Scan(
-		&item.ID, &itemTenantID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt,
+	err := r.db.QueryRow(ctx, fmt.Sprintf(`
+WITH updated AS (
+  UPDATE material_purchases
+  SET status = 'cancelled'
+  WHERE id = $1 AND status IN ('pending', 'approved', 'ordered')
+    AND ($2::boolean OR tenant_id = $3::uuid)
+  RETURNING *
+)
+SELECT %s, mp.tenant_id::text
+FROM updated mp
+LEFT JOIN materials m ON m.id = mp.material_id
+`, materialPurchaseSelectColumns()), id, tenant.AllTenants, tenant.TenantID).Scan(
+		&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &itemTenantID,
 	)
 	if err != nil {
 		return MaterialPurchase{}, err
@@ -5794,7 +6654,7 @@ VALUES ($1, $2, $3, 'cancel', '已取消')
 		return MaterialPurchase{}, err
 	}
 	if item.RequesterID != "" {
-		if _, err := r.createNotification(ctx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申购已取消", fmt.Sprintf("%s x%d 的申购已取消。", item.MaterialName, item.Quantity), "info"); err != nil {
+		if _, err := r.createNotification(ctx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申购状态更新", fmt.Sprintf("%s x%d 的申购状态已更新为%s。", item.MaterialName, item.Quantity, materialWorkflowStatusLabel(item.Status)), notificationLevelForStatus(item.Status)); err != nil {
 			return MaterialPurchase{}, err
 		}
 	}
@@ -5975,7 +6835,7 @@ RETURNING id::text, material_id::text, (SELECT name FROM materials WHERE id = ma
 	if err != nil {
 		return MaterialDamage{}, err
 	}
-	notification, err := r.createNotificationTx(ctx, tx, materialTenantID, item.ReporterID, item.GroupName, "", "group", "损毁登记待审核", fmt.Sprintf("%s 登记了 %s 编号 %s 的损毁。", item.Reporter, item.MaterialName, item.UnitCode), "warning")
+	notification, err := r.createNotificationTx(ctx, tx, materialTenantID, item.ReporterID, item.GroupName, "", "group", "损毁登记状态更新", fmt.Sprintf("%s 登记了 %s 编号 %s 的损毁，当前状态：%s。", item.Reporter, item.MaterialName, item.UnitCode, materialWorkflowStatusLabel(item.Status)), "warning")
 	if err != nil {
 		return MaterialDamage{}, err
 	}
@@ -6048,13 +6908,7 @@ WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'reserv
 		}
 	}
 	if item.ReporterID != "" {
-		title := "损毁登记已拒绝"
-		level := "warning"
-		if status == "approved" {
-			title = "损毁登记已通过"
-			level = "success"
-		}
-		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.ReporterID, item.GroupName, "", "personal", title, fmt.Sprintf("%s 编号 %s 的损毁登记状态已更新为 %s。", item.MaterialName, item.UnitCode, item.Status), level)
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.ReporterID, item.GroupName, "", "personal", "损毁登记状态更新", fmt.Sprintf("%s 编号 %s 的损毁登记状态已更新为%s。", item.MaterialName, item.UnitCode, materialWorkflowStatusLabel(item.Status)), notificationLevelForStatus(item.Status))
 		if err != nil {
 			return MaterialDamage{}, err
 		}
@@ -6142,7 +6996,7 @@ RETURNING mdr.id::text, mdr.material_id::text, (SELECT name FROM materials WHERE
 		return MaterialDamage{}, err
 	}
 	if item.ReporterID != "" {
-		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.ReporterID, item.GroupName, "", "personal", "损毁已处理", fmt.Sprintf("%s 编号 %s 已完成损毁扣减。", item.MaterialName, item.UnitCode), "success")
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.ReporterID, item.GroupName, "", "personal", "损毁登记状态更新", fmt.Sprintf("%s 编号 %s 的损毁登记状态已更新为%s。", item.MaterialName, item.UnitCode, materialWorkflowStatusLabel(item.Status)), notificationLevelForStatus(item.Status))
 		if err != nil {
 			return MaterialDamage{}, err
 		}
@@ -6873,8 +7727,9 @@ RETURNING mr.id::text, mr.tenant_id::text, mr.material_id::text, (SELECT name FR
           COALESCE(mr.requester_id::text, ''), mr.requester, mr.group_name, COALESCE(mr.batch_id::text, ''),
           COALESCE((SELECT batch_no FROM material_batches WHERE id = mr.batch_id), ''),
           COALESCE(mr.unit_id::text, ''), COALESCE((SELECT unit_code FROM material_units WHERE id = mr.unit_id), ''),
+          COALESCE((SELECT location FROM material_units WHERE id = mr.unit_id), (SELECT location FROM material_batches WHERE id = mr.batch_id), ''),
           mr.quantity, mr.purpose, mr.status, mr.created_at
-`, id, status, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &itemTenantID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.BatchID, &item.BatchNo, &item.UnitID, &item.UnitCode, &item.Quantity, &item.Purpose, &item.Status, &item.CreatedAt)
+`, id, status, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &itemTenantID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.BatchID, &item.BatchNo, &item.UnitID, &item.UnitCode, &item.Location, &item.Quantity, &item.Purpose, &item.Status, &item.CreatedAt)
 	if err != nil {
 		return MaterialRequest{}, err
 	}
@@ -6903,14 +7758,12 @@ WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'reserv
 			return MaterialRequest{}, err
 		}
 	}
-	title := "耗材申领已拒绝"
-	level := "warning"
-	if status == "approved" {
-		title = "耗材申领已通过"
-		level = "success"
-	}
 	if item.RequesterID != "" {
-		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", title, fmt.Sprintf("%s x%d 的申领状态已更新为 %s。", item.MaterialName, item.Quantity, item.Status), level)
+		locationText := ""
+		if status == "approved" {
+			locationText = fmt.Sprintf("，储存位置：%s", firstNonEmpty(item.Location, "未登记"))
+		}
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申领状态更新", fmt.Sprintf("%s x%d 的申领状态已更新为%s%s。", item.MaterialName, item.Quantity, materialWorkflowStatusLabel(item.Status), locationText), notificationLevelForStatus(item.Status))
 		if err != nil {
 			return MaterialRequest{}, err
 		}
@@ -6945,15 +7798,18 @@ func (r *Repository) updateMaterialPurchaseStatus(ctx context.Context, id string
 	}()
 	notifications := make([]Notification, 0, 1)
 	var itemTenantID string
-	err = tx.QueryRow(ctx, `
-UPDATE material_purchases mp
-SET status = $2, decided_at = now()
-WHERE mp.id = $1 AND mp.status = 'pending'
-  AND ($3::boolean OR mp.tenant_id = $4::uuid)
-RETURNING mp.id::text, mp.tenant_id::text, mp.material_id::text, (SELECT name FROM materials WHERE id = mp.material_id),
-          COALESCE(mp.requester_id::text, ''), mp.requester, mp.group_name, mp.quantity, mp.estimated_unit_price::float8,
-          mp.supplier, mp.reason, mp.status, mp.created_at
-`, id, status, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &itemTenantID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt)
+	err = tx.QueryRow(ctx, fmt.Sprintf(`
+WITH updated AS (
+  UPDATE material_purchases
+  SET status = $2, decided_at = now()
+  WHERE id = $1 AND status = 'pending'
+    AND ($3::boolean OR tenant_id = $4::uuid)
+  RETURNING *
+)
+SELECT %s, mp.tenant_id::text
+FROM updated mp
+LEFT JOIN materials m ON m.id = mp.material_id
+`, materialPurchaseSelectColumns()), id, status, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &itemTenantID)
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
@@ -6967,14 +7823,8 @@ VALUES ($1, $2, $3, $4, $5)
 `, itemTenantID, item.ID, actor, action, comment); err != nil {
 		return MaterialPurchase{}, err
 	}
-	title := "耗材申购已拒绝"
-	level := "warning"
-	if status == "approved" {
-		title = "耗材申购已通过"
-		level = "success"
-	}
 	if item.RequesterID != "" {
-		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", title, fmt.Sprintf("%s x%d 的申购状态已更新为 %s。", item.MaterialName, item.Quantity, item.Status), level)
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申购状态更新", fmt.Sprintf("%s x%d 的申购状态已更新为%s。", item.MaterialName, item.Quantity, materialWorkflowStatusLabel(item.Status)), notificationLevelForStatus(item.Status))
 		if err != nil {
 			return MaterialPurchase{}, err
 		}
@@ -7021,30 +7871,31 @@ RETURNING updated_by, updated_at
 	return meta, err
 }
 
-func (r *Repository) readSMTPSettings(ctx context.Context) (smtpSettingsValue, settingMeta, error) {
+func (r *Repository) readGraphMailSettings(ctx context.Context) (graphMailSettingsValue, settingMeta, error) {
 	var raw []byte
 	var meta settingMeta
-	err := r.db.QueryRow(ctx, `SELECT value, updated_by, updated_at FROM site_settings WHERE setting_key = $1`, smtpSettingsKey).Scan(&raw, &meta.updatedBy, &meta.updatedAt)
+	err := r.db.QueryRow(ctx, `SELECT value, updated_by, updated_at FROM site_settings WHERE setting_key = $1`, graphMailSettingsKey).Scan(&raw, &meta.updatedBy, &meta.updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return smtpSettingsValue{Port: 587, FromName: "实验室运营系统"}, settingMeta{updatedBy: "system"}, nil
+		return graphMailSettingsValue{}, settingMeta{updatedBy: "system"}, nil
 	}
 	if err != nil {
-		return smtpSettingsValue{}, settingMeta{}, err
+		return graphMailSettingsValue{}, settingMeta{}, err
 	}
-	var value smtpSettingsValue
+	var value graphMailSettingsValue
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &value); err != nil {
-			return smtpSettingsValue{}, settingMeta{}, err
+			return graphMailSettingsValue{}, settingMeta{}, err
 		}
 	}
-	if value.Port <= 0 {
-		value.Port = 587
-	}
+	value.TenantID = strings.TrimSpace(value.TenantID)
+	value.ClientID = strings.TrimSpace(value.ClientID)
+	value.ClientSecret = strings.TrimSpace(value.ClientSecret)
+	value.SenderUserPrincipalName = strings.TrimSpace(value.SenderUserPrincipalName)
 	return value, meta, nil
 }
 
-func (r *Repository) smtpSettingsValue(ctx context.Context) (smtpSettingsValue, error) {
-	value, _, err := r.readSMTPSettings(ctx)
+func (r *Repository) graphMailSettingsValue(ctx context.Context) (graphMailSettingsValue, error) {
+	value, _, err := r.readGraphMailSettings(ctx)
 	return value, err
 }
 
@@ -7122,17 +7973,16 @@ func (r *Repository) dingTalkSettingsValue(ctx context.Context) (dingTalkSetting
 	return value, err
 }
 
-func smtpSettingsFromValue(value smtpSettingsValue, updatedBy string, updatedAt time.Time) SMTPSettings {
-	return SMTPSettings{
-		Enabled:            value.Enabled,
-		Host:               value.Host,
-		Port:               value.Port,
-		Username:           value.Username,
-		FromEmail:          value.FromEmail,
-		FromName:           value.FromName,
-		PasswordConfigured: value.Password != "",
-		UpdatedBy:          updatedBy,
-		UpdatedAt:          updatedAt,
+func graphMailSettingsFromValue(value graphMailSettingsValue, updatedBy string, updatedAt time.Time) GraphMailSettings {
+	return GraphMailSettings{
+		Enabled:                 value.Enabled,
+		TenantID:                value.TenantID,
+		ClientID:                value.ClientID,
+		SenderUserPrincipalName: value.SenderUserPrincipalName,
+		SaveToSentItems:         value.SaveToSentItems,
+		ClientSecretConfigured:  value.ClientSecret != "",
+		UpdatedBy:               updatedBy,
+		UpdatedAt:               updatedAt,
 	}
 }
 
@@ -7156,13 +8006,10 @@ func dingTalkSettingsFromValue(value dingTalkSettingsValue, updatedBy string, up
 		SchemaVersion:          2,
 		Enabled:                value.Enabled,
 		ClientID:               value.ClientID,
-		ClientSecret:           value.ClientSecret,
 		CorpID:                 value.CorpID,
 		RobotCode:              value.RobotCode,
 		OAuthRedirectURI:       value.OAuthRedirectURI,
 		EventCallbackURL:       value.EventCallbackURL,
-		EventAesKey:            value.EventAesKey,
-		EventToken:             value.EventToken,
 		ClientSecretConfigured: value.ClientSecret != "",
 		EventAesKeyConfigured:  value.EventAesKey != "",
 		EventTokenConfigured:   value.EventToken != "",
@@ -7545,27 +8392,127 @@ func (r *Repository) emitAccessControlRevoke(ctx context.Context, reservation Re
 	})
 }
 
-func sendSMTPMail(settings smtpSettingsValue, to string, subject string, body string) error {
-	from := settings.FromEmail
-	fromLabel := from
-	if settings.FromName != "" {
-		fromLabel = fmt.Sprintf("%s <%s>", settings.FromName, settings.FromEmail)
+func graphMailReady(settings graphMailSettingsValue) bool {
+	return settings.Enabled &&
+		strings.TrimSpace(settings.TenantID) != "" &&
+		strings.TrimSpace(settings.ClientID) != "" &&
+		strings.TrimSpace(settings.ClientSecret) != "" &&
+		strings.TrimSpace(settings.SenderUserPrincipalName) != ""
+}
+
+func (r *Repository) sendGraphMail(ctx context.Context, settings graphMailSettingsValue, to string, subject string, body string) error {
+	if !graphMailReady(settings) {
+		return errors.New("graph mail is not configured")
 	}
-	message := strings.Join([]string{
-		"From: " + fromLabel,
-		"To: " + to,
-		"Subject: " + subject,
-		"MIME-Version: 1.0",
-		"Content-Type: text/plain; charset=UTF-8",
-		"",
-		body,
-	}, "\r\n")
-	address := settings.Host + ":" + strconv.Itoa(settings.Port)
-	var auth smtp.Auth
-	if settings.Username != "" || settings.Password != "" {
-		auth = smtp.PlainAuth("", settings.Username, settings.Password, settings.Host)
+	if _, err := mail.ParseAddress(to); err != nil {
+		return errors.New("graph mail recipient email is invalid")
 	}
-	return smtp.SendMail(address, auth, from, []string{to}, []byte(message))
+	token, err := r.graphMailAccessToken(ctx, settings)
+	if err != nil {
+		return err
+	}
+	sender := strings.TrimSpace(settings.SenderUserPrincipalName)
+	payload := map[string]any{
+		"message": map[string]any{
+			"subject": subject,
+			"body": map[string]string{
+				"contentType": "Text",
+				"content":     body,
+			},
+			"toRecipients": []map[string]any{
+				{
+					"emailAddress": map[string]string{
+						"address": strings.TrimSpace(to),
+					},
+				},
+			},
+		},
+		"saveToSentItems": settings.SaveToSentItems,
+	}
+	endpoint := "https://graph.microsoft.com/v1.0/users/" + url.PathEscape(sender) + "/sendMail"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(mustJSONBytes(payload)))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := r.httpClient().Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return fmt.Errorf("graph mail send failed: %s", graphHTTPErrorMessage(response.StatusCode, raw))
+	}
+	return nil
+}
+
+func (r *Repository) graphMailAccessToken(ctx context.Context, settings graphMailSettingsValue) (string, error) {
+	if settings.TenantID == "" || settings.ClientID == "" || settings.ClientSecret == "" {
+		return "", errors.New("graph mail tenant, client, and secret are required")
+	}
+	form := url.Values{}
+	form.Set("client_id", settings.ClientID)
+	form.Set("client_secret", settings.ClientSecret)
+	form.Set("grant_type", "client_credentials")
+	form.Set("scope", "https://graph.microsoft.com/.default")
+	endpoint := "https://login.microsoftonline.com/" + url.PathEscape(settings.TenantID) + "/oauth2/v2.0/token"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := r.httpClient().Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return "", fmt.Errorf("graph mail token failed: %s", graphHTTPErrorMessage(response.StatusCode, raw))
+	}
+	var tokenResponse struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(raw, &tokenResponse); err != nil {
+		return "", err
+	}
+	if tokenResponse.AccessToken == "" {
+		return "", errors.New("graph token response missing access_token")
+	}
+	return tokenResponse.AccessToken, nil
+}
+
+func graphHTTPErrorMessage(statusCode int, raw []byte) string {
+	body := strings.TrimSpace(string(raw))
+	var payload struct {
+		Error any `json:"error"`
+	}
+	if body != "" && json.Unmarshal(raw, &payload) == nil {
+		switch value := payload.Error.(type) {
+		case string:
+			if strings.TrimSpace(value) != "" {
+				return fmt.Sprintf("status=%d message=%s", statusCode, strings.TrimSpace(value))
+			}
+		case map[string]any:
+			code, _ := value["code"].(string)
+			message, _ := value["message"].(string)
+			if strings.TrimSpace(code) != "" || strings.TrimSpace(message) != "" {
+				return fmt.Sprintf("status=%d code=%s message=%s", statusCode, strings.TrimSpace(code), strings.TrimSpace(message))
+			}
+		}
+	}
+	if body == "" {
+		return fmt.Sprintf("status=%d", statusCode)
+	}
+	if len(body) > 500 {
+		body = body[:500] + "..."
+	}
+	return fmt.Sprintf("status=%d body=%s", statusCode, body)
 }
 
 func dingTalkOAuthURL(settings dingTalkSettingsValue, state string) string {
@@ -7577,6 +8524,19 @@ func dingTalkOAuthURL(settings dingTalkSettingsValue, state string) string {
 	query.Set("state", state)
 	query.Set("prompt", "consent")
 	return "https://login.dingtalk.com/oauth2/auth?" + query.Encode()
+}
+
+func generatedDingTalkEventCallbackURL(baseURI string, tenantCode string) string {
+	baseURI = strings.TrimSpace(baseURI)
+	tenantCode = strings.TrimSpace(tenantCode)
+	if baseURI == "" || tenantCode == "" {
+		return ""
+	}
+	parsed, err := url.Parse(baseURI)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host + "/api/dingtalk/events/" + url.PathEscape(tenantCode)
 }
 
 func (r *Repository) saveDingTalkOAuthState(ctx context.Context, tenantID string, userID string, state string) error {
@@ -7607,6 +8567,87 @@ func (r *Repository) consumeDingTalkOAuthState(ctx context.Context, tenantID str
 
 func dingTalkOAuthStateKey(tenantID string, userID string, state string) string {
 	return "lirs:dingtalk:oauth:" + tenantID + ":" + userID + ":" + state
+}
+
+func (r *Repository) saveDingTalkWebLoginState(ctx context.Context, tenantID string, state string) error {
+	if r.redis == nil {
+		return errors.New("redis is not configured")
+	}
+	return r.redis.Set(ctx, dingTalkWebLoginStateKey(state), strings.TrimSpace(tenantID), 10*time.Minute).Err()
+}
+
+func (r *Repository) consumeDingTalkWebLoginState(ctx context.Context, state string) (string, error) {
+	state = strings.TrimSpace(state)
+	if state == "" {
+		return "", errors.New("dingtalk login state is required")
+	}
+	if r.redis == nil {
+		return "", errors.New("redis is not configured")
+	}
+	key := dingTalkWebLoginStateKey(state)
+	value, err := r.redis.GetDel(ctx, key).Result()
+	if errors.Is(err, redis.Nil) || value == "" {
+		return "", errors.New("dingtalk login state is invalid or expired")
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(value), nil
+}
+
+func dingTalkWebLoginStateKey(state string) string {
+	return "lirs:dingtalk:web_login:" + tokenHash(state)
+}
+
+type dingTalkLoginBindingIntentValue struct {
+	TenantID     string           `json:"tenantId"`
+	TenantCode   string           `json:"tenantCode"`
+	Identity     dingTalkIdentity `json:"identity"`
+	DingTalkName string           `json:"dingTalkName"`
+}
+
+func (r *Repository) saveDingTalkLoginBindingIntent(ctx context.Context, value dingTalkLoginBindingIntentValue) (string, error) {
+	if r.redis == nil {
+		return "", errors.New("redis is not configured")
+	}
+	token, err := randomToken()
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	if err := r.redis.Set(ctx, dingTalkLoginBindingIntentKey(token), raw, 10*time.Minute).Err(); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func (r *Repository) consumeDingTalkLoginBindingIntent(ctx context.Context, token string) (dingTalkLoginBindingIntentValue, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return dingTalkLoginBindingIntentValue{}, errors.New("dingtalk binding token is required")
+	}
+	if r.redis == nil {
+		return dingTalkLoginBindingIntentValue{}, errors.New("redis is not configured")
+	}
+	raw, err := r.redis.GetDel(ctx, dingTalkLoginBindingIntentKey(token)).Bytes()
+	if errors.Is(err, redis.Nil) || len(raw) == 0 {
+		return dingTalkLoginBindingIntentValue{}, errors.New("dingtalk binding token is invalid or expired")
+	}
+	if err != nil {
+		return dingTalkLoginBindingIntentValue{}, err
+	}
+	var value dingTalkLoginBindingIntentValue
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return dingTalkLoginBindingIntentValue{}, err
+	}
+	return value, nil
+}
+
+func dingTalkLoginBindingIntentKey(token string) string {
+	return "lirs:dingtalk:login_binding:" + tokenHash(token)
 }
 
 func (r *Repository) dingTalkIdentityByAuthCode(ctx context.Context, settings dingTalkSettingsValue, code string) (dingTalkIdentity, error) {
@@ -7793,6 +8834,11 @@ func (r *Repository) pushDingTalkNotification(ctx context.Context, tenantID stri
 	})
 }
 
+func (r *Repository) pushNotificationTargets(ctx context.Context, item Notification) {
+	r.pushDingTalkNotificationTargets(ctx, item)
+	r.pushGraphMailNotificationTargets(ctx, item)
+}
+
 func (r *Repository) pushDingTalkNotificationTargets(ctx context.Context, item Notification) {
 	tenantID := strings.TrimSpace(item.TenantID)
 	if tenantID == "" {
@@ -7806,7 +8852,7 @@ func (r *Repository) pushDingTalkNotificationTargets(ctx context.Context, item N
 	if err != nil || !settings.Enabled || settings.ClientID == "" || settings.ClientSecret == "" || settings.RobotCode == "" {
 		return
 	}
-	userIDs, err := r.notificationTargetUserIDs(ctx, item)
+	userIDs, err := r.notificationTargetUserIDs(ctx, item, true, false)
 	if err != nil {
 		slog.Warn("load dingtalk notification targets", "notificationId", item.ID, "error", err)
 		return
@@ -7816,7 +8862,30 @@ func (r *Repository) pushDingTalkNotificationTargets(ctx context.Context, item N
 	}
 }
 
-func (r *Repository) notificationTargetUserIDs(ctx context.Context, item Notification) ([]string, error) {
+func (r *Repository) pushGraphMailNotificationTargets(ctx context.Context, item Notification) {
+	tenantID := strings.TrimSpace(item.TenantID)
+	if tenantID == "" {
+		tenantID = defaultTenantID
+	}
+	item.TenantID = tenantID
+	ctx = WithTenantContext(ctx, TenantContext{TenantID: tenantID})
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	settings, err := r.graphMailSettingsValue(ctx)
+	if err != nil || !graphMailReady(settings) {
+		return
+	}
+	userIDs, err := r.notificationTargetUserIDs(ctx, item, false, true)
+	if err != nil {
+		slog.Warn("load graph mail notification targets", "notificationId", item.ID, "error", err)
+		return
+	}
+	for _, userID := range userIDs {
+		r.pushGraphMailNotificationToUser(ctx, settings, tenantID, userID, item.Title, item.Body)
+	}
+}
+
+func (r *Repository) notificationTargetUserIDs(ctx context.Context, item Notification, requireDingTalk bool, requireEmail bool) ([]string, error) {
 	scope := strings.TrimSpace(item.TargetScope)
 	if scope == "" {
 		scope = "global"
@@ -7829,31 +8898,32 @@ func (r *Repository) notificationTargetUserIDs(ctx context.Context, item Notific
 		}
 		return []string{userID}, nil
 	case "group":
-		return r.notificationUsersByFilter(ctx, item.TenantID, "group", item.GroupName)
+		return r.notificationUsersByFilter(ctx, item.TenantID, "group", item.GroupName, requireDingTalk, requireEmail)
 	case "department":
-		return r.notificationUsersByFilter(ctx, item.TenantID, "department", item.Department)
+		return r.notificationUsersByFilter(ctx, item.TenantID, "department", item.Department, requireDingTalk, requireEmail)
 	case "global":
-		return r.notificationUsersByFilter(ctx, item.TenantID, "global", "")
+		return r.notificationUsersByFilter(ctx, item.TenantID, "global", "", requireDingTalk, requireEmail)
 	default:
 		return nil, nil
 	}
 }
 
-func (r *Repository) notificationUsersByFilter(ctx context.Context, tenantID string, kind string, value string) ([]string, error) {
+func (r *Repository) notificationUsersByFilter(ctx context.Context, tenantID string, kind string, value string, requireDingTalk bool, requireEmail bool) ([]string, error) {
 	value = strings.TrimSpace(value)
 	rows, err := r.db.Query(ctx, `
 SELECT id::text
 FROM users
 WHERE tenant_id = $1::uuid
   AND status = 'active'
-  AND dingtalk_user_id <> ''
+  AND ($4::boolean = false OR dingtalk_user_id <> '')
+  AND ($5::boolean = false OR email <> '')
   AND (
       $2 = 'global'
       OR ($2 = 'group' AND group_name = $3)
       OR ($2 = 'department' AND department = $3)
   )
 ORDER BY created_at DESC
-`, tenantID, kind, value)
+`, tenantID, kind, value, requireDingTalk, requireEmail)
 	if err != nil {
 		return nil, err
 	}
@@ -7900,6 +8970,72 @@ WHERE id = $1
 	}
 	if err := r.sendDingTalkWorkNotification(ctx, settings, dingTalkUserID, title, body); err != nil {
 		slog.Warn("send dingtalk notification", "userId", userID, "dingtalkUserId", dingTalkUserID, "error", err)
+	}
+}
+
+func (r *Repository) dingTalkBoundUser(ctx context.Context, tenantID string, userID string) (User, error) {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		tenantID = defaultTenantID
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return User{}, errors.New("dingtalk test user is required")
+	}
+	var user User
+	err := r.db.QueryRow(ctx, `
+SELECT u.id::text, u.tenant_id::text, t.name, t.code, u.name, u.email, u.phone, u.department, u.group_name, u.role, u.status, u.email_verified,
+       u.dingtalk_user_id, u.dingtalk_union_id, u.dingtalk_name, u.dingtalk_user_id <> '',
+       t.finance_enabled, u.auth_epoch
+FROM users u
+JOIN tenants t ON t.id = u.tenant_id
+WHERE u.id = $1
+  AND u.tenant_id = $2::uuid
+  AND u.status = 'active'
+`, userID, tenantID).Scan(&user.ID, &user.TenantID, &user.TenantName, &user.TenantCode, &user.Name, &user.Email, &user.Phone, &user.Department, &user.GroupName, &user.Role, &user.Status, &user.EmailVerified, &user.DingTalkUserID, &user.DingTalkUnionID, &user.DingTalkName, &user.DingTalkBound, &user.FinanceEnabled, &user.AuthEpoch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, errors.New("dingtalk test user is not active in current tenant")
+	}
+	if err != nil {
+		return User{}, err
+	}
+	if strings.TrimSpace(user.DingTalkUserID) == "" {
+		return User{}, errors.New("dingtalk test user is not bound")
+	}
+	return user, nil
+}
+
+func (r *Repository) pushGraphMailNotificationToUser(ctx context.Context, settings graphMailSettingsValue, tenantID string, userID string, title string, body string) {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		tenantID = defaultTenantID
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return
+	}
+	var email string
+	err := r.db.QueryRow(ctx, `
+SELECT email
+FROM users
+WHERE id = $1
+  AND tenant_id = $2::uuid
+  AND status = 'active'
+  AND email <> ''
+`, userID, tenantID).Scan(&email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return
+	}
+	if err != nil {
+		slog.Warn("load graph mail notification email", "userId", userID, "error", err)
+		return
+	}
+	subject := strings.TrimSpace(title)
+	if subject == "" {
+		subject = "实验室运营系统通知"
+	}
+	if err := r.sendGraphMail(ctx, settings, email, subject, body); err != nil {
+		slog.Warn("send graph mail notification", "userId", userID, "email", email, "error", err)
 	}
 }
 
@@ -8145,11 +9281,7 @@ func (r *Repository) dingTalkPost(ctx context.Context, endpoint string, payload 
 }
 
 func (r *Repository) dingTalkDo(request *http.Request, target any) error {
-	client := r.http
-	if client == nil {
-		client = http.DefaultClient
-	}
-	response, err := client.Do(request)
+	response, err := r.httpClient().Do(request)
 	if err != nil {
 		return err
 	}
@@ -8264,6 +9396,7 @@ func normalizeFooterSettingsValue(value footerSettingsValue) footerSettingsValue
 	if value.BrandTagline == "" {
 		value.BrandTagline = defaults.BrandTagline
 	}
+	value.BaseURL = strings.TrimRight(strings.TrimSpace(value.BaseURL), "/")
 	value.Description = strings.TrimSpace(value.Description)
 	if value.Description == "" {
 		value.Description = defaults.Description
@@ -8303,6 +9436,7 @@ func footerSettingsFromValue(key string, value footerSettingsValue, updatedBy st
 		Key:          key,
 		BrandName:    value.BrandName,
 		BrandTagline: value.BrandTagline,
+		BaseURL:      value.BaseURL,
 		Description:  value.Description,
 		Sections:     value.Sections,
 		Copyright:    value.Copyright,
@@ -8315,10 +9449,28 @@ func footerSettingsValueFromSettings(settings FooterSettings) footerSettingsValu
 	return footerSettingsValue{
 		BrandName:    settings.BrandName,
 		BrandTagline: settings.BrandTagline,
+		BaseURL:      settings.BaseURL,
 		Description:  settings.Description,
 		Sections:     settings.Sections,
 		Copyright:    settings.Copyright,
 	}
+}
+
+func validSiteBaseURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" && parsed.RawQuery == "" && parsed.Fragment == ""
+}
+
+func materialDetailURL(baseURL string, materialID string) string {
+	materialID = strings.TrimSpace(materialID)
+	if materialID == "" {
+		return ""
+	}
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return "/materials/" + url.PathEscape(materialID)
+	}
+	return baseURL + "/materials/" + url.PathEscape(materialID)
 }
 
 func copyEntryValue(key string, label string, value string, scope string, description string) CopyEntry {
@@ -8399,6 +9551,7 @@ func normalizeMaterial(input MaterialInput) MaterialInput {
 	input.StorageSlot = strings.TrimSpace(input.StorageSlot)
 	input.TenderContract = strings.TrimSpace(input.TenderContract)
 	input.ContractNo = strings.TrimSpace(input.ContractNo)
+	input.Remark = strings.TrimSpace(input.Remark)
 	input.CertificateURL = strings.TrimSpace(input.CertificateURL)
 	input.StandardCertificateURL = strings.TrimSpace(input.StandardCertificateURL)
 	input.AttachmentURL = strings.TrimSpace(input.AttachmentURL)
@@ -8406,6 +9559,11 @@ func normalizeMaterial(input MaterialInput) MaterialInput {
 	input.ExpiresAt = strings.TrimSpace(input.ExpiresAt)
 	input.OpenedAt = strings.TrimSpace(input.OpenedAt)
 	input.Status = strings.TrimSpace(input.Status)
+	if input.ProductType == "standard" {
+		input.ParentMaterialID = ""
+		input.DilutionFactor = ""
+		input.PreparationMethod = ""
+	}
 	return input
 }
 
@@ -8455,7 +9613,13 @@ func materialCSVBool(index map[string]int, row []string, names ...string) bool {
 	return value == "是" || value == "true" || value == "1" || value == "yes"
 }
 
+func materialLooksLikeHeader(row []string) bool {
+	joined := strings.Join(row, "|")
+	return strings.Contains(joined, "资源名称") && strings.Contains(joined, "一级目录") && strings.Contains(joined, "规格") && strings.Contains(joined, "单位")
+}
+
 func materialInputFromCSVRow(index map[string]int, row []string) MaterialInput {
+	procurementProject := materialCSVValue(index, row, "采购项目名称及编号", "采购项目", "采购项目及编号", "招标合同", "tenderContract")
 	return normalizeMaterial(MaterialInput{
 		Name:                   materialCSVValue(index, row, "资源名称", "产品名称", "名称", "name"),
 		ProductType:            productTypeCode(materialCSVValue(index, row, "资源类型", "产品分类", "产品类型", "类型", "productType")),
@@ -8481,8 +9645,9 @@ func materialInputFromCSVRow(index map[string]int, row []string) MaterialInput {
 		StorageCabinet:         materialCSVValue(index, row, "柜/架", "storageCabinet"),
 		StorageLayer:           materialCSVValue(index, row, "层/盒", "storageLayer"),
 		StorageSlot:            materialCSVValue(index, row, "孔位", "storageSlot"),
-		TenderContract:         materialCSVValue(index, row, "招标合同", "tenderContract"),
-		ContractNo:             materialCSVValue(index, row, "合同序号", "contractNo"),
+		TenderContract:         procurementProject,
+		ContractNo:             firstNonEmpty(materialCSVValue(index, row, "合同序号", "contractNo"), procurementProject),
+		Remark:                 materialCSVValue(index, row, "备注", "remark"),
 		CertificateURL:         materialCSVValue(index, row, "资源证书地址", "产品证书地址", "certificateUrl"),
 		StandardCertificateURL: materialCSVValue(index, row, "标准证书地址", "standardCertificateUrl"),
 		AttachmentURL:          materialCSVValue(index, row, "附件地址", "attachmentUrl"),
@@ -8496,6 +9661,305 @@ func materialInputFromCSVRow(index map[string]int, row []string) MaterialInput {
 		NearExpiryDays:         materialCSVInt(index, row, 30, "临期预警天数", "nearExpiryDays"),
 		Status:                 materialStatusCode(materialCSVValue(index, row, "状态", "status")),
 	})
+}
+
+func normalizePurchasableMaterial(input PurchasableMaterialInput) PurchasableMaterialInput {
+	input.IDNo = strings.TrimSpace(input.IDNo)
+	input.SequenceNo = strings.TrimSpace(input.SequenceNo)
+	input.ProcurementProjectID = strings.TrimSpace(input.ProcurementProjectID)
+	input.ProcurementProject = strings.TrimSpace(input.ProcurementProject)
+	input.ProjectName = strings.TrimSpace(input.ProjectName)
+	input.Brand = strings.TrimSpace(input.Brand)
+	input.Spec = strings.TrimSpace(input.Spec)
+	input.Unit = strings.TrimSpace(input.Unit)
+	input.Remark = strings.TrimSpace(input.Remark)
+	input.TechnicalRequirement = strings.TrimSpace(input.TechnicalRequirement)
+	input.MinSpec = strings.TrimSpace(input.MinSpec)
+	input.Actor = strings.TrimSpace(input.Actor)
+	return input
+}
+
+func normalizeProcurementProject(input ProcurementProjectInput) ProcurementProjectInput {
+	input.Name = strings.TrimSpace(input.Name)
+	input.ExpiresAt = strings.TrimSpace(input.ExpiresAt)
+	input.Status = strings.TrimSpace(input.Status)
+	input.Actor = strings.TrimSpace(input.Actor)
+	return input
+}
+
+func (r *Repository) ensureProcurementProject(ctx context.Context, tx pgx.Tx, projectID string, name string) (string, string, error) {
+	tenant := TenantFromContext(ctx)
+	projectID = strings.TrimSpace(projectID)
+	name = strings.TrimSpace(name)
+	if projectID != "" {
+		var foundName string
+		query := `
+SELECT name
+FROM procurement_projects
+WHERE id = $1
+  AND status = 'active'
+  AND ($2::boolean OR tenant_id = $3::uuid)
+`
+		var err error
+		if tx != nil {
+			err = tx.QueryRow(ctx, query, projectID, tenant.AllTenants, tenant.TenantID).Scan(&foundName)
+		} else {
+			err = r.db.QueryRow(ctx, query, projectID, tenant.AllTenants, tenant.TenantID).Scan(&foundName)
+		}
+		if err != nil {
+			return "", "", err
+		}
+		return projectID, foundName, nil
+	}
+	if name == "" {
+		return "", "", nil
+	}
+	query := `
+INSERT INTO procurement_projects (tenant_id, name)
+VALUES ($1, $2)
+ON CONFLICT (tenant_id, name) DO UPDATE
+SET updated_at = procurement_projects.updated_at
+RETURNING id::text, name
+`
+	var id string
+	var foundName string
+	var err error
+	if tx != nil {
+		err = tx.QueryRow(ctx, query, tenant.TenantID, name).Scan(&id, &foundName)
+	} else {
+		err = r.db.QueryRow(ctx, query, tenant.TenantID, name).Scan(&id, &foundName)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return id, foundName, nil
+}
+
+func ensureProcurementProjectsTx(ctx context.Context, tx pgx.Tx, tenantID string, items []PurchasableMaterialInput) (map[string]string, error) {
+	names := make([]string, 0)
+	seen := map[string]struct{}{}
+	for _, item := range items {
+		name := strings.TrimSpace(item.ProcurementProject)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	ids := make(map[string]string, len(names))
+	for _, name := range names {
+		var id string
+		if err := tx.QueryRow(ctx, `
+INSERT INTO procurement_projects (tenant_id, name)
+VALUES ($1, $2)
+ON CONFLICT (tenant_id, name) DO UPDATE
+SET updated_at = procurement_projects.updated_at
+RETURNING id::text
+`, tenantID, name).Scan(&id); err != nil {
+			return nil, err
+		}
+		ids[name] = id
+	}
+	return ids, nil
+}
+
+func purchasableMaterialInputFromRow(index map[string]int, row []string, currentProject string) PurchasableMaterialInput {
+	projectName := materialCSVValue(index, row, "项目名称", "采购项目名称", "项目", "projectName")
+	brand := materialCSVValue(index, row, "品牌", "brand")
+	spec := materialCSVValue(index, row, "规格", "spec")
+	unit := materialCSVValue(index, row, "单位", "unit")
+	remark := materialCSVValue(index, row, "备注", "remark")
+	price := materialCSVFloat(index, row, 0, "采购价（元）", "采购价", "采购价格", "purchasePrice")
+	brand, spec, unit, remark, price = normalizePurchasableMaterialLooseColumns(brand, spec, unit, remark, price)
+	return normalizePurchasableMaterial(PurchasableMaterialInput{
+		IDNo:                 materialCSVValue(index, row, "ID号", "ID", "idNo"),
+		SequenceNo:           materialCSVValue(index, row, "序号", "sequenceNo"),
+		ProcurementProject:   firstNonEmpty(materialCSVValue(index, row, "采购项目名称及编号", "采购项目", "采购项目及编号", "procurementProject"), currentProject),
+		ProjectName:          projectName,
+		Brand:                brand,
+		Spec:                 spec,
+		Unit:                 unit,
+		PurchasePrice:        price,
+		Remark:               remark,
+		TechnicalRequirement: materialCSVValue(index, row, "技术要求", "technicalRequirement"),
+		MinSpec:              materialCSVValue(index, row, "最小规格", "minSpec"),
+	})
+}
+
+func normalizePurchasableMaterialLooseColumns(brand string, spec string, unit string, remark string, price float64) (string, string, string, string, float64) {
+	if brand == "" {
+		brand = "未标明"
+	}
+	if spec == "" {
+		spec = "未标明"
+	}
+	if unit == "" && purchasableMaterialLooksLikePrice(spec) {
+		unit = "未标明"
+	}
+	if unit == "" && remark != "" && purchasableMaterialLooksLikePrice(remark) {
+		unit = spec
+		spec = "未标明"
+		price = parsePurchasableMaterialPrice(remark, price)
+		remark = ""
+	}
+	if unit == "" {
+		unit = "未标明"
+	}
+	return brand, spec, unit, remark, price
+}
+
+func purchasableMaterialLooksLikePrice(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	_, err := strconv.ParseFloat(value, 64)
+	return err == nil
+}
+
+func parsePurchasableMaterialPrice(value string, fallback float64) float64 {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func purchasableMaterialLooksLikeHeader(row []string) bool {
+	joined := strings.Join(row, "|")
+	return strings.Contains(joined, "ID号") && strings.Contains(joined, "序号") && strings.Contains(joined, "项目名称")
+}
+
+func purchasableMaterialProjectHeader(row []string) string {
+	visible := make([]string, 0, len(row))
+	for _, cell := range row {
+		cell = strings.TrimSpace(cell)
+		if cell != "" {
+			visible = append(visible, cell)
+		}
+	}
+	if len(visible) != 1 {
+		return ""
+	}
+	value := visible[0]
+	if strings.Contains(value, "编号：") || strings.Contains(value, "采购项目") {
+		return value
+	}
+	return ""
+}
+
+func purchasableMaterialLooksLikeNoteRow(row []string) bool {
+	visible := make([]string, 0, len(row))
+	for _, cell := range row {
+		cell = strings.TrimSpace(cell)
+		if cell != "" {
+			visible = append(visible, cell)
+		}
+	}
+	if len(visible) == 0 {
+		return true
+	}
+	if len(visible) <= 2 {
+		joined := strings.Join(visible, "")
+		return strings.Contains(joined, "注") || strings.Contains(joined, "说明") || strings.Contains(joined, "以下空白") || strings.Contains(joined, "合计")
+	}
+	return false
+}
+
+func purchasableMaterialRowPreview(row []string) string {
+	visible := make([]string, 0, len(row))
+	for _, cell := range row {
+		cell = strings.TrimSpace(cell)
+		if cell != "" {
+			visible = append(visible, cell)
+		}
+	}
+	if len(visible) == 0 {
+		return "空行"
+	}
+	preview := strings.Join(limitStrings(visible, 6), " | ")
+	if len(preview) > 160 {
+		return preview[:160] + "..."
+	}
+	return preview
+}
+
+func rowBlank(row []string) bool {
+	for _, cell := range row {
+		if strings.TrimSpace(cell) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func purchasableMaterialImportRecords(filename string, content []byte) ([][]string, error) {
+	filename = normalizeImportFilename(filename)
+	if strings.HasSuffix(filename, ".xlsx") || looksLikeXLSX(content) {
+		workbook, err := excelize.OpenReader(bytes.NewReader(content))
+		if err != nil {
+			return nil, fmt.Errorf("无法读取 XLSX 文件：%w", err)
+		}
+		defer func() {
+			_ = workbook.Close()
+		}()
+		sheets := workbook.GetSheetList()
+		if len(sheets) == 0 {
+			return nil, errors.New("XLSX 文件没有工作表")
+		}
+		return workbook.GetRows(sheets[0])
+	}
+	if filename != "" && !strings.HasSuffix(filename, ".csv") {
+		return nil, fmt.Errorf("不支持的文件类型 %q，请上传 CSV 或 XLSX 文件", filename)
+	}
+	reader := csv.NewReader(strings.NewReader(strings.TrimPrefix(string(content), "\ufeff")))
+	reader.FieldsPerRecord = -1
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("无法读取 CSV 文件：%w", err)
+	}
+	return records, nil
+}
+
+func normalizeImportFilename(filename string) string {
+	filename = strings.TrimSpace(filename)
+	filename = strings.ReplaceAll(filename, "。", ".")
+	return strings.ToLower(filename)
+}
+
+func looksLikeXLSX(content []byte) bool {
+	return len(content) >= 4 && bytes.Equal(content[:4], []byte{'P', 'K', 0x03, 0x04})
+}
+
+func limitStrings(values []string, limit int) []string {
+	if limit <= 0 || len(values) <= limit {
+		return values
+	}
+	return values[:limit]
+}
+
+func (r *Repository) purchasableMaterialIDByIDNo(ctx context.Context, idNo string) (string, error) {
+	tenant := TenantFromContext(ctx)
+	var id string
+	err := r.db.QueryRow(ctx, `
+SELECT id::text
+FROM purchasable_materials
+WHERE id_no = $1
+  AND ($2::boolean OR tenant_id = $3::uuid)
+ORDER BY updated_at DESC
+LIMIT 1
+`, strings.TrimSpace(idNo), tenant.AllTenants, tenant.TenantID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
 }
 
 func productTypeCode(value string) string {
@@ -8821,6 +10285,61 @@ func roleName(role string) string {
 		return name
 	}
 	return role
+}
+
+func userStatusLabel(status string) string {
+	labels := map[string]string{
+		"pending_approval": "待审核",
+		"active":           "已通过",
+		"disabled":         "已停用",
+	}
+	if label, ok := labels[status]; ok {
+		return label
+	}
+	return status
+}
+
+func reservationStatusLabel(status string) string {
+	labels := map[string]string{
+		"pending":   "待审批",
+		"approved":  "已通过",
+		"rejected":  "已拒绝",
+		"cancelled": "已取消",
+		"in_use":    "使用中",
+		"completed": "已完成",
+	}
+	if label, ok := labels[status]; ok {
+		return label
+	}
+	return status
+}
+
+func materialWorkflowStatusLabel(status string) string {
+	labels := map[string]string{
+		"pending":   "待审批",
+		"approved":  "已通过",
+		"rejected":  "已拒绝",
+		"outbound":  "已出库",
+		"ordered":   "已下单",
+		"received":  "已到货",
+		"processed": "已处理",
+		"cancelled": "已取消",
+	}
+	if label, ok := labels[status]; ok {
+		return label
+	}
+	return status
+}
+
+func notificationLevelForStatus(status string) string {
+	switch status {
+	case "approved", "active", "outbound", "received", "processed", "completed":
+		return "success"
+	case "rejected", "disabled", "cancelled":
+		return "warning"
+	default:
+		return "info"
+	}
 }
 
 func isHourAligned(value time.Time) bool {

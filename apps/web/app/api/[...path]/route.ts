@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { clearBusinessDataCache } from "@/lib/business-data-cache";
 
 const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:8090";
-const proxyTimeoutMs = Number(process.env.API_PROXY_TIMEOUT_MS ?? 15000);
+const proxyTimeoutMs = Number(process.env.API_PROXY_TIMEOUT_MS ?? 60000);
 const authTokenKey = "lirs.authToken";
 
 export const dynamic = "force-dynamic";
@@ -36,12 +36,18 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
 
   const method = request.method;
   const body = ["GET", "HEAD"].includes(method) ? undefined : Buffer.from(await request.arrayBuffer());
-  const response = await fetchWithTimeout(upstreamUrl, {
-    method,
-    headers,
-    body,
-    cache: "no-store",
-  }, proxyTimeoutMs);
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(upstreamUrl, {
+      method,
+      headers,
+      body,
+      cache: "no-store",
+    }, proxyTimeoutMs);
+  } catch (error) {
+    const message = error instanceof Error && error.name === "AbortError" ? "后端接口超时，请稍后重试或联系管理员查看导入日志" : "后端接口不可用";
+    return Response.json({ error: message }, { status: 504 });
+  }
 
   const responseHeaders = new Headers(response.headers);
   responseHeaders.delete("content-encoding");
@@ -49,11 +55,22 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   if (shouldInvalidateBusinessData(method, response)) {
     clearBusinessDataCache();
   }
-  if (method === "POST" && (joinedPath === "login" || joinedPath === "dingtalk/quick-login") && response.ok) {
+  if (method === "POST" && (joinedPath === "login" || joinedPath === "dingtalk/quick-login" || joinedPath === "dingtalk/login-bind-existing") && response.ok) {
     const text = await response.text();
     const auth = JSON.parse(text) as { token?: string };
     if (auth.token) {
       responseHeaders.append("set-cookie", authCookie(auth.token, request));
+    }
+    return new Response(text, {
+      status: response.status,
+      headers: responseHeaders,
+    });
+  }
+  if (method === "POST" && joinedPath === "dingtalk/web-login" && response.ok) {
+    const text = await response.text();
+    const result = JSON.parse(text) as { auth?: { token?: string } };
+    if (result.auth?.token) {
+      responseHeaders.append("set-cookie", authCookie(result.auth.token, request));
     }
     return new Response(text, {
       status: response.status,

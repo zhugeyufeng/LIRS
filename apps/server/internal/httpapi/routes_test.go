@@ -1,11 +1,16 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -157,9 +162,68 @@ func TestMaterialStatusAndLocationLabels(t *testing.T) {
 	if got := materialStatusLabel("open_expired"); got != "开封超期" {
 		t.Fatalf("unexpected material status label: %q", got)
 	}
-	if got := materialProductTypeLabel("standard"); got != "标准品" {
+	if got := materialProductTypeLabel("standard"); got != "标准品/标准物质" {
 		t.Fatalf("unexpected product type label: %q", got)
 	}
+}
+
+func TestSaveMaterialCertificateUploadAcceptsPdf(t *testing.T) {
+	uploadRoot := t.TempDir()
+	context := materialCertificateUploadContext(t, "cert.pdf", []byte("%PDF-1.4\n证书内容"))
+
+	url, err := saveMaterialCertificateUpload(context, uploadRoot)
+	if err != nil {
+		t.Fatalf("expected pdf upload to succeed: %v", err)
+	}
+	if !strings.HasPrefix(url, "/files/material-certificates/") || !strings.HasSuffix(url, ".pdf") {
+		t.Fatalf("unexpected certificate url: %q", url)
+	}
+	content, err := os.ReadFile(filepath.Join(uploadRoot, strings.TrimPrefix(url, "/files/")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(content, []byte("%PDF-")) {
+		t.Fatalf("saved certificate should keep pdf signature, got %q", string(content))
+	}
+}
+
+func TestSaveMaterialCertificateUploadRejectsNonPdfExtension(t *testing.T) {
+	context := materialCertificateUploadContext(t, "cert.png", []byte("%PDF-1.4\n证书内容"))
+
+	if _, err := saveMaterialCertificateUpload(context, t.TempDir()); err == nil || !strings.Contains(err.Error(), "仅支持 PDF 文件") {
+		t.Fatalf("expected pdf extension error, got %v", err)
+	}
+}
+
+func TestSaveMaterialCertificateUploadRejectsInvalidPdfContent(t *testing.T) {
+	context := materialCertificateUploadContext(t, "cert.pdf", []byte("不是 PDF"))
+
+	if _, err := saveMaterialCertificateUpload(context, t.TempDir()); err == nil || !strings.Contains(err.Error(), "文件内容不是有效 PDF") {
+		t.Fatalf("expected pdf content error, got %v", err)
+	}
+}
+
+func materialCertificateUploadContext(t *testing.T, filename string, content []byte) *gin.Context {
+	t.Helper()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/uploads/material-certificates", &body)
+	context.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	return context
 }
 
 func TestMaterialBatchLabelsRemainChinese(t *testing.T) {
@@ -234,5 +298,27 @@ func TestRespondKeepsClientSafeErrors(t *testing.T) {
 	}
 	if payload["error"] != "invalid registration input" {
 		t.Fatalf("expected validation error, got %q", payload["error"])
+	}
+}
+
+func TestRespondKeepsGraphMailErrors(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/notification-channel-settings/graph-mail/test", nil)
+
+	respond(context, nil, errors.New("graph mail test send failed: graph mail token failed: status=401 code=invalid_client message=凭证无效"))
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", recorder.Code)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["error"] != "graph mail test send failed: graph mail token failed: status=401 code=invalid_client message=凭证无效" {
+		t.Fatalf("expected graph mail error, got %q", payload["error"])
 	}
 }

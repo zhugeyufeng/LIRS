@@ -2,8 +2,8 @@
 
 import { FormEvent, startTransition, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Eye, EyeOff, Pencil, Save } from "lucide-react";
-import { browserPatch, DingTalkSettings, DingTalkSettingsPayload, Tenant, User } from "@/lib/api";
+import { Pencil, Save, Send } from "lucide-react";
+import { browserPatch, browserPost, DingTalkSettings, DingTalkSettingsPayload, DingTalkTestResult, Tenant, User } from "@/lib/api";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -14,24 +14,31 @@ export function DingTalkSettingsForm({
   selectedTenant,
   settings,
   tenants,
+  users,
 }: {
   currentUser: User;
   origin: string;
   selectedTenant: Tenant;
   settings: DingTalkSettings;
   tenants: Tenant[];
+  users: User[];
 }) {
   const router = useRouter();
   const isSuperAdmin = currentUser.role === "super_admin";
   const [currentSettings, setCurrentSettings] = useState(settings);
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState(false);
+  const [testPending, setTestPending] = useState(false);
+  const boundUsers = users.filter((user) => user.dingTalkBound && user.dingTalkUserId.trim() !== "");
+  const defaultTestUserId = boundUsers.some((user) => user.id === currentUser.id) ? currentUser.id : boundUsers[0]?.id ?? "";
+  const [testUserId, setTestUserId] = useState(defaultTestUserId);
   const eventCallbackUrl = tenantEventCallbackURL(origin, selectedTenant.code || selectedTenant.id);
 
   useEffect(() => {
     setCurrentSettings(settings);
     setMessage("");
-  }, [settings, selectedTenant.id]);
+    setTestUserId(defaultTestUserId);
+  }, [settings, selectedTenant.id, defaultTestUserId]);
 
   async function submit(event: FormEvent<HTMLFormElement>, close?: () => void) {
     event.preventDefault();
@@ -65,6 +72,24 @@ export function DingTalkSettingsForm({
     }
   }
 
+  async function testPush() {
+    if (!testUserId) {
+      setMessage("请选择已绑定钉钉的测试接收人。");
+      return;
+    }
+    setTestPending(true);
+    setMessage("");
+    try {
+      const result = await browserPost<DingTalkTestResult>(tenantScopedPath("/api/notification-channel-settings/dingtalk/test", selectedTenant.id), { userId: testUserId });
+      const target = boundUsers.find((user) => user.id === testUserId);
+      setMessage(result.message || `钉钉测试推送已发送给 ${target?.name ?? "所选用户"}。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "钉钉测试推送失败");
+    } finally {
+      setTestPending(false);
+    }
+  }
+
   return (
     <div className="space-y-5">
       {isSuperAdmin ? (
@@ -87,13 +112,13 @@ export function DingTalkSettingsForm({
               <Summary label="状态" value={currentSettings.enabled ? "启用" : "停用"} />
               <Summary label="配置版本" value={`v${currentSettings.schemaVersion || 2}`} />
               <Summary label="Client ID" value={currentSettings.clientId || "未配置"} />
-              <SecretSummary configured={currentSettings.clientSecretConfigured} label="Client Secret" secret={currentSettings.clientSecret ?? ""} />
+              <SecretSummary configured={currentSettings.clientSecretConfigured} label="Client Secret" />
               <Summary label="Corp ID" value={currentSettings.corpId || "未配置"} />
               <Summary label="机器人编码" value={currentSettings.robotCode || "未配置"} />
               <Summary label="扫码绑定回调地址" value={currentSettings.oauthRedirectUri || "未配置"} />
               <Summary label="事件订阅 URL" value={currentSettings.eventCallbackUrl || eventCallbackUrl} />
-              <SecretSummary configured={currentSettings.eventAesKeyConfigured} label="事件 AES Key" secret={currentSettings.eventAesKey ?? ""} />
-              <SecretSummary configured={currentSettings.eventTokenConfigured} label="事件 Token" secret={currentSettings.eventToken ?? ""} />
+              <SecretSummary configured={currentSettings.eventAesKeyConfigured} label="事件 AES Key" />
+              <SecretSummary configured={currentSettings.eventTokenConfigured} label="事件 Token" />
               <Summary label="最近更新" value={formatUpdatedAt(currentSettings.updatedAt, currentSettings.updatedBy)} />
             </div>
           </div>
@@ -130,7 +155,11 @@ export function DingTalkSettingsForm({
                   <Field defaultValue={currentSettings.corpId} label="Corp ID" name="corpId" placeholder="ding..." />
                   <Field defaultValue={currentSettings.robotCode} label="机器人编码" name="robotCode" placeholder="钉钉企业应用机器人编码" />
                   <Field className="md:col-span-2" defaultValue={currentSettings.oauthRedirectUri} label="扫码绑定回调地址" name="oauthRedirectUri" placeholder="https://example.com/settings/dingtalk" type="url" />
-                  <Field className="md:col-span-2" defaultValue={currentSettings.eventCallbackUrl || eventCallbackUrl} label="事件订阅 URL" name="eventCallbackUrl" placeholder={eventCallbackUrl} type="url" />
+                  <label className="block space-y-2 md:col-span-2">
+                    <span className="text-sm font-medium">事件订阅 URL</span>
+                    <input className="h-10 w-full rounded-md border bg-slate-50 px-3 text-sm text-slate-600" name="eventCallbackUrl" readOnly type="url" value={eventCallbackUrl} />
+                    <FieldHint value="根据主站 URL 和机构编码自动生成，保存时由后端覆盖前端提交值。" />
+                  </label>
                   <Field
                     defaultValue=""
                     hint={`当前：${currentSettings.eventAesKeyConfigured ? "已配置，留空保持不变" : "未配置"}`}
@@ -158,6 +187,29 @@ export function DingTalkSettingsForm({
               </form>
             )}
           </AdminDialog>
+        </div>
+      </div>
+      <div className="rounded-lg border bg-white p-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0 flex-1 space-y-2">
+            <h2 className="font-bold text-slate-900">测试推送</h2>
+            <label className="block min-w-0 space-y-2">
+              <span className="text-sm font-medium">测试接收人</span>
+              <select className="h-10 w-full rounded-md border bg-white px-3 text-sm" disabled={boundUsers.length === 0} onChange={(event) => setTestUserId(event.currentTarget.value)} value={testUserId}>
+                {boundUsers.length === 0 ? <option value="">当前机构暂无已绑定钉钉的用户</option> : null}
+                {boundUsers.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.name} / {user.department || "未填部门"} / {user.dingTalkName || user.dingTalkUserId}
+                  </option>
+                ))}
+              </select>
+              <FieldHint value={boundUsers.length === 0 ? "用户需先在个人设置中绑定钉钉后才能接收测试推送。" : `将使用 ${selectedTenant.name} 的钉钉应用配置发送。`} />
+            </label>
+          </div>
+          <Button className="w-full lg:w-auto" disabled={testPending || !testUserId || !currentSettings.enabled} onClick={testPush} type="button" variant="outline">
+            <Send className="h-4 w-4" aria-hidden="true" />
+            {testPending ? "推送中" : "发送测试推送"}
+          </Button>
         </div>
       </div>
       {message ? <p className="rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700">{message}</p> : null}
@@ -214,22 +266,11 @@ function Summary({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SecretSummary({ configured, label, secret }: { configured: boolean; label: string; secret: string }) {
-  const [visible, setVisible] = useState(false);
-  const value = configured ? (visible && secret ? secret : "已配置") : "未配置";
-
+function SecretSummary({ configured, label }: { configured: boolean; label: string }) {
   return (
     <div className="min-w-0 rounded-md bg-slate-50 px-3 py-2">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-xs text-slate-500">{label}</p>
-        {configured && secret ? (
-          <button className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-900" onClick={() => setVisible((current) => !current)} type="button">
-            {visible ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
-            <span className="sr-only">{visible ? "隐藏密钥" : "显示密钥"}</span>
-          </button>
-        ) : null}
-      </div>
-      <p className="mt-1 break-all font-medium text-slate-800">{value}</p>
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className="mt-1 break-all font-medium text-slate-800">{configured ? "已配置" : "未配置"}</p>
     </div>
   );
 }

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { AlertTriangle, ClipboardList, Search, ShoppingCart, type LucideIcon } from "lucide-react";
 import { AdminShell, requireAdminSection } from "@/components/admin-shell";
 import { AppShell } from "@/components/app-shell";
-import { MaterialCategoryForm, MaterialCreateForm, MaterialDamageActions, MaterialDamageForm, StockAdjustmentForm } from "@/components/material-management-form";
+import { MaterialCategoryForm, MaterialCreateForm, MaterialDamageActions, MaterialDamageForm, MaterialImportForm, MaterialsExportButton, StockAdjustmentForm } from "@/components/material-management-form";
 import { MaterialsNav, type MaterialsNavKey } from "@/components/materials-nav";
 import {
   AdminResourceMaterialSection,
@@ -93,7 +93,7 @@ export async function MaterialResourceCatalogPage({
             </CardHeader>
             <CardContent className="grid gap-3">
               <SideLink count={requests.filter((item) => materialIds.has(item.materialId)).length} href="/materials/requests" icon={ClipboardList} label="申领记录" />
-              <SideLink count={purchases.filter((item) => materialIds.has(item.materialId)).length} href="/materials/purchases" icon={ShoppingCart} label="申购记录" />
+              <SideLink count={purchases.filter((item) => item.materialId && materialIds.has(item.materialId)).length} href="/materials/purchases" icon={ShoppingCart} label="申购记录" />
             </CardContent>
           </Card>
           <Card>
@@ -134,20 +134,21 @@ export async function AdminMaterialResourceManagementPage({
 }) {
   await requireAdminSection("materials");
   const params = (await searchParams) ?? {};
-  const [materials, requests, purchases, damages, inventoryLedger, materialCategories] = await Promise.all([
+  const [materials, requests, purchases, damages, inventoryLedger, materialCategories, purchasableMaterials] = await Promise.all([
     api.materials().catch(() => []),
     api.materialRequests().catch(() => []),
     api.materialPurchases().catch(() => []),
     api.materialDamages().catch(() => []),
     api.inventoryLedger().catch(() => []),
     api.materialCategories().catch(() => []),
+    api.purchasableMaterials().catch(() => []),
   ]);
   const section = resourceTypeSection(productType);
   const typeMaterials = materials.filter((item) => item.productType === productType);
   const visibleMaterials = filterMaterials(materials, { ...params, productType });
   const materialIds = new Set(typeMaterials.map((item) => item.id));
   const typeRequests = requests.filter((item) => materialIds.has(item.materialId));
-  const typePurchases = purchases.filter((item) => materialIds.has(item.materialId));
+  const typePurchases = purchases.filter((item) => item.materialId && materialIds.has(item.materialId));
   const typeDamages = damages.filter((item) => materialIds.has(item.materialId));
   const typeLedger = inventoryLedger.filter((item) => materialIds.has(item.materialId));
   const warningMaterials = typeMaterials.filter((item) => ["near_expiry", "expired", "open_expired", "freeze_thaw_exceeded", "low", "damaged"].includes(item.status));
@@ -170,8 +171,10 @@ export async function AdminMaterialResourceManagementPage({
           <CardHeader>
             <CardTitle>新增入库</CardTitle>
           </CardHeader>
-          <CardContent>
-            <MaterialCreateForm categories={materialCategories} productType={productType} />
+          <CardContent className="space-y-3">
+            <MaterialCreateForm categories={materialCategories} productType={productType} purchasableMaterials={purchasableMaterials} />
+            <MaterialImportForm />
+            <MaterialsExportButton filename="lirs-materials-import-template.csv" label="下载入库模板" path="/api/materials/import-template.csv" />
           </CardContent>
         </Card>
         <Card>

@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation";
 import { Mail, MessageCircle, Pencil, Save } from "lucide-react";
 import {
   browserPatch,
+  browserPost,
+  GraphMailSettings,
+  GraphMailSettingsPayload,
+  GraphMailTestResult,
   NotificationChannelSettings,
-  SMTPSettings,
-  SMTPSettingsPayload,
   WeChatSettings,
   WeChatSettingsPayload,
 } from "@/lib/api";
@@ -20,20 +22,20 @@ export function NotificationChannelSettingsForm({ settings }: { settings: Notifi
   const [currentSettings, setCurrentSettings] = useState(settings);
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState("");
+  const [testEmail, setTestEmail] = useState(settings.graphMail.senderUserPrincipalName || "");
 
-  async function saveSMTP(event: FormEvent<HTMLFormElement>, close?: () => void) {
+  async function saveGraphMail(event: FormEvent<HTMLFormElement>, close?: () => void) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const payload: SMTPSettingsPayload = {
+    const payload: GraphMailSettingsPayload = {
       enabled: form.get("enabled") === "on",
-      host: String(form.get("host") ?? ""),
-      port: Number(form.get("port") ?? 587),
-      username: String(form.get("username") ?? ""),
-      password: String(form.get("password") ?? ""),
-      fromEmail: String(form.get("fromEmail") ?? ""),
-      fromName: String(form.get("fromName") ?? ""),
+      tenantId: String(form.get("tenantId") ?? ""),
+      clientId: String(form.get("clientId") ?? ""),
+      clientSecret: String(form.get("clientSecret") ?? ""),
+      senderUserPrincipalName: String(form.get("senderUserPrincipalName") ?? ""),
+      saveToSentItems: form.get("saveToSentItems") === "on",
     };
-    await save("smtp", "/api/notification-channel-settings/smtp", payload, close);
+    await save("graphMail", "/api/notification-channel-settings/graph-mail", payload, close);
   }
 
   async function saveWeChat(event: FormEvent<HTMLFormElement>, close?: () => void) {
@@ -56,10 +58,10 @@ export function NotificationChannelSettingsForm({ settings }: { settings: Notifi
     setPending(key);
     setMessage("");
     try {
-      const updated = await browserPatch<SMTPSettings | WeChatSettings>(path, payload);
+      const updated = await browserPatch<GraphMailSettings | WeChatSettings>(path, payload);
       setCurrentSettings((current) =>
-        key === "smtp"
-          ? { ...current, smtp: updated as SMTPSettings }
+        key === "graphMail"
+          ? { ...current, graphMail: updated as GraphMailSettings }
           : { ...current, wechat: updated as WeChatSettings },
       );
       setMessage("通知通道设置已保存。");
@@ -72,6 +74,19 @@ export function NotificationChannelSettingsForm({ settings }: { settings: Notifi
     }
   }
 
+  async function testGraphMail() {
+    setPending("graph-mail-test");
+    setMessage("");
+    try {
+      const result = await browserPost<GraphMailTestResult>("/api/notification-channel-settings/graph-mail/test", { to: testEmail });
+      setMessage(result.message || "Microsoft Graph 邮件测试完成。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Microsoft Graph 邮件测试失败");
+    } finally {
+      setPending("");
+    }
+  }
+
   return (
     <div className="space-y-5">
       <div className="rounded-lg border bg-white p-4">
@@ -79,19 +94,20 @@ export function NotificationChannelSettingsForm({ settings }: { settings: Notifi
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <Mail className="h-5 w-5 shrink-0 text-primary" />
-              <h2 className="font-bold text-slate-900">SMTP 邮箱验证码</h2>
+              <h2 className="font-bold text-slate-900">Microsoft Graph 邮件通道</h2>
             </div>
             <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
-              <Summary label="状态" value={currentSettings.smtp.enabled ? "启用" : "停用"} />
-              <Summary label="服务器" value={currentSettings.smtp.host || "未配置"} />
-              <Summary label="端口" value={String(currentSettings.smtp.port || 587)} />
-              <Summary label="发件邮箱" value={currentSettings.smtp.fromEmail || "未配置"} />
-              <Summary label="密码" value={currentSettings.smtp.passwordConfigured ? "已配置" : "未配置"} />
+              <Summary label="状态" value={currentSettings.graphMail.enabled ? "启用" : "停用"} />
+              <Summary label="租户 ID" value={currentSettings.graphMail.tenantId || "未配置"} />
+              <Summary label="客户端 ID" value={currentSettings.graphMail.clientId || "未配置"} />
+              <Summary label="发件账号" value={currentSettings.graphMail.senderUserPrincipalName || "未配置"} />
+              <Summary label="客户端密钥" value={currentSettings.graphMail.clientSecretConfigured ? "已配置" : "未配置"} />
+              <Summary label="已发送邮件" value={currentSettings.graphMail.saveToSentItems ? "保存" : "不保存"} />
             </div>
           </div>
           <AdminDialog
-            description="SMTP 用于注册验证码发送，密码留空时保持原配置不变。"
-            title="修改 SMTP 邮箱验证码"
+            description="使用 Microsoft Graph API 发送注册验证码和站内通知邮件。客户端密钥留空时保持原配置不变。"
+            title="修改 Microsoft Graph 邮件通道"
             trigger={
               <Button className="w-full sm:w-auto" variant="outline">
                 <Pencil className="h-4 w-4" />
@@ -100,17 +116,29 @@ export function NotificationChannelSettingsForm({ settings }: { settings: Notifi
             }
           >
             {(close) => (
-              <form className="space-y-4" onSubmit={(event) => saveSMTP(event, close)}>
-                <SMTPFields settings={currentSettings.smtp} />
+              <form className="space-y-4" onSubmit={(event) => saveGraphMail(event, close)}>
+                <GraphMailFields settings={currentSettings.graphMail} />
                 <div className="flex justify-end">
-                  <Button disabled={pending === "smtp"} type="submit">
+                  <Button disabled={pending === "graphMail"} type="submit">
                     <Save className="h-4 w-4" />
-                    {pending === "smtp" ? "保存中" : "保存 SMTP"}
+                    {pending === "graphMail" ? "保存中" : "保存 Graph 邮件通道"}
                   </Button>
                 </div>
               </form>
             )}
           </AdminDialog>
+        </div>
+        <div className="mt-4 grid gap-3 border-t pt-4 sm:grid-cols-[1fr_auto]">
+          <label className="block space-y-2">
+            <span className="text-sm font-medium text-slate-900">测试邮箱</span>
+            <input className="h-10 w-full rounded-md border bg-white px-3 text-sm" onChange={(event) => setTestEmail(event.currentTarget.value)} placeholder="name@example.com" type="email" value={testEmail} />
+          </label>
+          <div className="flex items-end">
+            <Button className="w-full sm:w-auto" disabled={pending === "graph-mail-test" || !testEmail.trim()} onClick={testGraphMail} type="button" variant="outline">
+              <Mail className="h-4 w-4" />
+              {pending === "graph-mail-test" ? "测试中" : "发送测试邮件"}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -168,22 +196,27 @@ function Summary({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SMTPFields({ settings }: { settings: SMTPSettings }) {
+function GraphMailFields({ settings }: { settings: GraphMailSettings }) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <label className="block space-y-2 md:col-span-2">
         <span className="flex h-10 items-center gap-3 rounded-md border bg-white px-3 text-sm">
           <input className="h-4 w-4" defaultChecked={settings.enabled} name="enabled" type="checkbox" />
-          启用 SMTP 邮箱验证码
+          启用 Microsoft Graph 邮件通道
         </span>
         <FieldHint value={`当前：${settings.enabled ? "启用" : "停用"}`} />
       </label>
-      <Field defaultValue={settings.host} label="SMTP Host" name="host" placeholder="smtp.example.com" />
-      <Field defaultValue={String(settings.port || 587)} label="端口" name="port" placeholder="587" type="number" />
-      <Field defaultValue={settings.username} label="用户名" name="username" placeholder="smtp user" />
-      <Field hint={`当前：${settings.passwordConfigured ? "已配置，留空保持不变" : "未配置"}`} label={settings.passwordConfigured ? "密码（留空保持不变）" : "密码"} name="password" placeholder="smtp password" type="password" />
-      <Field defaultValue={settings.fromEmail} label="发件邮箱" name="fromEmail" placeholder="noreply@example.com" type="email" />
-      <Field defaultValue={settings.fromName} label="发件名称" name="fromName" placeholder="实验室运营系统" />
+      <Field defaultValue={settings.tenantId} label="租户 ID" name="tenantId" placeholder="Microsoft Entra tenant ID" />
+      <Field defaultValue={settings.clientId} label="客户端 ID" name="clientId" placeholder="应用程序 Client ID" />
+      <Field hint={`当前：${settings.clientSecretConfigured ? "已配置，留空保持不变" : "未配置"}`} label={settings.clientSecretConfigured ? "客户端密钥（留空保持不变）" : "客户端密钥"} name="clientSecret" placeholder="Client Secret" type="password" />
+      <Field defaultValue={settings.senderUserPrincipalName} label="发件账号" name="senderUserPrincipalName" placeholder="sender@example.com" type="email" />
+      <label className="block space-y-2">
+        <span className="flex h-10 items-center gap-3 rounded-md border bg-white px-3 text-sm">
+          <input className="h-4 w-4" defaultChecked={settings.saveToSentItems} name="saveToSentItems" type="checkbox" />
+          保存到已发送邮件
+        </span>
+        <FieldHint value={`当前：${settings.saveToSentItems ? "保存" : "不保存"}`} />
+      </label>
     </div>
   );
 }

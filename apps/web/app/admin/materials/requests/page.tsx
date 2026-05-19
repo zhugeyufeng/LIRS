@@ -24,7 +24,7 @@ export default async function AdminMaterialRequestsPage({
   });
 
   return (
-    <AdminShell active="materials" title="申领管理" description="展示资源申领记录，并处理审批、取消和出库；新增申领从资源总览的具体资源发起。">
+    <AdminShell active="materials" title="申领管理" description="展示资源申领记录，并处理审批、取消和出库；新增申领从标准品/标准物质、试剂或耗材页面的具体资源发起。">
       <MaterialsNav active="requests" admin />
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
