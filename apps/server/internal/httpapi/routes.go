@@ -175,6 +175,12 @@ var userReaderRoles = []string{"finance_admin", "tenant_admin", "lab_admin", "su
 var materialAdminRoles = []string{"material_admin", "tenant_admin", "lab_admin", "super_admin"}
 var financeAdminRoles = []string{"finance_admin", "tenant_admin", "lab_admin", "super_admin"}
 
+const (
+	anonymousTenantID      = "00000000-0000-0000-0000-000000000000"
+	currentUserContextKey  = "lirs.current_user"
+	currentActorContextKey = "lirs.current_actor"
+)
+
 func RegisterRoutes(router *gin.Engine, repo repository) {
 	router.GET("/healthz", func(c *gin.Context) {
 		if err := repo.Health(c.Request.Context()); err != nil {
@@ -462,10 +468,10 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		ctx := c.Request.Context()
 		user, hasUser := optionalCurrentUser(c, repo)
 		if tenantID := strings.TrimSpace(c.Query("tenantId")); tenantID != "" {
-			if !hasUser || user.Role == "super_admin" {
+			if !hasUser || user.Role == "super_admin" || tenantID == user.TenantID {
 				ctx = store.WithTenantContext(ctx, store.TenantContext{TenantID: tenantID})
 			}
-		} else if hasUser && user.Role == "super_admin" {
+		} else if hasUser {
 			ctx = store.WithTenantContext(ctx, store.TenantContext{
 				TenantID:       user.TenantID,
 				TenantName:     user.TenantName,
@@ -650,7 +656,13 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			respond(c, item, err)
 		}
 	})
-	api.GET("/materials", get(caller(repo.Materials)))
+	api.GET("/materials", func(c *gin.Context) {
+		if _, ok := requireActiveUser(c, repo); !ok {
+			return
+		}
+		item, err := repo.Materials(c.Request.Context())
+		respond(c, item, err)
+	})
 	api.GET("/materials/analytics", func(c *gin.Context) {
 		if _, ok := requireAnyRole(c, repo, materialAdminRoles...); !ok {
 			return
@@ -2166,41 +2178,24 @@ func bearerToken(c *gin.Context) (string, bool) {
 
 func tenantContextMiddleware(repo authRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		tenant := store.TenantContext{TenantID: "00000000-0000-0000-0000-000000000001"}
+		c.Request = c.Request.WithContext(store.WithTenantContext(c.Request.Context(), store.TenantContext{TenantID: anonymousTenantID}))
 		header := strings.TrimSpace(c.GetHeader("Authorization"))
 		if strings.HasPrefix(header, "Bearer ") {
 			token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
 			if token != "" {
 				if user, err := repo.CurrentUser(c.Request.Context(), token); err == nil {
-					tenant = store.TenantContext{
-						TenantID:       user.TenantID,
-						TenantName:     user.TenantName,
-						FinanceEnabled: user.FinanceEnabled,
-						AllTenants:     user.Role == "super_admin",
-						Actor: store.Actor{
-							UserID:         user.ID,
-							TenantID:       user.TenantID,
-							TenantName:     user.TenantName,
-							Name:           user.Name,
-							Email:          user.Email,
-							Department:     user.Department,
-							Role:           user.Role,
-							Status:         user.Status,
-							GroupName:      user.GroupName,
-							EmailVerified:  user.EmailVerified,
-							FinanceEnabled: user.FinanceEnabled,
-							AuthEpoch:      user.AuthEpoch,
-						},
-					}
+					rememberCurrentUser(c, user)
 				}
 			}
 		}
-		c.Request = c.Request.WithContext(store.WithTenantContext(c.Request.Context(), tenant))
 		c.Next()
 	}
 }
 
 func optionalCurrentUser(c *gin.Context, repo authRepository) (store.User, bool) {
+	if user, ok := cachedCurrentUser(c); ok {
+		return user, true
+	}
 	header := strings.TrimSpace(c.GetHeader("Authorization"))
 	if !strings.HasPrefix(header, "Bearer ") {
 		return store.User{}, false
@@ -2213,6 +2208,7 @@ func optionalCurrentUser(c *gin.Context, repo authRepository) (store.User, bool)
 	if err != nil {
 		return store.User{}, false
 	}
+	rememberCurrentUser(c, user)
 	return user, true
 }
 
@@ -2221,11 +2217,50 @@ func requireAuthenticated(c *gin.Context, repo authRepository) (store.Actor, boo
 	if !ok {
 		return store.Actor{}, false
 	}
+	if actor, ok := cachedCurrentActor(c); ok {
+		return actor, true
+	}
 	user, err := repo.CurrentUser(c.Request.Context(), token)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired session"})
 		return store.Actor{}, false
 	}
+	return rememberCurrentUser(c, user), true
+}
+
+func cachedCurrentUser(c *gin.Context) (store.User, bool) {
+	value, ok := c.Get(currentUserContextKey)
+	if !ok {
+		return store.User{}, false
+	}
+	user, ok := value.(store.User)
+	return user, ok
+}
+
+func cachedCurrentActor(c *gin.Context) (store.Actor, bool) {
+	value, ok := c.Get(currentActorContextKey)
+	if !ok {
+		return store.Actor{}, false
+	}
+	actor, ok := value.(store.Actor)
+	return actor, ok
+}
+
+func rememberCurrentUser(c *gin.Context, user store.User) store.Actor {
+	actor := actorFromUser(user)
+	c.Set(currentUserContextKey, user)
+	c.Set(currentActorContextKey, actor)
+	c.Request = c.Request.WithContext(store.WithTenantContext(c.Request.Context(), store.TenantContext{
+		TenantID:       user.TenantID,
+		TenantName:     user.TenantName,
+		FinanceEnabled: user.FinanceEnabled,
+		AllTenants:     user.Role == "super_admin",
+		Actor:          actor,
+	}))
+	return actor
+}
+
+func actorFromUser(user store.User) store.Actor {
 	return store.Actor{
 		UserID:         user.ID,
 		TenantID:       user.TenantID,
@@ -2239,7 +2274,7 @@ func requireAuthenticated(c *gin.Context, repo authRepository) (store.Actor, boo
 		EmailVerified:  user.EmailVerified,
 		FinanceEnabled: user.FinanceEnabled,
 		AuthEpoch:      user.AuthEpoch,
-	}, true
+	}
 }
 
 func requireActiveUser(c *gin.Context, repo authRepository) (store.Actor, bool) {
@@ -2835,12 +2870,31 @@ func respond(c *gin.Context, payload any, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "resource not found"})
 		return
 	}
+	if status, message, ok := postgresClientError(err); ok {
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
 	if message, ok := clientSafeError(err); ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": message})
 		return
 	}
 	slog.Error("api request failed", "method", c.Request.Method, "path", c.FullPath(), "error", err)
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+}
+
+func postgresClientError(err error) (int, string, bool) {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return 0, "", false
+	}
+	switch pgErr.Code {
+	case "23505":
+		return http.StatusConflict, "resource already exists", true
+	case "23503":
+		return http.StatusBadRequest, "referenced resource not found", true
+	default:
+		return 0, "", false
+	}
 }
 
 func clientSafeError(err error) (string, bool) {

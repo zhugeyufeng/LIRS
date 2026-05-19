@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:8090";
 const protectedPrefixes = [
   "/admin",
   "/approvals",
@@ -22,18 +23,31 @@ const protectedPrefixes = [
   "/settings",
 ];
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   if (!protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
     return NextResponse.next();
   }
-  if (request.cookies.get("lirs.authToken")?.value) {
+  const token = request.cookies.get("lirs.authToken")?.value ?? "";
+  if (token && await isValidToken(token)) {
     return NextResponse.next();
   }
   const url = request.nextUrl.clone();
   url.pathname = "/login";
   url.searchParams.set("next", pathname);
   return NextResponse.redirect(url);
+}
+
+async function isValidToken(token: string) {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 export const config = {

@@ -32,14 +32,16 @@ services:
 
   backup:
     image: postgres:15-alpine
-    restart: unless-stopped
+    restart: on-failure
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     command: >
       sh -c 'mkdir -p /backups &&
       while true; do
-        pg_dump -h postgres -U lirs -d lirs > /backups/lirs-$$(date +%Y%m%d-%H%M%S).sql;
+        pg_dump -h postgres -U lirs -d lirs > /backups/lirs-$$(date +%Y%m%d-%H%M%S).sql || { echo "pg_dump FAILED at $$(date)"; exit 1; };
+        du -sh /backups || true;
         find /backups -type f -name "lirs-*.sql" -mtime +14 -delete;
+        ls -1t /backups/lirs-*.sql 2>/dev/null | tail -n +15 | xargs -r rm -f;
         sleep 86400;
       done'
     volumes:
@@ -54,7 +56,7 @@ services:
       dockerfile: apps/server/Dockerfile
     environment:
       HTTP_ADDR: ":8080"
-      DATABASE_URL: postgres://lirs:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/lirs?sslmode=disable
+      DATABASE_URL: postgres://lirs:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/lirs?sslmode=${POSTGRES_SSLMODE:-disable}
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
       INITIAL_ADMIN_EMAIL: admin@lirs.local
@@ -63,6 +65,11 @@ services:
       INITIAL_DEMO_USER_PASSWORD: ${INITIAL_DEMO_USER_PASSWORD:?set INITIAL_DEMO_USER_PASSWORD in .env}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://0.0.0.0:3000}
       UPLOAD_ROOT: /app/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/healthz >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     ports:
       - "8081:8080"
     volumes:
@@ -79,7 +86,7 @@ services:
       dockerfile: apps/hono/Dockerfile
     environment:
       PORT: "8090"
-      DATABASE_URL: postgres://lirs:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/lirs?sslmode=disable
+      DATABASE_URL: postgres://lirs:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/lirs?sslmode=${POSTGRES_SSLMODE:-disable}
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
       GO_API_BASE_URL: http://api:8080
@@ -93,7 +100,7 @@ services:
       redis:
         condition: service_healthy
       api:
-        condition: service_started
+        condition: service_healthy
 
   web:
     build:
@@ -109,7 +116,8 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - hono
+      hono:
+        condition: service_started
 
 volumes:
   postgres-data:

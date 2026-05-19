@@ -257,7 +257,7 @@ func TestCanAccessNotificationScopes(t *testing.T) {
 	}
 }
 
-func TestRespondMasksDatabaseErrors(t *testing.T) {
+func TestRespondMapsKnownDatabaseErrors(t *testing.T) {
 	t.Parallel()
 
 	gin.SetMode(gin.TestMode)
@@ -266,6 +266,28 @@ func TestRespondMasksDatabaseErrors(t *testing.T) {
 	context.Request = httptest.NewRequest(http.MethodPost, "/api/register", nil)
 
 	respond(context, nil, &pgconn.PgError{Message: `duplicate key value violates unique constraint "users_email_key"`, Code: "23505"})
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", recorder.Code)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["error"] != "resource already exists" {
+		t.Fatalf("expected conflict error, got %q", payload["error"])
+	}
+}
+
+func TestRespondMasksUnknownDatabaseErrors(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/register", nil)
+
+	respond(context, nil, &pgconn.PgError{Message: "database failure", Code: "XX000"})
 
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", recorder.Code)

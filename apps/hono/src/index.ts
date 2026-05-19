@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { getConnInfo } from "@hono/node-server/conninfo";
 import { Hono, type Context, type Next } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
@@ -16,10 +17,17 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:3000")
 const defaultAllowedOrigin = allowedOrigins[0] ?? "http://localhost:3000";
 const maxRequestBodyBytes = Number(process.env.MAX_REQUEST_BODY_BYTES ?? 1024 * 1024);
 const proxyTimeoutMs = Number(process.env.PROXY_TIMEOUT_MS ?? 60000);
+const trustedProxyRanges = (process.env.TRUSTED_PROXY_CIDRS ?? "127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16")
+  .split(",")
+  .map((item) => parseCIDR(item.trim()))
+  .filter((item): item is CIDRRange => item !== null);
 
 const app = new Hono();
 
 app.onError((error, c) => {
+  if (error instanceof RequestBodyTooLargeError) {
+    return c.json({ error: "request body too large" }, 413);
+  }
   console.error("unhandled hono error", error);
   return c.json({ error: "internal server error" }, 500);
 });
@@ -334,11 +342,9 @@ const stockAdjustmentSchema = z.object({
 });
 const materialRequestSchema = z.object({
   materialId: z.string().min(1),
-  requesterId: z.string().optional().default(""),
-  requester: z.string().optional().default(""),
   batchId: z.string().optional().default(""),
   unitId: z.string().min(1),
-  quantity: z.coerce.number().int().refine((value) => value === 1, "quantity must be 1"),
+  quantity: z.coerce.number().int().positive(),
   purpose: z.string().min(1),
 });
 const materialPurchaseSchema = z.object({
@@ -362,7 +368,7 @@ const materialDamageSchema = z.object({
   reporterId: z.string().optional().default(""),
   reporter: z.string().optional().default(""),
   unitId: z.string().min(1),
-  quantity: z.coerce.number().int().refine((value) => value === 1, "quantity must be 1"),
+  quantity: z.coerce.number().int().positive(),
   reason: z.string().min(1),
   photoUrl: z.string().optional().default(""),
   attachmentUrl: z.string().optional().default(""),
@@ -509,7 +515,15 @@ serve({ fetch: app.fetch, port }, (info) => {
 
 function validateAndProxy(schema: z.ZodTypeAny) {
   return async (c: Context) => {
-    const body = await c.req.json().catch(() => null);
+    let body: unknown;
+    try {
+      body = await readLimitedJson(c.req.raw, null);
+    } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        return c.json({ error: "request body too large" }, 413);
+      }
+      return c.json({ error: "invalid json payload" }, 400);
+    }
     const parsed = schema.safeParse(body);
     if (!parsed.success) {
       return c.json({ error: "invalid json payload", issues: parsed.error.flatten() }, 400);
@@ -523,7 +537,15 @@ function validateOptionalJsonAndProxy(schema: z.ZodTypeAny) {
     if (!isJsonRequest(c)) {
       return proxyToGo(c);
     }
-    const body = await c.req.json().catch(() => ({}));
+    let body: unknown;
+    try {
+      body = await readLimitedJson(c.req.raw, {});
+    } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        return c.json({ error: "request body too large" }, 413);
+      }
+      return c.json({ error: "invalid json payload" }, 400);
+    }
     const parsed = schema.safeParse(body);
     if (!parsed.success) {
       return c.json({ error: "invalid json payload", issues: parsed.error.flatten() }, 400);
@@ -534,7 +556,7 @@ function validateOptionalJsonAndProxy(schema: z.ZodTypeAny) {
 
 function isJsonRequest(c: Context) {
   const contentType = c.req.header("content-type") ?? "";
-  return contentType === "" || contentType.toLowerCase().includes("application/json");
+  return contentType.toLowerCase().includes("application/json");
 }
 
 async function proxyToGo(c: Context, overrideBody?: unknown) {
@@ -548,7 +570,15 @@ async function proxyToGo(c: Context, overrideBody?: unknown) {
   if (hasOverrideBody) {
     body = JSON.stringify(overrideBody);
   } else if (hasBody) {
-    const buffer = Buffer.from(await c.req.raw.arrayBuffer());
+    let buffer: ArrayBuffer;
+    try {
+      buffer = await readLimitedArrayBuffer(c.req.raw, maxRequestBodyBytes);
+    } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        return c.json({ error: "request body too large" }, 413);
+      }
+      throw error;
+    }
     body = buffer.byteLength === 0 ? undefined : buffer;
   }
   if (hasOverrideBody) {
@@ -586,46 +616,233 @@ function requestLogger(c: Context, next: Next) {
 
 function requestBodySizeLimit(maxBytes: number) {
   return async (c: Context, next: Next) => {
-    const contentLength = Number(c.req.header("content-length") ?? 0);
-    if (contentLength > maxBytes) {
+    if (contentLengthExceeds(c.req.header("content-length"), maxBytes)) {
       return c.json({ error: "request body too large" }, 413);
     }
     await next();
   };
 }
 
-const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+function contentLengthExceeds(value: string | undefined, maxBytes: number) {
+  if (!value) {
+    return false;
+  }
+  const contentLength = Number(value);
+  return Number.isFinite(contentLength) && contentLength > maxBytes;
+}
+
+async function readLimitedJson(request: Request, emptyValue: unknown) {
+  const text = await readLimitedText(request, maxRequestBodyBytes);
+  if (text.trim() === "") {
+    return emptyValue;
+  }
+  return JSON.parse(text) as unknown;
+}
+
+async function readLimitedText(request: Request, maxBytes: number) {
+  const buffer = await readLimitedArrayBuffer(request, maxBytes);
+  return new TextDecoder().decode(buffer);
+}
+
+async function readLimitedArrayBuffer(request: Request, maxBytes: number) {
+  if (contentLengthExceeds(request.headers.get("content-length") ?? undefined, maxBytes)) {
+    throw new RequestBodyTooLargeError();
+  }
+  if (!request.body) {
+    return new ArrayBuffer(0);
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      received += value.byteLength;
+      if (received > maxBytes) {
+        throw new RequestBodyTooLargeError();
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const result = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result.buffer;
+}
 
 function rateLimit({ keyPrefix, limit, windowMs }: { keyPrefix: string; limit: number; windowMs: number }) {
   return async (c: Context, next: Next) => {
-    const now = Date.now();
-    if (rateLimitStore.size > 1000) {
-      for (const [key, bucket] of rateLimitStore.entries()) {
-        if (bucket.resetAt <= now) {
-          rateLimitStore.delete(key);
-        }
-      }
-    }
     const ip = clientIp(c);
-    const key = `${keyPrefix}:${ip}`;
-    const bucket = rateLimitStore.get(key);
-    if (!bucket || bucket.resetAt <= now) {
-      rateLimitStore.set(key, { count: 1, resetAt: now + windowMs });
-      await next();
-      return;
-    }
-    if (bucket.count >= limit) {
+    const key = `lirs:rate-limit:${keyPrefix}:${ip}`;
+    const count = await incrementRateLimit(key, windowMs);
+    if (count > limit) {
       return c.json({ error: "too many requests" }, 429);
     }
-    bucket.count += 1;
     await next();
   };
 }
 
+async function incrementRateLimit(key: string, windowMs: number) {
+  const redis = await ensureRedis();
+  const count = Number(await redis.sendCommand([
+    "EVAL",
+    "local count = redis.call('INCR', KEYS[1]); if count == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]); end; return count",
+    "1",
+    key,
+    String(windowMs),
+  ]));
+  return count;
+}
+
 function clientIp(c: Context) {
-  return (c.req.header("x-forwarded-for") ?? c.req.header("cf-connecting-ip") ?? "unknown")
-    .split(",")[0]
-    .trim();
+  const remoteIP = normalizeIP(getConnInfo(c).remote.address ?? "");
+  const cfIP = normalizeIP(c.req.header("cf-connecting-ip") ?? "");
+  if (cfIP && remoteIP && isTrustedProxy(remoteIP)) {
+    return cfIP;
+  }
+  const forwardedFor = (c.req.header("x-forwarded-for") ?? "")
+    .split(",")
+    .map((item) => normalizeIP(item))
+    .filter(Boolean);
+  if (remoteIP && isTrustedProxy(remoteIP) && forwardedFor.length > 0) {
+    for (let index = forwardedFor.length - 1; index >= 0; index--) {
+      const candidate = forwardedFor[index];
+      if (!isTrustedProxy(candidate)) {
+        return candidate;
+      }
+    }
+    return forwardedFor[0] ?? remoteIP;
+  }
+  return remoteIP || "unknown";
+}
+
+class RequestBodyTooLargeError extends Error {}
+
+type CIDRRange = {
+  base: bigint;
+  mask: bigint;
+  bits: 32 | 128;
+};
+
+function parseCIDR(value: string): CIDRRange | null {
+  if (!value) {
+    return null;
+  }
+  const [rawIP, rawPrefix] = value.includes("/") ? value.split("/", 2) : [value, ""];
+  const parsed = ipToBigInt(rawIP);
+  if (!parsed) {
+    return null;
+  }
+  const prefix = rawPrefix === "" ? parsed.bits : Number(rawPrefix);
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > parsed.bits) {
+    return null;
+  }
+  const mask = cidrMask(parsed.bits, prefix);
+  return { base: parsed.value & mask, mask, bits: parsed.bits };
+}
+
+function isTrustedProxy(ip: string) {
+  const parsed = ipToBigInt(ip);
+  if (!parsed) {
+    return false;
+  }
+  return trustedProxyRanges.some((range) => range.bits === parsed.bits && (parsed.value & range.mask) === range.base);
+}
+
+function normalizeIP(value: string) {
+  value = value.trim();
+  if (!value) {
+    return "";
+  }
+  if (value.startsWith("::ffff:")) {
+    return value.slice("::ffff:".length);
+  }
+  if (value.startsWith("[") && value.includes("]")) {
+    return value.slice(1, value.indexOf("]"));
+  }
+  const colonCount = (value.match(/:/g) ?? []).length;
+  if (colonCount === 1 && value.includes(".")) {
+    return value.split(":", 1)[0];
+  }
+  return value;
+}
+
+function ipToBigInt(value: string): { value: bigint; bits: 32 | 128 } | null {
+  value = normalizeIP(value);
+  const ipv4 = ipv4ToBigInt(value);
+  if (ipv4 !== null) {
+    return { value: ipv4, bits: 32 };
+  }
+  const ipv6 = ipv6ToBigInt(value);
+  if (ipv6 !== null) {
+    return { value: ipv6, bits: 128 };
+  }
+  return null;
+}
+
+function ipv4ToBigInt(value: string) {
+  const parts = value.split(".");
+  if (parts.length !== 4) {
+    return null;
+  }
+  let result = 0n;
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) {
+      return null;
+    }
+    const number = Number(part);
+    if (number < 0 || number > 255) {
+      return null;
+    }
+    result = (result << 8n) + BigInt(number);
+  }
+  return result;
+}
+
+function ipv6ToBigInt(value: string) {
+  if (!value.includes(":")) {
+    return null;
+  }
+  const sections = value.split("::");
+  if (sections.length > 2) {
+    return null;
+  }
+  const left = sections[0] ? sections[0].split(":") : [];
+  const right = sections.length === 2 && sections[1] ? sections[1].split(":") : [];
+  if (left.some((item) => item === "") || right.some((item) => item === "")) {
+    return null;
+  }
+  const missing = 8 - left.length - right.length;
+  if (missing < 0 || (sections.length === 1 && missing !== 0)) {
+    return null;
+  }
+  const groups = [...left, ...Array(missing).fill("0"), ...right];
+  if (groups.length !== 8) {
+    return null;
+  }
+  let result = 0n;
+  for (const group of groups) {
+    if (!/^[0-9a-fA-F]{1,4}$/.test(group)) {
+      return null;
+    }
+    result = (result << 16n) + BigInt(Number.parseInt(group, 16));
+  }
+  return result;
+}
+
+function cidrMask(bits: 32 | 128, prefix: number) {
+  if (prefix === 0) {
+    return 0n;
+  }
+  return ((1n << BigInt(prefix)) - 1n) << BigInt(bits - prefix);
 }
 
 function forwardRequestHeaders(source: Record<string, string | undefined>) {
@@ -636,7 +853,6 @@ function forwardRequestHeaders(source: Record<string, string | undefined>) {
     "content-type",
     "cookie",
     "user-agent",
-    "x-forwarded-for",
     "x-request-id",
   ]);
   const headers = new Headers();

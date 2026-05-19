@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { and, eq, gt, isNull, ne, sql } from "drizzle-orm";
-import { db, pool } from "./db.js";
+import { db } from "./db.js";
 import { sessions, tenants, users } from "./schema.js";
 
 export function tokenHash(token: string) {
@@ -48,7 +48,7 @@ export async function currentUserFromToken(token: string) {
   if (!row) {
     return null;
   }
-  await pool.query("UPDATE sessions SET last_used_at = now() WHERE token_hash = $1", [hash]);
+  await db.update(sessions).set({ lastUsedAt: new Date() }).where(eq(sessions.tokenHash, hash));
   return row;
 }
 

@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { browserLogin, Tenant } from "@/lib/api";
+import { BrowserRequestError, browserLogin, Tenant } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { PasswordInput } from "@/components/ui/password-input";
 
@@ -31,7 +31,7 @@ export function LoginForm({ tenants }: { tenants: Tenant[] }) {
       router.refresh();
     } catch (error) {
       const rawMessage = error instanceof Error ? error.message : "";
-      if (rawMessage.includes("invalid email") || rawMessage.includes("401")) {
+      if ((error instanceof BrowserRequestError && error.status === 401) || rawMessage.includes("invalid email")) {
         setMessage("邮箱或密码不正确。");
       } else if (rawMessage.includes("tenant is required") || rawMessage.includes("multi-tenant")) {
         setSelectedTenantId(tenants[0]?.id ?? "");

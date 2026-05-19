@@ -57,8 +57,8 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   }
   if (method === "POST" && (joinedPath === "login" || joinedPath === "dingtalk/quick-login" || joinedPath === "dingtalk/login-bind-existing") && response.ok) {
     const text = await response.text();
-    const auth = JSON.parse(text) as { token?: string };
-    if (auth.token) {
+    const auth = parseJson<{ token?: string }>(text);
+    if (auth?.token) {
       responseHeaders.append("set-cookie", authCookie(auth.token, request));
     }
     return new Response(text, {
@@ -68,8 +68,8 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   }
   if (method === "POST" && joinedPath === "dingtalk/web-login" && response.ok) {
     const text = await response.text();
-    const result = JSON.parse(text) as { auth?: { token?: string } };
-    if (result.auth?.token) {
+    const result = parseJson<{ auth?: { token?: string } }>(text);
+    if (result?.auth?.token) {
       responseHeaders.append("set-cookie", authCookie(result.auth.token, request));
     }
     return new Response(text, {
@@ -90,6 +90,14 @@ function shouldInvalidateBusinessData(method: string, response: Response) {
   return !["GET", "HEAD"].includes(method) && response.ok;
 }
 
+function parseJson<T>(text: string): T | null {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
 function forwardRequestHeaders(request: NextRequest) {
   const allowedHeaders = new Set(["accept", "accept-language", "authorization", "content-type", "cookie", "user-agent", "x-request-id"]);
   const headers = new Headers();
@@ -103,10 +111,6 @@ function forwardRequestHeaders(request: NextRequest) {
     if (token) {
       headers.set("authorization", `Bearer ${token}`);
     }
-  }
-  const forwardedFor = request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip");
-  if (forwardedFor) {
-    headers.set("x-forwarded-for", forwardedFor);
   }
   return headers;
 }

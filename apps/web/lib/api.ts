@@ -1260,7 +1260,7 @@ async function request<T>(path: string, init?: RequestInit, options: ServerReque
     return (await res.json()) as T;
   };
   if (options.businessCacheKey) {
-    return cachedBusinessData(createBusinessDataCacheKey(path, init, authHeaders, options.businessCacheKey), load, options.cacheTtlSeconds);
+    return cachedBusinessData(await createBusinessDataCacheKey(path, init, authHeaders, options.businessCacheKey), load, options.cacheTtlSeconds);
   }
   return load();
 }
@@ -1269,8 +1269,17 @@ function businessRequest<T>(path: string, tag: string, init?: RequestInit): Prom
   return request<T>(path, init, { businessCacheKey: tag });
 }
 
-function createBusinessDataCacheKey(path: string, init: RequestInit | undefined, authHeaders: Record<string, string>, tag: string) {
-  return JSON.stringify([tag, init?.method ?? "GET", path, authHeaders.Authorization ?? ""]);
+async function createBusinessDataCacheKey(path: string, init: RequestInit | undefined, authHeaders: Record<string, string>, tag: string) {
+  return JSON.stringify([tag, init?.method ?? "GET", path, await hashCacheToken(authHeaders.Authorization ?? "")]);
+}
+
+async function hashCacheToken(value: string) {
+  const token = value.trim();
+  if (!token || typeof crypto === "undefined" || !crypto.subtle) {
+    return "";
+  }
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 export const api = {
@@ -1612,6 +1621,16 @@ export async function browserRequest<T>(path: string, method: string, payload?: 
   return browserRequestWithOptions<T>(path, method, payload);
 }
 
+export class BrowserRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "BrowserRequestError";
+  }
+}
+
 async function browserRequestWithOptions<T>(
   path: string,
   method: string,
@@ -1626,7 +1645,7 @@ async function browserRequestWithOptions<T>(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? `请求失败: ${res.status}`);
+    throw new BrowserRequestError(body.error ?? `请求失败: ${res.status}`, res.status);
   }
   return (await res.json()) as T;
 }
@@ -1656,7 +1675,7 @@ async function requestOptional<T>(path: string, init?: RequestInit, options: Ser
     return (await res.json()) as T;
   };
   if (options.businessCacheKey) {
-    return cachedBusinessData(createBusinessDataCacheKey(path, init, authHeaders, options.businessCacheKey), load, options.cacheTtlSeconds);
+    return cachedBusinessData(await createBusinessDataCacheKey(path, init, authHeaders, options.businessCacheKey), load, options.cacheTtlSeconds);
   }
   return load();
 }
