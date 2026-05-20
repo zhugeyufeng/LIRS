@@ -253,7 +253,7 @@ export function PurchasableMaterialManager({ items, projects }: { items: Purchas
     try {
       await browserDelete<PurchasableMaterial>(`/api/purchasable-materials/${id}`);
       setMessage("可采购物资已删除。");
-      startTransition(() => router.refresh());
+      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除失败");
     } finally {
@@ -426,7 +426,7 @@ export function ProcurementProjectManager({ projects }: { projects: ProcurementP
     try {
       await browserDelete<ProcurementProject>(`/api/procurement-projects/${id}`);
       setMessage("采购项目已停用。");
-      startTransition(() => router.refresh());
+      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "停用失败");
     } finally {

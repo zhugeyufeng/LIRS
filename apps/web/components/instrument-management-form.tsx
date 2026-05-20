@@ -113,9 +113,7 @@ export function InstrumentStatusForm({
       const deleted = await browserDelete<Instrument>(`/api/instruments/${instrument.id}`);
       setMessage(`已删除：${deleted.name}`);
       close?.();
-      startTransition(() => {
-        router.refresh();
-      });
+      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除失败");
     } finally {

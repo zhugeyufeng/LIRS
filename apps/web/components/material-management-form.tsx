@@ -230,9 +230,7 @@ export function MaterialEditForm({ material, categories = [] }: { material: Mate
       const deleted = await browserDelete<Material>(`/api/materials/${material.id}`);
       setMessage(`已删除：${deleted.name}`);
       close?.();
-      startTransition(() => {
-        router.refresh();
-      });
+      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除失败");
     } finally {
@@ -684,9 +682,7 @@ export function MaterialCategoryForm({ categories }: { categories: MaterialCateg
       const deleted = await browserDelete<MaterialCategory>(`/api/materials/categories/${item.id}`);
       setMessage(`已删除目录：${deleted.name}`);
       setEditingID("");
-      startTransition(() => {
-        router.refresh();
-      });
+      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "目录删除失败");
     } finally {

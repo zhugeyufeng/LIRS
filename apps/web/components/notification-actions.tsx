@@ -197,9 +197,7 @@ export function DeleteNotificationButton({ id, selectedTenantId, title }: { id: 
     setMessage("");
     try {
       await browserDelete<Notification>(notificationPath(`/api/notifications/${id}`, selectedTenantId));
-      startTransition(() => {
-        router.refresh();
-      });
+      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除失败");
     } finally {

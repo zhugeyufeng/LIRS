@@ -276,9 +276,7 @@ export function UserReviewActions({
       const deleted = await browserDelete<User>(`/api/users/${user.id}`);
       setMessage(`已删除：${deleted.name}`);
       close?.();
-      startTransition(() => {
-        router.refresh();
-      });
+      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除失败");
     } finally {

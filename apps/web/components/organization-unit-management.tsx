@@ -220,9 +220,7 @@ function UnitRow({
     try {
       await browserDelete<OrganizationUnit>(organizationUnitPath(`/api/organization-units/${unit.id}`, selectedTenantId));
       setMessage("已删除");
-      startTransition(() => {
-        router.refresh();
-      });
+      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除失败");
     } finally {
