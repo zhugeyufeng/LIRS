@@ -6159,6 +6159,72 @@ LIMIT 100
 	return items, rows.Err()
 }
 
+func (r *Repository) MaterialRequestsForMonth(ctx context.Context, month string) ([]MaterialRequestExportRow, error) {
+	tenant := TenantFromContext(ctx)
+	rows, err := r.db.Query(ctx, `
+SELECT mr.id::text, mr.material_id::text, m.name, COALESCE(mr.requester_id::text, ''),
+       mr.requester, mr.group_name, COALESCE(mr.batch_id::text, ''), COALESCE(mb.batch_no, ''),
+       COALESCE(mr.unit_id::text, ''), COALESCE(mu.unit_code, ''),
+       COALESCE(NULLIF(mu.location, ''), NULLIF(mb.location, ''), NULLIF(concat_ws(' / ', NULLIF(m.storage_room, ''), NULLIF(m.storage_cabinet, ''), NULLIF(m.storage_layer, ''), NULLIF(m.storage_slot, '')), ''), ''),
+       mr.quantity, mr.purpose, mr.status, mr.created_at,
+       COALESCE(NULLIF(m.catalog_no, ''), NULLIF(m.cas_no, ''), NULLIF(m.grade, ''), ''),
+       COALESCE(NULLIF(m.manufacturer, ''), NULLIF(m.supplier, ''), ''),
+       m.spec,
+       m.unit,
+       COALESCE(mu.expires_at::text, mb.expires_at::text, m.expires_at::text, ''),
+       COALESCE((
+           SELECT string_agg(maa.actor, '，' ORDER BY maa.created_at)
+           FROM material_approval_actions maa
+           WHERE maa.material_request_id = mr.id
+             AND maa.action IN ('approve', 'outbound')
+       ), '')
+FROM material_requests mr
+JOIN materials m ON m.id = mr.material_id
+LEFT JOIN material_batches mb ON mb.id = mr.batch_id
+LEFT JOIN material_units mu ON mu.id = mr.unit_id
+WHERE ($1::boolean OR mr.tenant_id = $2::uuid)
+  AND to_char(mr.created_at, 'YYYY-MM') = $3
+ORDER BY mr.created_at, mr.id
+`, tenant.AllTenants, tenant.TenantID, month)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]MaterialRequestExportRow, 0)
+	for rows.Next() {
+		var item MaterialRequestExportRow
+		err := rows.Scan(
+			&item.ID,
+			&item.MaterialID,
+			&item.MaterialName,
+			&item.RequesterID,
+			&item.Requester,
+			&item.GroupName,
+			&item.BatchID,
+			&item.BatchNo,
+			&item.UnitID,
+			&item.UnitCode,
+			&item.Location,
+			&item.Quantity,
+			&item.Purpose,
+			&item.Status,
+			&item.CreatedAt,
+			&item.StandardNo,
+			&item.Brand,
+			&item.Spec,
+			&item.Unit,
+			&item.ExpiresAt,
+			&item.ApprovalInfo,
+		)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (r *Repository) MaterialRequest(ctx context.Context, id string) (MaterialRequest, error) {
 	tenant := TenantFromContext(ctx)
 	return scanMaterialRequest(r.db.QueryRow(ctx, `

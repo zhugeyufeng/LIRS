@@ -1,5 +1,6 @@
 import { Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { MaterialRequestExportButton } from "@/components/material-request-export-button";
 import { MaterialRequestActions } from "@/components/material-request-form";
 import { MaterialsNav } from "@/components/materials-nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,7 +37,10 @@ export default async function MaterialRequestsPage({
       <div className="grid gap-6">
         <Card className="min-w-0">
           <CardHeader>
-            <CardTitle>申领单</CardTitle>
+            <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
+              <CardTitle>申领单</CardTitle>
+              <MaterialRequestExportButton />
+            </div>
           </CardHeader>
           <CardContent>
             <form action="/materials/requests" className="mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto]">

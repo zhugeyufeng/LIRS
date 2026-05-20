@@ -12,9 +12,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/xuri/excelize/v2"
 
 	"lirs/apps/server/internal/store"
 )
@@ -231,6 +233,56 @@ func TestMaterialBatchLabelsRemainChinese(t *testing.T) {
 
 	if got := materialRequestStatusLabel("outbound"); got != "已出库" {
 		t.Fatalf("unexpected request status label: %q", got)
+	}
+}
+
+func TestMaterialRequestExportWorkbookMatchesStandardUsageTemplate(t *testing.T) {
+	t.Parallel()
+
+	file, err := materialRequestExportWorkbook("2026-01", []store.MaterialRequestExportRow{{
+		MaterialRequest: store.MaterialRequest{
+			MaterialName: "河豚毒素标准物质",
+			Requester:    "张三",
+			BatchNo:      "B-001",
+			UnitCode:     "U-001",
+			Location:     "4℃冰柜",
+			Quantity:     1,
+			CreatedAt:    time.Date(2026, 1, 5, 9, 30, 0, 0, time.UTC),
+			Status:       "outbound",
+		},
+		StandardNo:   "GBW-001",
+		Brand:        "国家标准物质中心",
+		Spec:         "1mg/mL",
+		Unit:         "支",
+		ExpiresAt:    "2027.01.05",
+		ApprovalInfo: "管理员",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	buffer, err := file.WriteToBuffer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	workbook, err := excelize.OpenReader(bytes.NewReader(buffer.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workbook.Close()
+	if got := workbook.GetSheetName(0); got != "领用历史记录" {
+		t.Fatalf("unexpected sheet name: %q", got)
+	}
+	if got, _ := workbook.GetCellValue("领用历史记录", "A1"); !strings.Contains(got, "标准物质领用记录表") {
+		t.Fatalf("unexpected title: %q", got)
+	}
+	if got, _ := workbook.GetCellValue("领用历史记录", "A3"); got != "品名" {
+		t.Fatalf("unexpected first header: %q", got)
+	}
+	if got, _ := workbook.GetCellValue("领用历史记录", "L3"); got != "审批信息" {
+		t.Fatalf("unexpected last header: %q", got)
+	}
+	if got, _ := workbook.GetCellValue("领用历史记录", "A4"); got != "河豚毒素标准物质" {
+		t.Fatalf("unexpected first material name: %q", got)
 	}
 }
 

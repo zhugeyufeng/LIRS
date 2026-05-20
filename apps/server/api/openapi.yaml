@@ -395,10 +395,16 @@ paths:
           description: Material request created
   /api/material-requests/export.csv:
     get:
-      summary: Export material request records as CSV
+      summary: Export monthly material request records as UTF-8 BOM CSV
       responses:
         "200":
           description: Material request CSV
+  /api/material-requests/monthly-export.xlsx:
+    get:
+      summary: Export monthly material request records as standard-material usage workbook
+      responses:
+        "200":
+          description: Material request XLSX
   /api/material-requests/{id}/approve:
     patch:
       summary: Approve a material request with reviewer comment

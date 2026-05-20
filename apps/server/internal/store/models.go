@@ -877,6 +877,16 @@ type MaterialRequest struct {
 	CreatedAt    time.Time `json:"createdAt"`
 }
 
+type MaterialRequestExportRow struct {
+	MaterialRequest
+	StandardNo   string `json:"standardNo"`
+	Brand        string `json:"brand"`
+	Spec         string `json:"spec"`
+	Unit         string `json:"unit"`
+	ExpiresAt    string `json:"expiresAt"`
+	ApprovalInfo string `json:"approvalInfo"`
+}
+
 type MaterialRequestInput struct {
 	MaterialID  string `json:"materialId"`
 	RequesterID string `json:"requesterId"`
