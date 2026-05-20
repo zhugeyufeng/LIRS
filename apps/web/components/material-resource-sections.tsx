@@ -40,18 +40,49 @@ export function resourceTypeFromSlug(slug: string): ResourceProductType {
 
 export function filterMaterials(
   materials: Material[],
-  params: { query?: string; category?: string; productType?: string; status?: string },
+  params: { query?: string; q?: string; category?: string; productType?: string; status?: string },
 ) {
-  const query = (params.query ?? "").trim().toLowerCase();
+  const query = (params.query ?? params.q ?? "").trim().toLowerCase();
   return materials.filter((item) => {
-    const matchesSearch =
-      query === "" ||
-      [item.name, item.category, item.spec, item.supplier, item.manufacturer, item.batchNo, item.catalogNo, item.casNo, item.qrCode, item.tenderContract, item.contractNo, item.remark, materialLocation(item), materialBatchSummary(item), materialUnitCodes(item)].some((value) => value.toLowerCase().includes(query));
+    const matchesSearch = query === "" || materialSearchValues(item).some((value) => value.toLowerCase().includes(query));
     const matchesCategory = !params.category || item.category === params.category;
     const matchesProductType = !params.productType || item.productType === params.productType;
     const matchesStatus = !params.status || item.status === params.status;
     return matchesSearch && matchesCategory && matchesProductType && matchesStatus;
   });
+}
+
+function materialSearchValues(item: Material) {
+  return [
+    item.name,
+    item.category,
+    item.subcategory,
+    item.spec,
+    item.unit,
+    item.supplier,
+    item.manufacturer,
+    item.batchNo,
+    item.catalogNo,
+    item.casNo,
+    item.grade,
+    item.concentration,
+    item.preparationMethod,
+    item.storageCondition,
+    item.tenderContract,
+    item.contractNo,
+    item.remark,
+    item.certificateUrl,
+    item.standardCertificateUrl,
+    item.attachmentUrl,
+    item.qrCode,
+    item.expiresAt,
+    item.openedAt,
+    materialLocation(item),
+    materialBatchSummary(item),
+    materialUnitCodes(item),
+    ...(item.batches ?? []).flatMap((batch) => [batch.batchNo, batch.expiresAt, batch.location]),
+    ...(item.units ?? []).flatMap((unit) => [unit.unitCode, unit.batchNo, unit.expiresAt, unit.location]),
+  ].map((value) => String(value ?? ""));
 }
 
 export function primaryMaterialCategories(materials: Material[], materialCategories: MaterialCategory[]) {
