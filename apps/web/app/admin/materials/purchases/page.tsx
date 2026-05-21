@@ -1,7 +1,8 @@
 import { Search } from "lucide-react";
 import { AdminShell, requireAdminSection } from "@/components/admin-shell";
+import { MaterialPurchaseActions } from "@/components/material-purchase-actions";
 import { MaterialPurchaseAdminNav } from "@/components/material-purchase-admin-nav";
-import { MaterialPurchaseActions, MaterialPurchaseForm, MaterialPurchaseMonthConfirmButton } from "@/components/material-purchase-form";
+import { MaterialPurchaseForm, MaterialPurchaseMonthConfirmButton } from "@/components/material-purchase-form";
 import { MaterialsNav } from "@/components/materials-nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, MaterialPurchase } from "@/lib/api";
@@ -179,7 +180,6 @@ function Metric({ label, value }: { label: string; value: number | string }) {
 
 function purchaseStatusLabel(status: string) {
   const labels: Record<string, string> = {
-    pending: "已登记",
     registered: "已登记",
     approved: "已通过",
     rejected: "已拒绝",

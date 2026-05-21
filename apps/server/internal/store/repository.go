@@ -96,6 +96,20 @@ func appToday() time.Time {
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, appLocation)
 }
 
+func reservationBookingWindowEnd(days int) time.Time {
+	if days <= 0 {
+		return time.Time{}
+	}
+	return appToday().AddDate(0, 0, days)
+}
+
+func reservationWithinBookingWindow(start time.Time, days int) bool {
+	if days <= 0 {
+		return true
+	}
+	return start.Before(reservationBookingWindowEnd(days))
+}
+
 func appDateString() string {
 	return appDateStringAt(appNow())
 }
@@ -2768,7 +2782,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 	if minAdvanceHours > 0 && input.StartTime.Before(time.Now().UTC().Add(time.Duration(minAdvanceHours)*time.Hour)) {
 		return Reservation{}, fmt.Errorf("reservation must be submitted at least %d hours in advance", minAdvanceHours)
 	}
-	if bookingWindowDays > 0 && input.StartTime.After(appToday().AddDate(0, 0, bookingWindowDays+1)) {
+	if !reservationWithinBookingWindow(input.StartTime, bookingWindowDays) {
 		return Reservation{}, fmt.Errorf("reservation must start within %d days", bookingWindowDays)
 	}
 	if !isWithinServiceHours(input.StartTime, input.EndTime, serviceStartHour, serviceEndHour) {
@@ -5818,12 +5832,13 @@ RETURNING id::text, material_id::text, (SELECT name FROM materials WHERE id = ma
 		return MaterialRequest{}, err
 	}
 	notifications = append(notifications, notification)
+	if err := r.auditTx(ctx, tx, materialTenantID, item.Requester, "material.request", "material_request", item.ID, "", item.Status); err != nil {
+		return MaterialRequest{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialRequest{}, err
 	}
 	r.enqueueDingTalkNotifications(notifications...)
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: materialTenantID})
-	r.audit(auditCtx, item.Requester, "material.request", "material_request", item.ID, "", item.Status)
 	return item, nil
 }
 
@@ -5943,12 +5958,13 @@ RETURNING mr.id::text, mr.material_id::text, (SELECT name FROM materials WHERE i
 		}
 		notifications = append(notifications, notification)
 	}
+	if err := r.auditTx(ctx, tx, itemTenantID, actor, "material.outbound", "material_request", item.ID, "approved", item.Status); err != nil {
+		return MaterialRequest{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialRequest{}, err
 	}
 	r.enqueueDingTalkNotifications(notifications...)
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, actor, "material.outbound", "material_request", item.ID, "approved", item.Status)
 	return item, nil
 }
 
@@ -6005,12 +6021,13 @@ WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'reserv
 		}
 		notifications = append(notifications, notification)
 	}
+	if err := r.auditTx(ctx, tx, itemTenantID, actor, "material.cancel", "material_request", item.ID, "", item.Status); err != nil {
+		return MaterialRequest{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialRequest{}, err
 	}
 	r.enqueueDingTalkNotifications(notifications...)
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, actor, "material.cancel", "material_request", item.ID, "", item.Status)
 	return item, nil
 }
 
@@ -7003,12 +7020,13 @@ RETURNING id::text, material_id::text, (SELECT name FROM materials WHERE id = ma
 		return MaterialDamage{}, err
 	}
 	notifications = append(notifications, notification)
+	if err := r.auditTx(ctx, tx, materialTenantID, item.Reporter, "material_damage.create", "material_damage", item.ID, "", item.Status); err != nil {
+		return MaterialDamage{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialDamage{}, err
 	}
 	r.enqueueDingTalkNotifications(notifications...)
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: materialTenantID})
-	r.audit(auditCtx, item.Reporter, "material_damage.create", "material_damage", item.ID, "", item.Status)
 	return item, nil
 }
 
@@ -7077,12 +7095,13 @@ WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'reserv
 		}
 		notifications = append(notifications, notification)
 	}
+	if err := r.auditTx(ctx, tx, itemTenantID, actor, "material_damage."+status, "material_damage", item.ID, "pending", status); err != nil {
+		return MaterialDamage{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialDamage{}, err
 	}
 	r.enqueueDingTalkNotifications(notifications...)
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, actor, "material_damage."+status, "material_damage", item.ID, "pending", status)
 	return item, nil
 }
 
@@ -7165,12 +7184,13 @@ RETURNING mdr.id::text, mdr.material_id::text, (SELECT name FROM materials WHERE
 		}
 		notifications = append(notifications, notification)
 	}
+	if err := r.auditTx(ctx, tx, itemTenantID, actor, "material_damage.process", "material_damage", item.ID, "approved", item.Status); err != nil {
+		return MaterialDamage{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialDamage{}, err
 	}
 	r.enqueueDingTalkNotifications(notifications...)
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, actor, "material_damage.process", "material_damage", item.ID, "approved", item.Status)
 	return item, nil
 }
 
@@ -7223,11 +7243,12 @@ WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'reserv
 			return MaterialDamage{}, err
 		}
 	}
+	if err := r.auditTx(ctx, tx, itemTenantID, actor, "material_damage.cancel", "material_damage", item.ID, "", item.Status); err != nil {
+		return MaterialDamage{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialDamage{}, err
 	}
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, actor, "material_damage.cancel", "material_damage", item.ID, "", item.Status)
 	return item, nil
 }
 
@@ -7559,13 +7580,14 @@ RETURNING id::text, COALESCE(user_id::text, ''), user_name, group_name
 		return MaintenanceOrder{}, err
 	}
 	notifications = append(notifications, notification)
+	if err := r.auditTx(ctx, tx, targetTenantID, input.Actor, "maintenance.create", "maintenance_order", item.ID, "", strings.Join(cancelled, ",")); err != nil {
+		return MaintenanceOrder{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaintenanceOrder{}, err
 	}
 	r.enqueueDingTalkNotifications(notifications...)
 	r.invalidateDashboard(ctx)
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: targetTenantID})
-	r.audit(auditCtx, input.Actor, "maintenance.create", "maintenance_order", item.ID, "", strings.Join(cancelled, ","))
 	return item, nil
 }
 
@@ -7575,9 +7597,16 @@ func (r *Repository) StartMaintenanceOrder(ctx context.Context, id string, actor
 	if actor == "" {
 		actor = "system"
 	}
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return MaintenanceOrder{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 	var item MaintenanceOrder
 	var itemTenantID string
-	err := r.db.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 UPDATE maintenance_orders mo
 SET status = 'in_progress'
 WHERE mo.id = $1 AND mo.status IN ('reported', 'assigned')
@@ -7590,12 +7619,16 @@ RETURNING mo.id::text, mo.tenant_id::text, COALESCE(mo.instrument_id::text, ''),
 	if item.InstrumentID == "" {
 		return MaintenanceOrder{}, clientError("instrument has been deleted")
 	}
-	if _, err := r.db.Exec(ctx, `UPDATE instruments SET status = 'maintenance', maintenance_summary = $2 WHERE id = $1 AND tenant_id = $3::uuid`, item.InstrumentID, item.Description, itemTenantID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE instruments SET status = 'maintenance', maintenance_summary = $2 WHERE id = $1 AND tenant_id = $3::uuid`, item.InstrumentID, item.Description, itemTenantID); err != nil {
+		return MaintenanceOrder{}, err
+	}
+	if err := r.auditTx(ctx, tx, itemTenantID, actor, "maintenance.start", "maintenance_order", item.ID, "", item.Status); err != nil {
+		return MaintenanceOrder{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return MaintenanceOrder{}, err
 	}
 	r.invalidateDashboard(ctx)
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, actor, "maintenance.start", "maintenance_order", item.ID, "", item.Status)
 	return item, nil
 }
 
@@ -7609,9 +7642,16 @@ func (r *Repository) CancelMaintenanceOrder(ctx context.Context, id string, reas
 	if actor == "" {
 		actor = "system"
 	}
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return MaintenanceOrder{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 	var item MaintenanceOrder
 	var itemTenantID string
-	err := r.db.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 UPDATE maintenance_orders mo
 SET status = 'cancelled', result = $2
 WHERE mo.id = $1 AND mo.status IN ('reported', 'assigned', 'in_progress')
@@ -7621,12 +7661,16 @@ RETURNING mo.id::text, mo.tenant_id::text, COALESCE(mo.instrument_id::text, ''),
 	if err != nil {
 		return MaintenanceOrder{}, err
 	}
-	if err := r.refreshInstrumentAfterMaintenance(ctx, item.InstrumentID, itemTenantID, reason); err != nil {
+	if err := r.refreshInstrumentAfterMaintenanceTx(ctx, tx, item.InstrumentID, itemTenantID, reason); err != nil {
+		return MaintenanceOrder{}, err
+	}
+	if err := r.auditTx(ctx, tx, itemTenantID, actor, "maintenance.cancel", "maintenance_order", item.ID, "", reason); err != nil {
+		return MaintenanceOrder{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return MaintenanceOrder{}, err
 	}
 	r.invalidateDashboard(ctx)
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, actor, "maintenance.cancel", "maintenance_order", item.ID, "", reason)
 	return item, nil
 }
 
@@ -7640,9 +7684,16 @@ func (r *Repository) CompleteMaintenanceOrder(ctx context.Context, id string, re
 	if actor == "" {
 		actor = "system"
 	}
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return MaintenanceOrder{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 	var item MaintenanceOrder
 	var itemTenantID string
-	err := r.db.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 UPDATE maintenance_orders mo
 SET status = 'completed', result = $2
 WHERE mo.id = $1 AND mo.status IN ('reported', 'assigned', 'in_progress')
@@ -7652,21 +7703,25 @@ RETURNING mo.id::text, mo.tenant_id::text, COALESCE(mo.instrument_id::text, ''),
 	if err != nil {
 		return MaintenanceOrder{}, err
 	}
-	if err := r.refreshInstrumentAfterMaintenance(ctx, item.InstrumentID, itemTenantID, result); err != nil {
+	if err := r.refreshInstrumentAfterMaintenanceTx(ctx, tx, item.InstrumentID, itemTenantID, result); err != nil {
+		return MaintenanceOrder{}, err
+	}
+	if err := r.auditTx(ctx, tx, itemTenantID, actor, "maintenance.complete", "maintenance_order", item.ID, "", result); err != nil {
+		return MaintenanceOrder{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return MaintenanceOrder{}, err
 	}
 	r.invalidateDashboard(ctx)
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, actor, "maintenance.complete", "maintenance_order", item.ID, "", result)
 	return item, nil
 }
 
-func (r *Repository) refreshInstrumentAfterMaintenance(ctx context.Context, instrumentID string, tenantID string, summary string) error {
+func (r *Repository) refreshInstrumentAfterMaintenanceTx(ctx context.Context, tx pgx.Tx, instrumentID string, tenantID string, summary string) error {
 	if strings.TrimSpace(instrumentID) == "" {
 		return nil
 	}
 	var activeCount int
-	if err := r.db.QueryRow(ctx, `
+	if err := tx.QueryRow(ctx, `
 SELECT count(*)
 FROM maintenance_orders
 WHERE instrument_id = $1 AND tenant_id = $2::uuid AND status IN ('reported', 'assigned', 'in_progress')
@@ -7674,10 +7729,10 @@ WHERE instrument_id = $1 AND tenant_id = $2::uuid AND status IN ('reported', 'as
 		return err
 	}
 	if activeCount > 0 {
-		_, err := r.db.Exec(ctx, `UPDATE instruments SET status = 'maintenance', maintenance_summary = $2 WHERE id = $1 AND tenant_id = $3::uuid`, instrumentID, summary, tenantID)
+		_, err := tx.Exec(ctx, `UPDATE instruments SET status = 'maintenance', maintenance_summary = $2 WHERE id = $1 AND tenant_id = $3::uuid`, instrumentID, summary, tenantID)
 		return err
 	}
-	_, err := r.db.Exec(ctx, `UPDATE instruments SET status = 'available', maintenance_summary = $2 WHERE id = $1 AND tenant_id = $3::uuid`, instrumentID, summary, tenantID)
+	_, err := tx.Exec(ctx, `UPDATE instruments SET status = 'available', maintenance_summary = $2 WHERE id = $1 AND tenant_id = $3::uuid`, instrumentID, summary, tenantID)
 	return err
 }
 

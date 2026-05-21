@@ -1120,6 +1120,24 @@ func TestNormalizeServiceHours(t *testing.T) {
 	}
 }
 
+func TestReservationBookingWindowEndUsesApplicationDate(t *testing.T) {
+	t.Parallel()
+
+	today := appToday()
+	if got := reservationBookingWindowEnd(7); !got.Equal(today.AddDate(0, 0, 7)) {
+		t.Fatalf("expected 7 day booking window to end at %s, got %s", today.AddDate(0, 0, 7), got)
+	}
+	if !reservationBookingWindowEnd(0).IsZero() {
+		t.Fatal("非正数预约窗口不应生成截止时间")
+	}
+	if !reservationWithinBookingWindow(today.Add(23*time.Hour), 1) {
+		t.Fatal("当天最后一个完整小时仍应允许预约")
+	}
+	if reservationWithinBookingWindow(today.AddDate(0, 0, 1), 1) {
+		t.Fatal("预约窗口结束日零点不应再允许预约")
+	}
+}
+
 func TestReservationIntervalAlignment(t *testing.T) {
 	t.Parallel()
 
