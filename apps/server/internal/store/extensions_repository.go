@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -60,7 +59,7 @@ func (r *Repository) SaveTrainingCourse(ctx context.Context, id string, input Tr
 		input.Actor = "system"
 	}
 	if input.Title == "" {
-		return TrainingCourse{}, errors.New("training course title is required")
+		return TrainingCourse{}, clientError("training course title is required")
 	}
 	if input.Category == "" {
 		input.Category = "仪器培训"
@@ -151,7 +150,7 @@ func (r *Repository) SaveTrainingAuthorization(ctx context.Context, id string, i
 		input.Actor = "system"
 	}
 	if input.UserName == "" {
-		return TrainingAuthorization{}, errors.New("user name is required")
+		return TrainingAuthorization{}, clientError("user name is required")
 	}
 	if input.Status == "" {
 		input.Status = "pending"
@@ -231,7 +230,7 @@ func (r *Repository) SaveTrainingQuestion(ctx context.Context, id string, input 
 		input.Actor = "system"
 	}
 	if input.Title == "" {
-		return TrainingQuestion{}, errors.New("question title is required")
+		return TrainingQuestion{}, clientError("question title is required")
 	}
 	if input.QuestionType == "" {
 		input.QuestionType = "single"
@@ -492,7 +491,7 @@ func (r *Repository) SaveTrainingRule(ctx context.Context, id string, input Trai
 		input.Actor = "system"
 	}
 	if input.InstrumentID == "" {
-		return TrainingRule{}, errors.New("instrument is required")
+		return TrainingRule{}, clientError("instrument is required")
 	}
 	if input.Status == "" {
 		input.Status = "active"
@@ -584,13 +583,13 @@ func (r *Repository) SaveBusinessConfig(ctx context.Context, domain string, kind
 		input.Actor = "system"
 	}
 	if input.Title == "" {
-		return BusinessConfig{}, errors.New("config title is required")
+		return BusinessConfig{}, clientError("config title is required")
 	}
 	if input.Status == "" {
 		input.Status = "active"
 	}
 	if !validBusinessConfigStatus(input.Status) {
-		return BusinessConfig{}, errors.New("invalid config status")
+		return BusinessConfig{}, clientError("invalid config status")
 	}
 	configJSON, err := normalizeConfigJSON(input.ConfigJSON)
 	if err != nil {
@@ -656,7 +655,7 @@ func normalizeBusinessConfigRoute(domain string, kind string) (string, string, e
 	if allowed[domain][kind] {
 		return domain, kind, nil
 	}
-	return "", "", errors.New("invalid config kind")
+	return "", "", clientError("invalid config kind")
 }
 
 func validBusinessConfigStatus(status string) bool {
@@ -674,11 +673,11 @@ func normalizeConfigJSON(value string) (string, error) {
 		return "{}", nil
 	}
 	if !json.Valid([]byte(value)) {
-		return "", errors.New("invalid config json")
+		return "", clientError("invalid config json")
 	}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, []byte(value)); err != nil {
-		return "", errors.New("invalid config json")
+		return "", clientError("invalid config json")
 	}
 	return compact.String(), nil
 }
@@ -720,7 +719,7 @@ func (r *Repository) SaveSpace(ctx context.Context, id string, input SpaceInput)
 		input.Actor = "system"
 	}
 	if input.Name == "" {
-		return Space{}, errors.New("space name is required")
+		return Space{}, clientError("space name is required")
 	}
 	if input.Kind == "" {
 		input.Kind = "lab"
@@ -803,10 +802,10 @@ func (r *Repository) CreateSpaceReservation(ctx context.Context, input SpaceRese
 		input.Actor = "system"
 	}
 	if input.SpaceID == "" || input.Requester == "" || input.Purpose == "" {
-		return SpaceReservation{}, errors.New("space reservation input is incomplete")
+		return SpaceReservation{}, clientError("space reservation input is incomplete")
 	}
 	if !input.EndTime.After(input.StartTime) {
-		return SpaceReservation{}, errors.New("reservation end time must be after start time")
+		return SpaceReservation{}, clientError("reservation end time must be after start time")
 	}
 	var spaceStatus string
 	if err := r.db.QueryRow(ctx, `
@@ -817,7 +816,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 		return SpaceReservation{}, err
 	}
 	if spaceStatus == "disabled" || spaceStatus == "maintenance" {
-		return SpaceReservation{}, errors.New("space is unavailable")
+		return SpaceReservation{}, clientError("space is unavailable")
 	}
 	var conflict bool
 	if err := r.db.QueryRow(ctx, `
@@ -833,7 +832,7 @@ SELECT EXISTS(
 		return SpaceReservation{}, err
 	}
 	if conflict {
-		return SpaceReservation{}, errors.New("space reservation conflicts with an existing booking")
+		return SpaceReservation{}, clientError("space reservation conflicts with an existing booking")
 	}
 	var item SpaceReservation
 	err := r.db.QueryRow(ctx, `
@@ -890,7 +889,7 @@ func (r *Repository) SaveSample(ctx context.Context, id string, input SampleInpu
 		input.Actor = "system"
 	}
 	if input.Code == "" || input.Name == "" {
-		return Sample{}, errors.New("sample code and name are required")
+		return Sample{}, clientError("sample code and name are required")
 	}
 	if input.Status == "" {
 		input.Status = "stored"
@@ -977,7 +976,7 @@ func (r *Repository) CreateSampleMovement(ctx context.Context, input SampleMovem
 		input.Actor = "system"
 	}
 	if input.SampleID == "" || input.MovementType == "" {
-		return SampleMovement{}, errors.New("sample movement input is incomplete")
+		return SampleMovement{}, clientError("sample movement input is incomplete")
 	}
 	var item SampleMovement
 	err := r.db.QueryRow(ctx, `
@@ -1035,7 +1034,7 @@ func (r *Repository) SaveLimsTask(ctx context.Context, id string, input LimsTask
 		input.Actor = "system"
 	}
 	if input.Title == "" {
-		return LimsTask{}, errors.New("task title is required")
+		return LimsTask{}, clientError("task title is required")
 	}
 	if input.Priority == "" {
 		input.Priority = "normal"
@@ -1127,7 +1126,7 @@ func (r *Repository) SaveElnRecord(ctx context.Context, id string, input ElnReco
 		input.Actor = "system"
 	}
 	if input.Title == "" {
-		return ElnRecord{}, errors.New("eln title is required")
+		return ElnRecord{}, clientError("eln title is required")
 	}
 	if input.Status == "" {
 		input.Status = "draft"
@@ -1213,7 +1212,7 @@ func (r *Repository) SaveIotDevice(ctx context.Context, id string, input IotDevi
 		input.Actor = "system"
 	}
 	if input.Name == "" {
-		return IotDevice{}, errors.New("device name is required")
+		return IotDevice{}, clientError("device name is required")
 	}
 	if input.Status == "" {
 		if input.Online {
@@ -1226,7 +1225,7 @@ func (r *Repository) SaveIotDevice(ctx context.Context, id string, input IotDevi
 		input.Telemetry = "{}"
 	}
 	if !json.Valid([]byte(input.Telemetry)) {
-		return IotDevice{}, errors.New("telemetry must be valid JSON")
+		return IotDevice{}, clientError("telemetry must be valid JSON")
 	}
 	var item IotDevice
 	var err error
@@ -1301,7 +1300,7 @@ func (r *Repository) AskAssistant(ctx context.Context, input AssistantQueryInput
 		input.Actor = "system"
 	}
 	if input.Question == "" {
-		return AssistantQuery{}, errors.New("question is required")
+		return AssistantQuery{}, clientError("question is required")
 	}
 
 	var dashboard Dashboard

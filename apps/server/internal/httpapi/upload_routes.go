@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,23 +38,23 @@ func saveMaterialCertificateUpload(c *gin.Context, uploadRoot string) (string, e
 
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadBytes+maxMultipartOverheadBytes)
 	if err := c.Request.ParseMultipartForm(maxUploadBytes); err != nil {
-		return "", errors.New("标准品证书上传失败：文件超过 8MB 或表单无效")
+		return "", newClientMessageError("标准品证书上传失败：文件超过 8MB 或表单无效")
 	}
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
-		return "", errors.New("标准品证书上传失败：请选择证书文件")
+		return "", newClientMessageError("标准品证书上传失败：请选择证书文件")
 	}
 	defer file.Close()
 	extension := strings.ToLower(filepath.Ext(header.Filename))
 	if !validMaterialCertificateExtension(extension) {
-		return "", errors.New("标准品证书上传失败：仅支持 PDF 文件")
+		return "", newClientMessageError("标准品证书上传失败：仅支持 PDF 文件")
 	}
 	if header.Size > maxUploadBytes {
-		return "", errors.New("标准品证书上传失败：PDF 文件不能超过 8MB")
+		return "", newClientMessageError("标准品证书上传失败：PDF 文件不能超过 8MB")
 	}
 	signature := make([]byte, 5)
 	if _, err := io.ReadFull(file, signature); err != nil || string(signature) != "%PDF-" {
-		return "", errors.New("标准品证书上传失败：文件内容不是有效 PDF")
+		return "", newClientMessageError("标准品证书上传失败：文件内容不是有效 PDF")
 	}
 	dir := filepath.Join(uploadRoot, "material-certificates")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -81,7 +80,7 @@ func saveMaterialCertificateUpload(c *gin.Context, uploadRoot string) (string, e
 	if written+int64(len(signature)) > maxUploadBytes {
 		_ = target.Close()
 		_ = os.Remove(targetPath)
-		return "", errors.New("标准品证书上传失败：PDF 文件不能超过 8MB")
+		return "", newClientMessageError("标准品证书上传失败：PDF 文件不能超过 8MB")
 	}
 	if err := target.Close(); err != nil {
 		_ = os.Remove(targetPath)

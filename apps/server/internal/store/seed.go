@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 
@@ -169,7 +170,7 @@ func ensureInitialAdmin(ctx context.Context, pool *pgxpool.Pool) error {
 		email = "admin@lirs.local"
 	}
 	if password == "" {
-		password = "Lirs@2026Admin"
+		return errors.New("INITIAL_ADMIN_PASSWORD is required")
 	}
 	if name == "" {
 		name = "系统初始管理员"
@@ -196,7 +197,7 @@ SET role = 'super_admin',
 func upgradeDemoUserPasswords(ctx context.Context, pool *pgxpool.Pool) error {
 	password := os.Getenv("INITIAL_DEMO_USER_PASSWORD")
 	if password == "" {
-		password = "Lirs@2026User"
+		return errors.New("INITIAL_DEMO_USER_PASSWORD is required")
 	}
 	passwordHash, err := hashPassword(password)
 	if err != nil {

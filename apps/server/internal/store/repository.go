@@ -295,7 +295,7 @@ func (r *Repository) SaveTenant(ctx context.Context, id string, input TenantInpu
 		input.Status = "active"
 	}
 	if input.Name == "" || !validTenantStatus(input.Status) {
-		return Tenant{}, errors.New("invalid tenant input")
+		return Tenant{}, clientError("invalid tenant input")
 	}
 
 	var item Tenant
@@ -343,7 +343,7 @@ func (r *Repository) generateTenantCode(ctx context.Context) (string, error) {
 			return code, nil
 		}
 	}
-	return "", errors.New("tenant code generation failed")
+	return "", clientError("tenant code generation failed")
 }
 
 func (r *Repository) resolveActiveTenant(ctx context.Context, tenantID string, tenantCode string) (Tenant, error) {
@@ -381,10 +381,10 @@ LIMIT 2
 		return Tenant{}, err
 	}
 	if count == 0 {
-		return Tenant{}, errors.New("tenant not found")
+		return Tenant{}, clientError("tenant not found")
 	}
 	if item.Status != "active" {
-		return Tenant{}, errors.New("tenant is disabled")
+		return Tenant{}, clientError("tenant is disabled")
 	}
 	return item, nil
 }
@@ -478,7 +478,7 @@ func (r *Repository) SaveFooterSettings(ctx context.Context, input FooterSetting
 		Copyright:    input.Copyright,
 	})
 	if value.BaseURL != "" && !validSiteBaseURL(value.BaseURL) {
-		return FooterSettings{}, errors.New("invalid footer settings base url")
+		return FooterSettings{}, clientError("invalid footer settings base url")
 	}
 	payload, err := json.Marshal(value)
 	if err != nil {
@@ -632,10 +632,10 @@ func (r *Repository) SaveGraphMailSettings(ctx context.Context, input GraphMailS
 	}
 	if input.Enabled {
 		if input.TenantID == "" || input.ClientID == "" || input.ClientSecret == "" || input.SenderUserPrincipalName == "" {
-			return GraphMailSettings{}, errors.New("graph mail tenant, client, secret, and sender are required")
+			return GraphMailSettings{}, clientError("graph mail tenant, client, secret, and sender are required")
 		}
 		if _, err := mail.ParseAddress(input.SenderUserPrincipalName); err != nil {
-			return GraphMailSettings{}, errors.New("graph mail sender email is invalid")
+			return GraphMailSettings{}, clientError("graph mail sender email is invalid")
 		}
 	}
 	value := graphMailSettingsValue{
@@ -669,19 +669,19 @@ func (r *Repository) TestGraphMailSettings(ctx context.Context, input GraphMailT
 		return GraphMailTestResult{}, err
 	}
 	if input.To == "" {
-		return GraphMailTestResult{}, errors.New("graph mail test recipient is required")
+		return GraphMailTestResult{}, clientError("graph mail test recipient is required")
 	}
 	if _, err := mail.ParseAddress(input.To); err != nil {
-		return GraphMailTestResult{}, errors.New("graph mail test recipient email is invalid")
+		return GraphMailTestResult{}, clientError("graph mail test recipient email is invalid")
 	}
 	if !settings.Enabled {
-		return GraphMailTestResult{}, errors.New("graph mail is not enabled")
+		return GraphMailTestResult{}, clientError("graph mail is not enabled")
 	}
 	if settings.TenantID == "" || settings.ClientID == "" || settings.ClientSecret == "" || settings.SenderUserPrincipalName == "" {
-		return GraphMailTestResult{}, errors.New("graph mail tenant, client, secret, and sender are required")
+		return GraphMailTestResult{}, clientError("graph mail tenant, client, secret, and sender are required")
 	}
 	if err := r.sendGraphMail(ctx, settings, input.To, "实验室运营系统 Microsoft Graph 邮件测试", fmt.Sprintf("这是一封 Microsoft Graph API 发送测试邮件。\n\n发送人：%s\n发送时间：%s", input.Actor, time.Now().UTC().Format(time.RFC3339))); err != nil {
-		return GraphMailTestResult{}, fmt.Errorf("graph mail test send failed: %w", err)
+		return GraphMailTestResult{}, WrapClientError("graph mail test send failed", err)
 	}
 	r.audit(ctx, input.Actor, "notification.graph_mail_test", "site_setting", graphMailSettingsKey, "", input.To)
 	return GraphMailTestResult{Sent: true, Message: "Microsoft Graph 测试邮件已发送。"}, nil
@@ -710,7 +710,7 @@ func (r *Repository) SaveWeChatSettings(ctx context.Context, input WeChatSetting
 		input.AppSecret = oldValue.AppSecret
 	}
 	if input.Enabled && input.AppID == "" {
-		return WeChatSettings{}, errors.New("wechat app id is required")
+		return WeChatSettings{}, clientError("wechat app id is required")
 	}
 	value := wechatSettingsValue{
 		Enabled:            input.Enabled,
@@ -765,16 +765,16 @@ func (r *Repository) SaveDingTalkSettings(ctx context.Context, input DingTalkSet
 		input.EventToken = oldValue.EventToken
 	}
 	if input.Enabled && (input.ClientID == "" || input.ClientSecret == "" || input.CorpID == "" || input.RobotCode == "") {
-		return DingTalkSettings{}, errors.New("dingtalk client id, client secret, corp id and robot code are required")
+		return DingTalkSettings{}, clientError("dingtalk client id, client secret, corp id and robot code are required")
 	}
 	if input.Enabled && input.OAuthRedirectURI == "" {
-		return DingTalkSettings{}, errors.New("dingtalk oauth redirect uri is required")
+		return DingTalkSettings{}, clientError("dingtalk oauth redirect uri is required")
 	}
 	if input.Enabled && (input.EventCallbackURL == "" || input.EventAesKey == "" || input.EventToken == "") {
-		return DingTalkSettings{}, errors.New("dingtalk event callback url, aes key and token are required")
+		return DingTalkSettings{}, clientError("dingtalk event callback url, aes key and token are required")
 	}
 	if input.EventAesKey != "" && len(input.EventAesKey) != 43 {
-		return DingTalkSettings{}, errors.New("dingtalk event aes key must be 43 characters")
+		return DingTalkSettings{}, clientError("dingtalk event aes key must be 43 characters")
 	}
 	tenantCode := tenant.TenantID
 	if currentTenant, err := r.resolveActiveTenant(ctx, tenant.TenantID, ""); err == nil && currentTenant.Code != "" {
@@ -817,17 +817,17 @@ func (r *Repository) TestDingTalkSettings(ctx context.Context, input DingTalkTes
 		tenant.TenantID = defaultTenantID
 	}
 	if input.UserID == "" {
-		return DingTalkTestResult{}, errors.New("dingtalk test user is required")
+		return DingTalkTestResult{}, clientError("dingtalk test user is required")
 	}
 	settings, err := r.dingTalkSettingsValue(ctx)
 	if err != nil {
 		return DingTalkTestResult{}, err
 	}
 	if !settings.Enabled {
-		return DingTalkTestResult{}, errors.New("dingtalk notification is not enabled")
+		return DingTalkTestResult{}, clientError("dingtalk notification is not enabled")
 	}
 	if settings.ClientID == "" || settings.ClientSecret == "" || settings.CorpID == "" || settings.RobotCode == "" {
-		return DingTalkTestResult{}, errors.New("dingtalk client id, client secret, corp id and robot code are required")
+		return DingTalkTestResult{}, clientError("dingtalk client id, client secret, corp id and robot code are required")
 	}
 	target, err := r.dingTalkBoundUser(ctx, tenant.TenantID, input.UserID)
 	if err != nil {
@@ -836,7 +836,7 @@ func (r *Repository) TestDingTalkSettings(ctx context.Context, input DingTalkTes
 	title := "实验室运营系统钉钉测试推送"
 	body := fmt.Sprintf("这是一条钉钉企业应用测试推送。\n\n接收人：%s\n发送人：%s\n发送时间：%s", target.Name, input.Actor, time.Now().UTC().Format(time.RFC3339))
 	if err := r.sendDingTalkWorkNotification(ctx, settings, target.DingTalkUserID, title, body); err != nil {
-		return DingTalkTestResult{}, fmt.Errorf("dingtalk test send failed: %w", err)
+		return DingTalkTestResult{}, WrapClientError("dingtalk test send failed", err)
 	}
 	settingKey := tenantScopedDingTalkSettingsKey(tenant.TenantID)
 	r.audit(WithTenantContext(ctx, TenantContext{TenantID: tenant.TenantID, TenantName: tenant.TenantName, FinanceEnabled: tenant.FinanceEnabled}), input.Actor, "notification.dingtalk_test", "site_setting", settingKey, "", input.UserID)
@@ -874,10 +874,10 @@ func (r *Repository) SaveAccessControlSettings(ctx context.Context, input Access
 	}
 	if input.Enabled {
 		if input.Endpoint == "" || input.ClientID == "" {
-			return AccessControlSettings{}, errors.New("access control endpoint and client id are required")
+			return AccessControlSettings{}, clientError("access control endpoint and client id are required")
 		}
 		if input.ClientSecret == "" {
-			return AccessControlSettings{}, errors.New("access control client secret is required")
+			return AccessControlSettings{}, clientError("access control client secret is required")
 		}
 	}
 
@@ -989,13 +989,13 @@ func (r *Repository) SaveInstrument(ctx context.Context, id string, input Instru
 		input.Actor = "system"
 	}
 	if input.Name == "" || input.Category == "" || input.Department == "" || input.Location == "" || input.HourlyRate < 0 {
-		return Instrument{}, errors.New("invalid instrument input")
+		return Instrument{}, clientError("invalid instrument input")
 	}
 	if input.Status == "" {
 		input.Status = "available"
 	}
 	if !validInstrumentStatus(input.Status) {
-		return Instrument{}, errors.New("invalid instrument status")
+		return Instrument{}, clientError("invalid instrument status")
 	}
 	if input.GroupName != "" {
 		var teamExists bool
@@ -1012,7 +1012,7 @@ SELECT EXISTS(
 			return Instrument{}, err
 		}
 		if !teamExists {
-			return Instrument{}, errors.New("instrument team must belong to selected department")
+			return Instrument{}, clientError("instrument team must belong to selected department")
 		}
 	}
 
@@ -1314,7 +1314,7 @@ func (r *Repository) OrganizationUnits(ctx context.Context, kind string) ([]Orga
 	tenant := TenantFromContext(ctx)
 	kind = strings.TrimSpace(kind)
 	if kind != "" && !validOrganizationUnitKind(kind) {
-		return nil, errors.New("invalid organization unit kind")
+		return nil, clientError("invalid organization unit kind")
 	}
 	rows, err := r.db.Query(ctx, `
 SELECT id::text, kind, name, parent_name, created_at, updated_at
@@ -1349,13 +1349,13 @@ func (r *Repository) SaveOrganizationUnit(ctx context.Context, id string, input 
 		input.Actor = "system"
 	}
 	if !validOrganizationUnitKind(input.Kind) || input.Name == "" {
-		return OrganizationUnit{}, errors.New("invalid organization unit input")
+		return OrganizationUnit{}, clientError("invalid organization unit input")
 	}
 	if input.Kind == "department" {
 		input.ParentName = ""
 	}
 	if input.Kind == "group" && input.ParentName == "" {
-		return OrganizationUnit{}, errors.New("organization unit parent department is required")
+		return OrganizationUnit{}, clientError("organization unit parent department is required")
 	}
 
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
@@ -1380,7 +1380,7 @@ SELECT EXISTS(
 			return OrganizationUnit{}, err
 		}
 		if !parentExists {
-			return OrganizationUnit{}, errors.New("organization unit parent department is required")
+			return OrganizationUnit{}, clientError("organization unit parent department is required")
 		}
 	}
 
@@ -1412,7 +1412,7 @@ FOR UPDATE
 		return OrganizationUnit{}, err
 	}
 	if oldUnit.Kind != input.Kind {
-		return OrganizationUnit{}, errors.New("organization unit kind cannot be changed")
+		return OrganizationUnit{}, clientError("organization unit kind cannot be changed")
 	}
 
 	var item OrganizationUnit
@@ -1499,10 +1499,10 @@ func (r *Repository) ReviewUser(ctx context.Context, id string, input UserReview
 		input.Actor = "system"
 	}
 	if !validRole(input.Role) || !validUserStatus(input.Status) {
-		return User{}, errors.New("invalid user review input")
+		return User{}, clientError("invalid user review input")
 	}
 	if input.Status == "deleted" {
-		return User{}, errors.New("user status cannot be changed to deleted")
+		return User{}, clientError("user status cannot be changed to deleted")
 	}
 
 	var oldTenantID, oldRole, oldStatus, oldGroup, oldDepartment, oldEmail, oldPhone string
@@ -1513,10 +1513,10 @@ func (r *Repository) ReviewUser(ctx context.Context, id string, input UserReview
 		input.TenantID = oldTenantID
 	}
 	if input.TenantID != oldTenantID && input.ActorRole != "super_admin" {
-		return User{}, errors.New("only system super admin can change tenant")
+		return User{}, clientError("only system super admin can change tenant")
 	}
 	if !canActorManageUserRole(input.ActorRole, oldRole, input.Role) {
-		return User{}, errors.New("only system super admin can manage administrator roles")
+		return User{}, clientError("only system super admin can manage administrator roles")
 	}
 	if input.GroupName == "" {
 		input.GroupName = oldGroup
@@ -1531,10 +1531,10 @@ func (r *Repository) ReviewUser(ctx context.Context, id string, input UserReview
 		input.Phone = oldPhone
 	}
 	if _, err := mail.ParseAddress(input.Email); err != nil {
-		return User{}, errors.New("user email is invalid")
+		return User{}, clientError("user email is invalid")
 	}
 	if input.Phone == "" {
-		return User{}, errors.New("user phone is required")
+		return User{}, clientError("user phone is required")
 	}
 	targetTenant, err := r.resolveActiveTenant(ctx, input.TenantID, "")
 	if err != nil {
@@ -1551,7 +1551,7 @@ WHERE lower(email) = lower($1) AND id <> $2
 		return User{}, err
 	}
 	if duplicateEmailCount > 0 {
-		return User{}, errors.New("user email already exists")
+		return User{}, clientError("user email already exists")
 	}
 
 	var user User
@@ -1617,10 +1617,10 @@ func (r *Repository) SaveUserMembership(ctx context.Context, id string, input Us
 		input.Actor = "system"
 	}
 	if input.TenantID == "" || !validRole(input.Role) || !validUserStatus(input.Status) {
-		return User{}, errors.New("invalid user membership input")
+		return User{}, clientError("invalid user membership input")
 	}
 	if input.Role == "super_admin" {
-		return User{}, errors.New("user membership cannot use system super admin role")
+		return User{}, clientError("user membership cannot use system super admin role")
 	}
 
 	var sourceTenantID, sourceName, sourceEmail, sourcePhone, sourceDepartment, sourceGroup, sourcePasswordHash string
@@ -1633,7 +1633,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 		return User{}, err
 	}
 	if _, err := mail.ParseAddress(sourceEmail); err != nil {
-		return User{}, errors.New("user email is invalid")
+		return User{}, clientError("user email is invalid")
 	}
 	if input.Department == "" {
 		input.Department = sourceDepartment
@@ -1724,19 +1724,19 @@ func (r *Repository) CreateUser(ctx context.Context, input UserCreateInput) (Use
 		input.GroupName = "未分配归属"
 	}
 	if input.Name == "" || input.Email == "" || input.Phone == "" || input.Department == "" || len(input.Password) < 8 || !validRole(input.Role) || !validUserStatus(input.Status) {
-		return User{}, errors.New("invalid user create input")
+		return User{}, clientError("invalid user create input")
 	}
 	if input.Status == "deleted" {
-		return User{}, errors.New("invalid user create status")
+		return User{}, clientError("invalid user create status")
 	}
 	if input.ActorRole != "super_admin" && input.TenantID != tenant.TenantID {
-		return User{}, errors.New("only system super admin can create users for another tenant")
+		return User{}, clientError("only system super admin can create users for another tenant")
 	}
 	if !canActorManageUserRole(input.ActorRole, "unassigned", input.Role) {
-		return User{}, errors.New("only system super admin can manage administrator roles")
+		return User{}, clientError("only system super admin can manage administrator roles")
 	}
 	if _, err := mail.ParseAddress(input.Email); err != nil {
-		return User{}, errors.New("user email is invalid")
+		return User{}, clientError("user email is invalid")
 	}
 	targetTenant, err := r.resolveActiveTenant(ctx, input.TenantID, "")
 	if err != nil {
@@ -1877,7 +1877,7 @@ WHERE u.id = $1 AND ($2::boolean OR u.tenant_id = $3::uuid)
 		profileFieldChanged(input.Phone, oldUser.Phone) ||
 		profileFieldChanged(input.Department, oldUser.Department) ||
 		profileFieldChanged(input.GroupName, oldUser.GroupName) {
-		return User{}, errors.New("user profile identity fields are managed by administrators")
+		return User{}, clientError("user profile identity fields are managed by administrators")
 	}
 
 	return oldUser, nil
@@ -1923,11 +1923,11 @@ func (r *Repository) BindCurrentUserDingTalk(ctx context.Context, id string, inp
 		return DingTalkBinding{}, err
 	}
 	if !settings.Enabled || settings.ClientID == "" || settings.ClientSecret == "" {
-		return DingTalkBinding{}, errors.New("dingtalk application is not configured")
+		return DingTalkBinding{}, clientError("dingtalk application is not configured")
 	}
 
 	if input.AuthCode == "" {
-		return DingTalkBinding{}, errors.New("dingtalk auth code is required")
+		return DingTalkBinding{}, clientError("dingtalk auth code is required")
 	}
 	if err := r.consumeDingTalkOAuthState(ctx, tenant.TenantID, id, input.State); err != nil {
 		return DingTalkBinding{}, err
@@ -1940,7 +1940,7 @@ func (r *Repository) BindCurrentUserDingTalk(ctx context.Context, id string, inp
 	identity.UnionID = strings.TrimSpace(identity.UnionID)
 	identity.Name = strings.TrimSpace(identity.Name)
 	if identity.UserID == "" {
-		return DingTalkBinding{}, errors.New("dingtalk user id is required")
+		return DingTalkBinding{}, clientError("dingtalk user id is required")
 	}
 
 	var binding DingTalkBinding
@@ -2005,7 +2005,7 @@ func (r *Repository) ChangePassword(ctx context.Context, id string, input Passwo
 		input.Actor = "system"
 	}
 	if input.CurrentPassword == "" || len(input.NewPassword) < 8 {
-		return errors.New("invalid password input")
+		return clientError("invalid password input")
 	}
 
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
@@ -2021,7 +2021,7 @@ func (r *Repository) ChangePassword(ctx context.Context, id string, input Passwo
 		return err
 	}
 	if !passwordMatches(passwordHash, input.CurrentPassword) {
-		return errors.New("current password is incorrect")
+		return clientError("current password is incorrect")
 	}
 
 	newHash, err := hashPassword(input.NewPassword)
@@ -2149,7 +2149,7 @@ func (r *Repository) MarkAllNotificationsRead(ctx context.Context, actor Actor) 
 	source := strings.TrimSpace(notificationSourceFromContext(ctx))
 	actor.UserID = strings.TrimSpace(actor.UserID)
 	if actor.UserID == "" {
-		return 0, errors.New("user must be active")
+		return 0, clientError("user must be active")
 	}
 	var count int
 	err := r.db.QueryRow(ctx, `
@@ -2331,7 +2331,7 @@ func (r *Repository) insertNotification(ctx context.Context, writer notification
 		source = "system"
 	}
 	if source != "system" && source != "announcement" {
-		return Notification{}, errors.New("invalid notification source")
+		return Notification{}, clientError("invalid notification source")
 	}
 	item, err := scanNotification(writer.QueryRow(ctx, `
 INSERT INTO notifications (tenant_id, user_id, group_name, department, title, body, level, target_scope, source, publisher)
@@ -2412,7 +2412,7 @@ func (r *Repository) resolveAnnouncementInput(ctx context.Context, input Announc
 		input.TargetScope = "global"
 	}
 	if input.Title == "" || input.Body == "" {
-		return AnnouncementInput{}, errors.New("invalid announcement input")
+		return AnnouncementInput{}, clientError("invalid announcement input")
 	}
 	userID := input.UserID
 	groupName := input.GroupName
@@ -2423,7 +2423,7 @@ func (r *Repository) resolveAnnouncementInput(ctx context.Context, input Announc
 	case "personal":
 		target := firstNonEmpty(input.UserID, input.Target)
 		if target == "" {
-			return AnnouncementInput{}, errors.New("personal announcement requires a target user")
+			return AnnouncementInput{}, clientError("personal announcement requires a target user")
 		}
 		if err := r.db.QueryRow(ctx, `
 SELECT id::text, group_name, department
@@ -2437,17 +2437,17 @@ LIMIT 1
 	case "group":
 		groupName = firstNonEmpty(input.GroupName, input.Target)
 		if groupName == "" {
-			return AnnouncementInput{}, errors.New("group announcement requires a group name")
+			return AnnouncementInput{}, clientError("group announcement requires a group name")
 		}
 		userID, department = "", ""
 	case "department":
 		department = firstNonEmpty(input.Department, input.Target)
 		if department == "" {
-			return AnnouncementInput{}, errors.New("department announcement requires a department")
+			return AnnouncementInput{}, clientError("department announcement requires a department")
 		}
 		userID, groupName = "", ""
 	default:
-		return AnnouncementInput{}, errors.New("invalid announcement scope")
+		return AnnouncementInput{}, clientError("invalid announcement scope")
 	}
 	input.UserID = userID
 	input.GroupName = groupName
@@ -2519,7 +2519,7 @@ func (r *Repository) AdjustLedger(ctx context.Context, input LedgerAdjustmentInp
 		input.Actor = "system"
 	}
 	if (input.UserID == "" && input.UserName == "") || input.Reason == "" || input.Amount == 0 {
-		return LedgerEntry{}, errors.New("invalid ledger adjustment input")
+		return LedgerEntry{}, clientError("invalid ledger adjustment input")
 	}
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -2549,7 +2549,7 @@ LIMIT 1
 		return LedgerEntry{}, err
 	}
 	if targetStatus != "active" {
-		return LedgerEntry{}, errors.New("financial user is not active")
+		return LedgerEntry{}, clientError("financial user is not active")
 	}
 	targetGroupName = firstNonEmpty(input.GroupName, targetGroupName, targetDepartment, "个人账户")
 
@@ -2632,7 +2632,7 @@ func (r *Repository) SaveFinancialAccount(ctx context.Context, id string, input 
 		input.Actor = "system"
 	}
 	if (input.UserID == "" && input.UserName == "" && id == "") || input.CreditLimit < 0 {
-		return FinancialAccount{}, errors.New("invalid financial account input")
+		return FinancialAccount{}, clientError("invalid financial account input")
 	}
 
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
@@ -2671,7 +2671,7 @@ LIMIT 1
 		return FinancialAccount{}, err
 	}
 	if targetStatus != "active" {
-		return FinancialAccount{}, errors.New("financial user is not active")
+		return FinancialAccount{}, clientError("financial user is not active")
 	}
 	targetGroupName = firstNonEmpty(input.GroupName, targetGroupName, targetDepartment, "个人账户")
 
@@ -2740,7 +2740,7 @@ func (r *Repository) Register(ctx context.Context, input RegisterInput) (User, e
 	input.Department = strings.TrimSpace(input.Department)
 	input.VerificationCode = strings.TrimSpace(input.VerificationCode)
 	if input.Name == "" || input.Email == "" || input.Phone == "" || input.Department == "" || len(input.Password) < 8 || input.VerificationCode == "" || !validRegisterAccountType(input.AccountType) {
-		return User{}, errors.New("invalid registration input")
+		return User{}, clientError("invalid registration input")
 	}
 	tenant, err := r.resolveActiveTenant(ctx, input.TenantID, input.TenantCode)
 	if err != nil {
@@ -2776,7 +2776,7 @@ LIMIT 1
 FOR UPDATE
 `, input.TenantID, input.Email, verificationCodeHash(input.VerificationCode)).Scan(&codeID)
 	if err != nil {
-		return User{}, errors.New("email verification code is invalid or expired")
+		return User{}, clientError("email verification code is invalid or expired")
 	}
 
 	var user User
@@ -2840,10 +2840,10 @@ func (r *Repository) RequestEmailVerificationCode(ctx context.Context, input Ema
 	input.TenantCode = strings.TrimSpace(strings.ToLower(input.TenantCode))
 	input.Email = strings.TrimSpace(strings.ToLower(input.Email))
 	if input.Email == "" {
-		return EmailVerificationCodeResponse{}, errors.New("invalid email verification input")
+		return EmailVerificationCodeResponse{}, clientError("invalid email verification input")
 	}
 	if _, err := mail.ParseAddress(input.Email); err != nil {
-		return EmailVerificationCodeResponse{}, errors.New("email address is invalid")
+		return EmailVerificationCodeResponse{}, clientError("email address is invalid")
 	}
 	tenant, err := r.resolveActiveTenant(ctx, input.TenantID, input.TenantCode)
 	if err != nil {
@@ -2869,7 +2869,7 @@ VALUES ($1, $2, $3, now() + interval '10 minutes')
 		return EmailVerificationCodeResponse{Sent: false, Message: "验证码已生成，但 Microsoft Graph 邮件尚未启用，请在后台配置 Graph API 邮件通道。"}, nil
 	}
 	if err := r.sendGraphMail(ctx, settings, input.Email, "实验室运营系统注册验证码", fmt.Sprintf("您的注册验证码是：%s。10 分钟内有效。", code)); err != nil {
-		return EmailVerificationCodeResponse{}, fmt.Errorf("email verification send failed: %w", err)
+		return EmailVerificationCodeResponse{}, WrapClientError("email verification send failed", err)
 	}
 	return EmailVerificationCodeResponse{Sent: true, Message: "验证码已发送，请检查邮箱。"}, nil
 }
@@ -2884,7 +2884,7 @@ type dingTalkIdentity struct {
 func (r *Repository) VerifyEmail(ctx context.Context, token string) (User, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return User{}, errors.New("invalid verification token")
+		return User{}, clientError("invalid verification token")
 	}
 	var user User
 	err := r.db.QueryRow(ctx, `
@@ -2908,7 +2908,7 @@ func (r *Repository) Login(ctx context.Context, input LoginInput) (AuthResponse,
 	input.Email = strings.TrimSpace(strings.ToLower(input.Email))
 	input.Device = strings.TrimSpace(input.Device)
 	if input.Email == "" || input.Password == "" {
-		return AuthResponse{}, errors.New("invalid login input")
+		return AuthResponse{}, clientError("invalid login input")
 	}
 
 	rows, err := r.db.Query(ctx, `
@@ -2950,16 +2950,16 @@ LIMIT 2
 		return AuthResponse{}, err
 	}
 	if count == 0 {
-		return AuthResponse{}, errors.New("invalid email, password, or institution")
+		return AuthResponse{}, clientError("invalid email, password, or institution")
 	}
 	if count > 1 && input.TenantID == "" && input.TenantCode == "" {
-		return AuthResponse{}, errors.New("tenant is required when this email exists in multiple tenants")
+		return AuthResponse{}, clientError("tenant is required when this email exists in multiple tenants")
 	}
 	if !passwordMatches(passwordHash, input.Password) {
-		return AuthResponse{}, errors.New("invalid email or password")
+		return AuthResponse{}, clientError("invalid email or password")
 	}
 	if user.Status == "disabled" {
-		return AuthResponse{}, errors.New("account is disabled")
+		return AuthResponse{}, clientError("account is disabled")
 	}
 
 	return r.createUserSession(ctx, user, firstNonEmpty(input.Device, "web"), "auth.login")
@@ -2972,7 +2972,7 @@ func (r *Repository) DingTalkQuickLogin(ctx context.Context, input DingTalkQuick
 	input.CorpID = strings.TrimSpace(input.CorpID)
 	input.Device = strings.TrimSpace(input.Device)
 	if input.AuthCode == "" {
-		return AuthResponse{}, errors.New("dingtalk auth code is required")
+		return AuthResponse{}, clientError("dingtalk auth code is required")
 	}
 
 	tenant, settings, err := r.dingTalkQuickLoginTenantSettings(ctx, input)
@@ -2980,7 +2980,7 @@ func (r *Repository) DingTalkQuickLogin(ctx context.Context, input DingTalkQuick
 		return AuthResponse{}, err
 	}
 	if !settings.Enabled || settings.ClientID == "" || settings.ClientSecret == "" || settings.CorpID == "" {
-		return AuthResponse{}, errors.New("dingtalk application is not configured")
+		return AuthResponse{}, clientError("dingtalk application is not configured")
 	}
 
 	identity, err := r.dingTalkIdentityByQuickAuthCode(ctx, settings, input.AuthCode)
@@ -2992,7 +2992,7 @@ func (r *Repository) DingTalkQuickLogin(ctx context.Context, input DingTalkQuick
 		return AuthResponse{}, err
 	}
 	if user.Status == "disabled" {
-		return AuthResponse{}, errors.New("account is disabled")
+		return AuthResponse{}, clientError("account is disabled")
 	}
 	return r.createUserSession(ctx, user, firstNonEmpty(input.Device, "dingtalk"), "auth.dingtalk_quick_login")
 }
@@ -3002,7 +3002,7 @@ func (r *Repository) DingTalkWebLoginIntent(ctx context.Context, input DingTalkW
 	input.TenantCode = strings.TrimSpace(strings.ToLower(input.TenantCode))
 	input.RedirectURI = strings.TrimSpace(input.RedirectURI)
 	if input.RedirectURI == "" {
-		return DingTalkWebLoginIntent{}, errors.New("dingtalk redirect uri is required")
+		return DingTalkWebLoginIntent{}, clientError("dingtalk redirect uri is required")
 	}
 	tenant, settings, err := r.dingTalkQuickLoginTenantSettings(ctx, DingTalkQuickLoginInput{
 		TenantID:   input.TenantID,
@@ -3034,7 +3034,7 @@ func (r *Repository) DingTalkWebLogin(ctx context.Context, input DingTalkWebLogi
 	input.State = strings.TrimSpace(input.State)
 	input.Device = strings.TrimSpace(input.Device)
 	if input.AuthCode == "" {
-		return DingTalkWebLoginResult{}, errors.New("dingtalk auth code is required")
+		return DingTalkWebLoginResult{}, clientError("dingtalk auth code is required")
 	}
 
 	stateTenantID, err := r.consumeDingTalkWebLoginState(ctx, input.State)
@@ -3075,7 +3075,7 @@ func (r *Repository) DingTalkWebLogin(ctx context.Context, input DingTalkWebLogi
 		}, nil
 	}
 	if user.Status == "disabled" {
-		return DingTalkWebLoginResult{}, errors.New("account is disabled")
+		return DingTalkWebLoginResult{}, clientError("account is disabled")
 	}
 	auth, err := r.createUserSession(ctx, user, firstNonEmpty(input.Device, "dingtalk-web"), "auth.dingtalk_web_login")
 	if err != nil {
@@ -3089,7 +3089,7 @@ func (r *Repository) BindDingTalkLoginToExistingUser(ctx context.Context, input 
 	input.Email = strings.TrimSpace(strings.ToLower(input.Email))
 	input.Device = strings.TrimSpace(input.Device)
 	if input.BindingToken == "" || input.Email == "" || input.Password == "" {
-		return AuthResponse{}, errors.New("invalid dingtalk binding input")
+		return AuthResponse{}, clientError("invalid dingtalk binding input")
 	}
 	intent, err := r.consumeDingTalkLoginBindingIntent(ctx, input.BindingToken)
 	if err != nil {
@@ -3100,17 +3100,17 @@ func (r *Repository) BindDingTalkLoginToExistingUser(ctx context.Context, input 
 		return AuthResponse{}, err
 	}
 	if !passwordMatches(passwordHash, input.Password) {
-		return AuthResponse{}, errors.New("invalid email or password")
+		return AuthResponse{}, clientError("invalid email or password")
 	}
 	if user.Status == "disabled" {
-		return AuthResponse{}, errors.New("account is disabled")
+		return AuthResponse{}, clientError("account is disabled")
 	}
 	identity := intent.Identity
 	identity.UserID = strings.TrimSpace(identity.UserID)
 	identity.UnionID = strings.TrimSpace(identity.UnionID)
 	identity.Name = strings.TrimSpace(identity.Name)
 	if identity.UserID == "" {
-		return AuthResponse{}, errors.New("dingtalk user id is required")
+		return AuthResponse{}, clientError("dingtalk user id is required")
 	}
 	if _, err := r.db.Exec(ctx, `
 UPDATE users
@@ -3152,7 +3152,7 @@ func (r *Repository) dingTalkQuickLoginTenantSettings(ctx context.Context, input
 		}
 	}
 	if len(candidates) == 0 {
-		return Tenant{}, dingTalkSettingsValue{}, errors.New("tenant not found")
+		return Tenant{}, dingTalkSettingsValue{}, clientError("tenant not found")
 	}
 
 	var matchedTenant Tenant
@@ -3177,10 +3177,10 @@ func (r *Repository) dingTalkQuickLoginTenantSettings(ctx context.Context, input
 		matchedSettings = settings
 	}
 	if matches == 0 {
-		return Tenant{}, dingTalkSettingsValue{}, errors.New("dingtalk application is not configured")
+		return Tenant{}, dingTalkSettingsValue{}, clientError("dingtalk application is not configured")
 	}
 	if matches > 1 {
-		return Tenant{}, dingTalkSettingsValue{}, errors.New("tenant is required for dingtalk login")
+		return Tenant{}, dingTalkSettingsValue{}, clientError("tenant is required for dingtalk login")
 	}
 	return matchedTenant, matchedSettings, nil
 }
@@ -3189,7 +3189,7 @@ func (r *Repository) userByDingTalkIdentity(ctx context.Context, tenantID string
 	identity.UserID = strings.TrimSpace(identity.UserID)
 	identity.UnionID = strings.TrimSpace(identity.UnionID)
 	if identity.UserID == "" && identity.UnionID == "" {
-		return User{}, errors.New("dingtalk user id is required")
+		return User{}, clientError("dingtalk user id is required")
 	}
 	var user User
 	err := r.db.QueryRow(ctx, `
@@ -3206,7 +3206,7 @@ ORDER BY u.updated_at DESC
 LIMIT 1
 `, tenantID, identity.UserID, identity.UnionID).Scan(&user.ID, &user.TenantID, &user.TenantName, &user.TenantCode, &user.Name, &user.Email, &user.Phone, &user.Department, &user.GroupName, &user.Role, &user.Status, &user.EmailVerified, &user.DingTalkUserID, &user.DingTalkUnionID, &user.DingTalkName, &user.DingTalkBound, &user.FinanceEnabled, &user.AuthEpoch)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return User{}, errors.New("dingtalk account is not bound to a LIRS user")
+		return User{}, clientError("dingtalk account is not bound to a LIRS user")
 	}
 	return user, err
 }
@@ -3215,7 +3215,7 @@ func (r *Repository) loginUserForTenant(ctx context.Context, tenantID string, em
 	tenantID = strings.TrimSpace(tenantID)
 	email = strings.TrimSpace(strings.ToLower(email))
 	if tenantID == "" || email == "" {
-		return User{}, "", errors.New("invalid login input")
+		return User{}, "", clientError("invalid login input")
 	}
 	var user User
 	var passwordHash string
@@ -3232,7 +3232,7 @@ ORDER BY u.created_at DESC
 LIMIT 1
 `, tenantID, email).Scan(&user.ID, &user.TenantID, &user.TenantName, &user.TenantCode, &user.Name, &user.Email, &user.Phone, &user.Department, &user.GroupName, &user.Role, &user.Status, &user.EmailVerified, &user.DingTalkUserID, &user.DingTalkUnionID, &user.DingTalkName, &user.DingTalkBound, &user.FinanceEnabled, &user.AuthEpoch, &passwordHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return User{}, "", errors.New("invalid email, password, or institution")
+		return User{}, "", clientError("invalid email, password, or institution")
 	}
 	return user, passwordHash, err
 }
@@ -3266,7 +3266,7 @@ VALUES ($1, $2, $3, $4, $5)
 func (r *Repository) CurrentUser(ctx context.Context, token string) (User, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return User{}, errors.New("missing token")
+		return User{}, clientError("missing token")
 	}
 	hash := tokenHash(token)
 	var user User
@@ -3294,7 +3294,7 @@ WHERE s.token_hash = $1
 func (r *Repository) Logout(ctx context.Context, token string) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return errors.New("missing token")
+		return clientError("missing token")
 	}
 	hash := tokenHash(token)
 	_, err := r.db.Exec(ctx, `UPDATE sessions SET revoked_at = now() WHERE token_hash = $1 AND revoked_at IS NULL`, hash)
@@ -3304,7 +3304,7 @@ func (r *Repository) Logout(ctx context.Context, token string) error {
 func (r *Repository) LogoutAll(ctx context.Context, userID string) error {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
-		return errors.New("missing user")
+		return clientError("missing user")
 	}
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -3366,23 +3366,23 @@ func (r *Repository) CreateReservationBatch(ctx context.Context, input Reservati
 	input.Purpose = strings.TrimSpace(input.Purpose)
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	if input.InstrumentID == "" || input.UserName == "" || input.Purpose == "" || len(input.Periods) == 0 {
-		return nil, errors.New("invalid reservation batch input")
+		return nil, clientError("invalid reservation batch input")
 	}
 	if len(input.Periods) > 72 {
-		return nil, errors.New("reservation batch has too many periods")
+		return nil, clientError("reservation batch has too many periods")
 	}
 
 	normalizedPeriods := make([]ReservationPeriodInput, 0, len(input.Periods))
 	totalDuration := time.Duration(0)
 	for _, period := range input.Periods {
 		if !period.EndTime.After(period.StartTime) {
-			return nil, errors.New("invalid reservation period")
+			return nil, clientError("invalid reservation period")
 		}
 		if period.EndTime.Sub(period.StartTime) < time.Hour {
-			return nil, errors.New("minimum reservation duration is one hour")
+			return nil, clientError("minimum reservation duration is one hour")
 		}
 		if !isHourAligned(period.StartTime) || !isHourAligned(period.EndTime) {
-			return nil, errors.New("reservation time must use whole-hour granularity")
+			return nil, clientError("reservation time must use whole-hour granularity")
 		}
 		totalDuration += period.EndTime.Sub(period.StartTime)
 		normalizedPeriods = append(normalizedPeriods, period)
@@ -3454,13 +3454,13 @@ func (r *Repository) createReservationInTx(ctx context.Context, tx pgx.Tx, input
 	input.Purpose = strings.TrimSpace(input.Purpose)
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	if input.InstrumentID == "" || input.UserName == "" || input.Purpose == "" || !input.EndTime.After(input.StartTime) {
-		return Reservation{}, errors.New("invalid reservation input")
+		return Reservation{}, clientError("invalid reservation input")
 	}
 	if input.EndTime.Sub(input.StartTime) < time.Hour {
-		return Reservation{}, errors.New("minimum reservation duration is one hour")
+		return Reservation{}, clientError("minimum reservation duration is one hour")
 	}
 	if !isHourAligned(input.StartTime) || !isHourAligned(input.EndTime) {
-		return Reservation{}, errors.New("reservation time must use whole-hour granularity")
+		return Reservation{}, clientError("reservation time must use whole-hour granularity")
 	}
 
 	if input.IdempotencyKey == "" {
@@ -3486,7 +3486,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 	}
 	serviceStartHour, serviceEndHour = normalizeServiceHours(serviceStartHour, serviceEndHour)
 	if instrumentStatus == "maintenance" || instrumentStatus == "disabled" {
-		return Reservation{}, errors.New("instrument is not bookable")
+		return Reservation{}, clientError("instrument is not bookable")
 	}
 	if maxBookingHours > 0 && input.EndTime.Sub(input.StartTime) > time.Duration(maxBookingHours)*time.Hour {
 		return Reservation{}, fmt.Errorf("reservation exceeds maximum duration of %d hours", maxBookingHours)
@@ -3498,7 +3498,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 		return Reservation{}, fmt.Errorf("reservation must start within %d days", bookingWindowDays)
 	}
 	if !isWithinServiceHours(input.StartTime, input.EndTime, serviceStartHour, serviceEndHour) {
-		return Reservation{}, errors.New("reservation must be within service hours")
+		return Reservation{}, clientError("reservation must be within service hours")
 	}
 	if !isAlignedToReservationInterval(input.StartTime, bookingIntervalHours, serviceStartHour) || !isAlignedToReservationInterval(input.EndTime, bookingIntervalHours, serviceStartHour) {
 		return Reservation{}, fmt.Errorf("reservation time must use %d hour intervals", maxInt(bookingIntervalHours, 1))
@@ -3526,13 +3526,13 @@ LIMIT 1
 		return Reservation{}, userErr
 	}
 	if errors.Is(userErr, pgx.ErrNoRows) {
-		return Reservation{}, errors.New("user must be registered before booking")
+		return Reservation{}, clientError("user must be registered before booking")
 	}
 	if userStatus != "" && userStatus != "active" {
-		return Reservation{}, errors.New("user is not active")
+		return Reservation{}, clientError("user is not active")
 	}
 	if !emailVerified {
-		return Reservation{}, errors.New("email must be verified before booking")
+		return Reservation{}, clientError("email must be verified before booking")
 	}
 
 	var maintenanceConflict int
@@ -3547,7 +3547,7 @@ WHERE instrument_id = $1
 		return Reservation{}, err
 	}
 	if maintenanceConflict > 0 {
-		return Reservation{}, errors.New("reservation conflicts with maintenance window")
+		return Reservation{}, clientError("reservation conflicts with maintenance window")
 	}
 
 	existing, err := r.findDuplicateReservation(ctx, tx, input)
@@ -3711,7 +3711,7 @@ RETURNING r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), COALESCE
 		return Reservation{}, err
 	}
 	if reservation.UserID == "" {
-		return Reservation{}, errors.New("reservation user is missing")
+		return Reservation{}, clientError("reservation user is missing")
 	}
 
 	_, err = tx.Exec(ctx, `
@@ -4421,7 +4421,7 @@ func (r *Repository) MaterialByQRCode(ctx context.Context, code string) (Materia
 	tenant := TenantFromContext(ctx)
 	code = strings.TrimSpace(code)
 	if code == "" {
-		return Material{}, errors.New("missing material qr code")
+		return Material{}, clientError("missing material qr code")
 	}
 	item, err := scanMaterial(r.db.QueryRow(ctx, fmt.Sprintf(`
 SELECT %s
@@ -4500,7 +4500,7 @@ func (r *Repository) SaveMaterialCategory(ctx context.Context, id string, input 
 		input.Status = "active"
 	}
 	if input.Name == "" || (input.Status != "active" && input.Status != "disabled") {
-		return MaterialCategory{}, errors.New("invalid material category input")
+		return MaterialCategory{}, clientError("invalid material category input")
 	}
 	if id == "" {
 		var item MaterialCategory
@@ -4615,13 +4615,13 @@ func (r *Repository) SaveProcurementProject(ctx context.Context, id string, inpu
 		input.Actor = "system"
 	}
 	if input.Name == "" {
-		return ProcurementProject{}, errors.New("material procurement project name is required")
+		return ProcurementProject{}, clientError("material procurement project name is required")
 	}
 	if input.Status == "" {
 		input.Status = "active"
 	}
 	if input.Status != "active" && input.Status != "disabled" {
-		return ProcurementProject{}, errors.New("material procurement project status is invalid")
+		return ProcurementProject{}, clientError("material procurement project status is invalid")
 	}
 	var item ProcurementProject
 	var err error
@@ -4679,7 +4679,7 @@ func (r *Repository) SavePurchasableMaterial(ctx context.Context, id string, inp
 		input.Actor = "system"
 	}
 	if input.IDNo == "" || input.SequenceNo == "" || input.ProjectName == "" || input.Brand == "" || input.Spec == "" || input.Unit == "" || input.PurchasePrice < 0 {
-		return PurchasableMaterial{}, errors.New("invalid purchasable material input")
+		return PurchasableMaterial{}, clientError("invalid purchasable material input")
 	}
 	projectID, projectName, err := r.ensureProcurementProject(ctx, nil, input.ProcurementProjectID, input.ProcurementProject)
 	if err != nil {
@@ -4791,11 +4791,11 @@ func (r *Repository) ImportPurchasableMaterials(ctx context.Context, input Purch
 	}
 	records, err := purchasableMaterialImportRecords(input.Filename, input.Content)
 	if err != nil {
-		return MaterialImportResult{}, fmt.Errorf("material purchasable import failed: %w", err)
+		return MaterialImportResult{}, WrapClientError("material purchasable import failed", err)
 	}
 	result := MaterialImportResult{}
 	if len(records) == 0 {
-		return result, errors.New("material purchasable import failed: 文件内容为空")
+		return result, clientError("material purchasable import failed: 文件内容为空")
 	}
 	headerIndex := -1
 	for i, row := range records {
@@ -4805,7 +4805,7 @@ func (r *Repository) ImportPurchasableMaterials(ctx context.Context, input Purch
 		}
 	}
 	if headerIndex < 0 {
-		return result, errors.New("material purchasable import failed: 未找到表头，请确认包含 ID号、序号、项目名称、品牌、规格、单位、采购价（元）")
+		return result, clientError("material purchasable import failed: 未找到表头，请确认包含 ID号、序号、项目名称、品牌、规格、单位、采购价（元）")
 	}
 	header := materialImportHeaderIndex(records[headerIndex])
 	currentProject := ""
@@ -4837,11 +4837,11 @@ func (r *Repository) ImportPurchasableMaterials(ctx context.Context, input Purch
 		if len(result.Errors) > 0 {
 			message = strings.Join(limitStrings(result.Errors, 5), "；")
 		}
-		return result, fmt.Errorf("material purchasable import failed: %s", message)
+		return result, clientErrorf("material purchasable import failed: %s", message)
 	}
 	created, updated, err := r.savePurchasableMaterialsBulk(ctx, items)
 	if err != nil {
-		return result, fmt.Errorf("material purchasable import failed: 数据库写入失败：%w", err)
+		return result, WrapClientError("material purchasable import failed: 数据库写入失败", err)
 	}
 	result.Created = created
 	result.Updated = updated
@@ -4992,22 +4992,22 @@ func (r *Repository) SaveMaterial(ctx context.Context, id string, input Material
 		input = r.applyMaterialPurchaseToMaterialInput(ctx, input, purchase)
 	}
 	if input.Name == "" || input.Category == "" || input.Spec == "" || input.Unit == "" || input.Stock < 0 || input.WarningLine < 0 || input.UnitPrice < 0 {
-		return Material{}, errors.New("invalid material input")
+		return Material{}, clientError("invalid material input")
 	}
 	if input.Status == "" {
 		input.Status = "normal"
 	}
 	if !validMaterialStatus(input.Status) {
-		return Material{}, errors.New("invalid material status")
+		return Material{}, clientError("invalid material status")
 	}
 	if input.ProductType == "" {
 		input.ProductType = "consumable"
 	}
 	if !validMaterialProductType(input.ProductType) {
-		return Material{}, errors.New("invalid material product type")
+		return Material{}, clientError("invalid material product type")
 	}
 	if input.OpenExpireDays < 0 || input.FreezeThawCount < 0 || input.FreezeThawLimit < 0 || input.NearExpiryDays < 0 {
-		return Material{}, errors.New("invalid material lifecycle input")
+		return Material{}, clientError("invalid material lifecycle input")
 	}
 	footerSettings, err := r.FooterSettings(ctx)
 	if err != nil {
@@ -5224,11 +5224,11 @@ func (r *Repository) ImportMaterials(ctx context.Context, input MaterialImportIn
 	}
 	records, err := purchasableMaterialImportRecords(input.Filename, input.Content)
 	if err != nil {
-		return MaterialImportResult{}, fmt.Errorf("material import failed: %w", err)
+		return MaterialImportResult{}, WrapClientError("material import failed", err)
 	}
 	result := MaterialImportResult{}
 	if len(records) == 0 {
-		return result, errors.New("material import failed: 文件内容为空")
+		return result, clientError("material import failed: 文件内容为空")
 	}
 	headerIndex := -1
 	for i, row := range records {
@@ -5238,7 +5238,7 @@ func (r *Repository) ImportMaterials(ctx context.Context, input MaterialImportIn
 		}
 	}
 	if headerIndex < 0 {
-		return result, errors.New("material import failed: 未找到表头，请确认包含资源名称、一级目录、规格、单位")
+		return result, clientError("material import failed: 未找到表头，请确认包含资源名称、一级目录、规格、单位")
 	}
 	header := materialImportHeaderIndex(records[headerIndex])
 	for rowIndex, row := range records[headerIndex+1:] {
@@ -5392,7 +5392,7 @@ func (r *Repository) AdjustMaterialStock(ctx context.Context, id string, input S
 		input.Actor = "system"
 	}
 	if id == "" || input.ChangeQty == 0 || input.Reason == "" {
-		return Material{}, errors.New("invalid stock adjustment input")
+		return Material{}, clientError("invalid stock adjustment input")
 	}
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -5439,13 +5439,13 @@ func (r *Repository) AdjustMaterialStock(ctx context.Context, id string, input S
 		return item, nil
 	}
 	if stock+input.ChangeQty < 0 {
-		return Material{}, errors.New("material stock cannot be negative")
+		return Material{}, clientError("material stock cannot be negative")
 	}
 	unitID := input.UnitID
 	unitCode := ""
 	if productType != "standard" && input.ChangeQty < 0 {
 		if unitID != "" && input.ChangeQty != -1 {
-			return Material{}, errors.New("material unit adjustment quantity must be -1")
+			return Material{}, clientError("material unit adjustment quantity must be -1")
 		}
 		if -input.ChangeQty == 1 && unitID != "" {
 			if err := tx.QueryRow(ctx, `
@@ -5462,7 +5462,7 @@ FOR UPDATE
 				return Material{}, err
 			}
 			if len(unitIDs) != -input.ChangeQty {
-				return Material{}, errors.New("insufficient material unit stock")
+				return Material{}, clientError("insufficient material unit stock")
 			}
 			unitID = strings.Join(unitIDs, ",")
 			unitCode = strings.Join(unitCodes, "，")
@@ -5476,7 +5476,7 @@ WHERE id::text = ANY($1::text[]) AND material_id = $2 AND tenant_id = $3::uuid A
 			return Material{}, err
 		}
 		if updateTag.RowsAffected() != int64(-input.ChangeQty) {
-			return Material{}, errors.New("material unit stock changed")
+			return Material{}, clientError("material unit stock changed")
 		}
 	}
 	item, err := scanMaterial(tx.QueryRow(ctx, fmt.Sprintf(`
@@ -5541,7 +5541,7 @@ func (r *Repository) adjustStandardMaterialStock(ctx context.Context, tx pgx.Tx,
 	if input.ChangeQty < 0 {
 		if input.UnitID != "" {
 			if input.ChangeQty != -1 {
-				return Material{}, errors.New("material unit adjustment quantity must be -1")
+				return Material{}, clientError("material unit adjustment quantity must be -1")
 			}
 			var unitBatchID string
 			if err := tx.QueryRow(ctx, `
@@ -5580,7 +5580,7 @@ FOR UPDATE
 				return Material{}, err
 			}
 			if len(unitIDs) != -input.ChangeQty {
-				return Material{}, errors.New("insufficient material unit stock")
+				return Material{}, clientError("insufficient material unit stock")
 			}
 			unitCode = strings.Join(unitCodes, "，")
 			if _, err := tx.Exec(ctx, `
@@ -5594,7 +5594,7 @@ WHERE id::text = ANY($1::text[]) AND material_id = $2 AND tenant_id = $3::uuid A
 				return Material{}, err
 			}
 		} else {
-			return Material{}, errors.New("standard material outbound requires batch or unit")
+			return Material{}, clientError("standard material outbound requires batch or unit")
 		}
 	} else if input.BatchID != "" {
 		if err := tx.QueryRow(ctx, `
@@ -5630,7 +5630,7 @@ WHERE id = $1 AND material_id = $4 AND tenant_id = $5::uuid
 		}
 	} else {
 		if batchNo == "" {
-			return Material{}, errors.New("standard material inbound requires batch number")
+			return Material{}, clientError("standard material inbound requires batch number")
 		}
 		if _, err := tx.Exec(ctx, `
 INSERT INTO material_batches (tenant_id, material_id, batch_no, quantity, expires_at, location, status)
@@ -6401,7 +6401,7 @@ func (r *Repository) CreateMaterialRequest(ctx context.Context, input MaterialRe
 		input.Requester = strings.TrimSpace(tenant.Actor.Name)
 	}
 	if input.MaterialID == "" || input.Quantity <= 0 || input.Purpose == "" || (input.RequesterID == "" && input.Requester == "") {
-		return MaterialRequest{}, errors.New("invalid material request input")
+		return MaterialRequest{}, clientError("invalid material request input")
 	}
 
 	var requesterID, requesterTenantID, requesterName, requesterStatus, groupName string
@@ -6426,10 +6426,10 @@ LIMIT 1
 		return MaterialRequest{}, err
 	}
 	if requesterStatus != "active" {
-		return MaterialRequest{}, errors.New("user is not active")
+		return MaterialRequest{}, clientError("user is not active")
 	}
 	if !emailVerified {
-		return MaterialRequest{}, errors.New("email must be verified before requesting materials")
+		return MaterialRequest{}, clientError("email must be verified before requesting materials")
 	}
 	var availableStock int
 	var materialTenantID, materialStatus string
@@ -6442,10 +6442,10 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 		return MaterialRequest{}, err
 	}
 	if requesterTenantID != materialTenantID {
-		return MaterialRequest{}, errors.New("requester and material must belong to the same tenant")
+		return MaterialRequest{}, clientError("requester and material must belong to the same tenant")
 	}
 	if materialStatus == "disabled" {
-		return MaterialRequest{}, errors.New("material is disabled")
+		return MaterialRequest{}, clientError("material is disabled")
 	}
 	if expiresAt != "" {
 		expireDate, err := time.Parse("2006-01-02", expiresAt)
@@ -6454,7 +6454,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 		}
 		today := appToday()
 		if expireDate.Before(today) {
-			return MaterialRequest{}, errors.New("material is expired")
+			return MaterialRequest{}, clientError("material is expired")
 		}
 	}
 	batchID := ""
@@ -6463,10 +6463,10 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 	var unitCode string
 	var unitLocation string
 	if input.UnitID == "" {
-		return MaterialRequest{}, errors.New("material request requires unit")
+		return MaterialRequest{}, clientError("material request requires unit")
 	}
 	if input.Quantity != 1 {
-		return MaterialRequest{}, errors.New("material unit request quantity must be 1")
+		return MaterialRequest{}, clientError("material unit request quantity must be 1")
 	}
 	if err := r.db.QueryRow(ctx, `
 SELECT mu.id::text, COALESCE(mu.batch_id::text, ''), COALESCE(mb.batch_no, ''), mu.unit_code, COALESCE(mu.location, mb.location, ''), COALESCE(mu.expires_at::text, '')
@@ -6487,11 +6487,11 @@ WHERE mu.id = $1
 		}
 		today := appToday()
 		if expireDate.Before(today) {
-			return MaterialRequest{}, errors.New("material unit is expired")
+			return MaterialRequest{}, clientError("material unit is expired")
 		}
 	}
 	if availableStock < input.Quantity {
-		return MaterialRequest{}, errors.New("insufficient material stock")
+		return MaterialRequest{}, clientError("insufficient material stock")
 	}
 	requestStatus := "approved"
 	if materialApprovalRequired(ctx, r.db, input.MaterialID, materialTenantID) {
@@ -6516,7 +6516,7 @@ WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'availa
 		return MaterialRequest{}, err
 	}
 	if reserveTag.RowsAffected() != 1 {
-		return MaterialRequest{}, errors.New("material unit is not available")
+		return MaterialRequest{}, clientError("material unit is not available")
 	}
 	if batchID != "" {
 		if err := syncMaterialBatchQuantity(ctx, tx, batchID); err != nil {
@@ -6607,7 +6607,7 @@ FOR UPDATE OF mr, m
 	var remainingStock, warningLine int
 	var materialUnit string
 	if item.UnitID == "" || item.Quantity != 1 {
-		return MaterialRequest{}, errors.New("material request missing unit")
+		return MaterialRequest{}, clientError("material request missing unit")
 	}
 	if err := tx.QueryRow(ctx, `
 SELECT COALESCE(batch_id::text, ''), unit_code, COALESCE(location, '')
@@ -6798,7 +6798,7 @@ func (r *Repository) ConfirmMaterialPurchaseMonth(ctx context.Context, month str
 		actor = "system"
 	}
 	if !validMaterialPurchaseMonth(month) {
-		return MaterialPurchaseMonthlyConfirmation{}, errors.New("invalid material purchase month")
+		return MaterialPurchaseMonthlyConfirmation{}, clientError("invalid material purchase month")
 	}
 	var item MaterialPurchaseMonthlyConfirmation
 	err := r.db.QueryRow(ctx, `
@@ -6908,7 +6908,7 @@ func (r *Repository) materialPurchaseBySerial(ctx context.Context, serial string
 	tenant := TenantFromContext(ctx)
 	serial = strings.TrimSpace(serial)
 	if serial == "" {
-		return MaterialPurchase{}, errors.New("material purchase serial no is required")
+		return MaterialPurchase{}, clientError("material purchase serial no is required")
 	}
 	item, err := scanMaterialPurchase(r.db.QueryRow(ctx, fmt.Sprintf(`
 SELECT %s
@@ -6926,7 +6926,7 @@ LIMIT 1
 `, materialPurchaseSelectColumns()), serial, tenant.TenantID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return MaterialPurchase{}, errors.New("material purchase serial no not found")
+			return MaterialPurchase{}, clientError("material purchase serial no not found")
 		}
 		return MaterialPurchase{}, err
 	}
@@ -7009,7 +7009,7 @@ func (r *Repository) CreateMaterialPurchase(ctx context.Context, input MaterialP
 		input.Requester = strings.TrimSpace(tenant.Actor.Name)
 	}
 	if (input.MaterialID == "" && input.PurchasableMaterialID == "") || input.Quantity <= 0 || input.EstimatedUnitPrice < 0 || input.Reason == "" || (input.RequesterID == "" && input.Requester == "") {
-		return MaterialPurchase{}, errors.New("invalid material purchase input")
+		return MaterialPurchase{}, clientError("invalid material purchase input")
 	}
 
 	var requesterID, requesterTenantID, requesterName, requesterStatus, requesterPhone, requesterEmail, groupName string
@@ -7034,10 +7034,10 @@ LIMIT 1
 		return MaterialPurchase{}, err
 	}
 	if requesterStatus != "active" {
-		return MaterialPurchase{}, errors.New("user is not active")
+		return MaterialPurchase{}, clientError("user is not active")
 	}
 	if !emailVerified {
-		return MaterialPurchase{}, errors.New("email must be verified before purchasing materials")
+		return MaterialPurchase{}, clientError("email must be verified before purchasing materials")
 	}
 
 	var item MaterialPurchase
@@ -7062,13 +7062,13 @@ WHERE pm.id = $1
 		)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return MaterialPurchase{}, errors.New("material procurement project expired or unavailable")
+				return MaterialPurchase{}, clientError("material procurement project expired or unavailable")
 			}
 			return MaterialPurchase{}, err
 		}
 		materialTenantID = tenant.TenantID
 		if requesterTenantID != materialTenantID {
-			return MaterialPurchase{}, errors.New("requester and purchasable material must belong to the same tenant")
+			return MaterialPurchase{}, clientError("requester and purchasable material must belong to the same tenant")
 		}
 		item.PurchasableMaterialID = purchasable.ID
 		item.PurchaseIDNo = purchasable.IDNo
@@ -7093,10 +7093,10 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 			return MaterialPurchase{}, err
 		}
 		if requesterTenantID != materialTenantID {
-			return MaterialPurchase{}, errors.New("requester and material must belong to the same tenant")
+			return MaterialPurchase{}, clientError("requester and material must belong to the same tenant")
 		}
 		if materialStatus == "disabled" {
-			return MaterialPurchase{}, errors.New("material is disabled")
+			return MaterialPurchase{}, clientError("material is disabled")
 		}
 		if input.Supplier == "" {
 			input.Supplier = defaultSupplier
@@ -7168,7 +7168,7 @@ WHERE tenant_id = $1::uuid
 	}
 	nextIndex := maxIndex + 1
 	if nextIndex > 9999 {
-		return "", errors.New("material purchase serial no exhausted")
+		return "", clientError("material purchase serial no exhausted")
 	}
 	return fmt.Sprintf("%s%04d", prefix, nextIndex), nil
 }
@@ -7196,7 +7196,7 @@ func (r *Repository) UpdateMaterialPurchase(ctx context.Context, id string, inpu
 		input.Actor = firstNonEmpty(tenant.Actor.Name, "system")
 	}
 	if id == "" || input.PurchasableMaterialID == "" || input.Quantity <= 0 || input.EstimatedUnitPrice < 0 || input.Reason == "" {
-		return MaterialPurchase{}, errors.New("invalid material purchase update input")
+		return MaterialPurchase{}, clientError("invalid material purchase update input")
 	}
 	var purchasable PurchasableMaterial
 	if err := r.db.QueryRow(ctx, `
@@ -7216,7 +7216,7 @@ WHERE pm.id = $1
 		&purchasable.ID, &purchasable.IDNo, &purchasable.SequenceNo, &purchasable.ProcurementProjectID, &purchasable.ProcurementProject, &purchasable.ProcurementExpiresAt, &purchasable.ProcurementProjectStatus, &purchasable.ProjectName, &purchasable.Brand, &purchasable.Spec, &purchasable.Unit, &purchasable.PurchasePrice, &purchasable.Remark, &purchasable.TechnicalRequirement, &purchasable.MinSpec, &purchasable.Status, &purchasable.CreatedAt, &purchasable.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return MaterialPurchase{}, errors.New("material procurement project expired or unavailable")
+			return MaterialPurchase{}, clientError("material procurement project expired or unavailable")
 		}
 		return MaterialPurchase{}, err
 	}
@@ -7376,7 +7376,7 @@ FOR UPDATE
 		return MaterialPurchase{}, err
 	}
 	if item.MaterialID == "" {
-		return MaterialPurchase{}, errors.New("material purchase has no inventory material to receive")
+		return MaterialPurchase{}, clientError("material purchase has no inventory material to receive")
 	}
 	oldStatus := item.Status
 	if productType == "standard" {
@@ -7648,7 +7648,7 @@ func (r *Repository) CreateMaterialDamage(ctx context.Context, input MaterialDam
 		input.Reporter = strings.TrimSpace(tenant.Actor.Name)
 	}
 	if input.MaterialID == "" || input.UnitID == "" || input.Quantity != 1 || input.Reason == "" || (input.ReporterID == "" && input.Reporter == "") {
-		return MaterialDamage{}, errors.New("invalid material damage input")
+		return MaterialDamage{}, clientError("invalid material damage input")
 	}
 
 	reporterID, reporterTenantID, reporterName, reporterStatus, groupName, _, err := r.resolveMaterialActor(ctx, input.ReporterID, input.Reporter, tenant)
@@ -7656,7 +7656,7 @@ func (r *Repository) CreateMaterialDamage(ctx context.Context, input MaterialDam
 		return MaterialDamage{}, err
 	}
 	if reporterStatus != "active" {
-		return MaterialDamage{}, errors.New("user is not active")
+		return MaterialDamage{}, clientError("user is not active")
 	}
 
 	var materialTenantID, materialStatus string
@@ -7668,10 +7668,10 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 		return MaterialDamage{}, err
 	}
 	if reporterTenantID != materialTenantID {
-		return MaterialDamage{}, errors.New("reporter and material must belong to the same tenant")
+		return MaterialDamage{}, clientError("reporter and material must belong to the same tenant")
 	}
 	if materialStatus == "disabled" {
-		return MaterialDamage{}, errors.New("material is disabled")
+		return MaterialDamage{}, clientError("material is disabled")
 	}
 
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
@@ -7848,7 +7848,7 @@ FOR UPDATE
 		return MaterialDamage{}, err
 	}
 	if item.UnitID == "" || item.Quantity != 1 {
-		return MaterialDamage{}, errors.New("material damage missing unit")
+		return MaterialDamage{}, clientError("material damage missing unit")
 	}
 	if _, err := tx.Exec(ctx, `
 UPDATE material_units
@@ -7994,7 +7994,7 @@ func (r *Repository) CreateMaterialAlertAction(ctx context.Context, materialID s
 		input.Actor = "system"
 	}
 	if input.AlertType == "" || (input.Action != "handled" && input.Action != "ignored") {
-		return MaterialAlertAction{}, errors.New("invalid material alert action input")
+		return MaterialAlertAction{}, clientError("invalid material alert action input")
 	}
 	var item MaterialAlertAction
 	err := r.db.QueryRow(ctx, `
@@ -8189,7 +8189,7 @@ func (r *Repository) CreateMaintenanceOrder(ctx context.Context, input Maintenan
 		input.Priority = "normal"
 	}
 	if input.InstrumentID == "" || input.Description == "" || !input.EndTime.After(input.StartTime) {
-		return MaintenanceOrder{}, errors.New("invalid maintenance input")
+		return MaintenanceOrder{}, clientError("invalid maintenance input")
 	}
 	status := "assigned"
 	if input.Handler == "" {
@@ -8224,7 +8224,7 @@ WHERE instrument_id = $1 AND status = 'in_use' AND period && tstzrange($2, $3, '
 		return MaintenanceOrder{}, err
 	}
 	if inUseCount > 0 && input.Type != "emergency" {
-		return MaintenanceOrder{}, errors.New("maintenance conflicts with an in-use reservation")
+		return MaintenanceOrder{}, clientError("maintenance conflicts with an in-use reservation")
 	}
 
 	var item MaintenanceOrder
@@ -8314,7 +8314,7 @@ RETURNING mo.id::text, mo.tenant_id::text, COALESCE(mo.instrument_id::text, ''),
 		return MaintenanceOrder{}, err
 	}
 	if item.InstrumentID == "" {
-		return MaintenanceOrder{}, errors.New("instrument has been deleted")
+		return MaintenanceOrder{}, clientError("instrument has been deleted")
 	}
 	if _, err := r.db.Exec(ctx, `UPDATE instruments SET status = 'maintenance', maintenance_summary = $2 WHERE id = $1 AND tenant_id = $3::uuid`, item.InstrumentID, item.Description, itemTenantID); err != nil {
 		return MaintenanceOrder{}, err
@@ -8678,7 +8678,7 @@ func (r *Repository) updateMaterialPurchaseStatus(ctx context.Context, id string
 	tenant := TenantFromContext(ctx)
 	action, ok := materialPurchaseStatusAction(status)
 	if !ok {
-		return MaterialPurchase{}, errors.New("invalid material purchase status")
+		return MaterialPurchase{}, clientError("invalid material purchase status")
 	}
 	actor = strings.TrimSpace(actor)
 	comment = strings.TrimSpace(comment)
@@ -9333,10 +9333,10 @@ func graphMailReady(settings graphMailSettingsValue) bool {
 
 func (r *Repository) sendGraphMail(ctx context.Context, settings graphMailSettingsValue, to string, subject string, body string) error {
 	if !graphMailReady(settings) {
-		return errors.New("graph mail is not configured")
+		return clientError("graph mail is not configured")
 	}
 	if _, err := mail.ParseAddress(to); err != nil {
-		return errors.New("graph mail recipient email is invalid")
+		return clientError("graph mail recipient email is invalid")
 	}
 	token, err := r.graphMailAccessToken(ctx, settings)
 	if err != nil {
@@ -9374,14 +9374,14 @@ func (r *Repository) sendGraphMail(ctx context.Context, settings graphMailSettin
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("graph mail send failed: %s", graphHTTPErrorMessage(response.StatusCode, raw))
+		return clientErrorf("graph mail send failed: %s", graphHTTPErrorMessage(response.StatusCode, raw))
 	}
 	return nil
 }
 
 func (r *Repository) graphMailAccessToken(ctx context.Context, settings graphMailSettingsValue) (string, error) {
 	if settings.TenantID == "" || settings.ClientID == "" || settings.ClientSecret == "" {
-		return "", errors.New("graph mail tenant, client, and secret are required")
+		return "", clientError("graph mail tenant, client, and secret are required")
 	}
 	form := url.Values{}
 	form.Set("client_id", settings.ClientID)
@@ -9404,7 +9404,7 @@ func (r *Repository) graphMailAccessToken(ctx context.Context, settings graphMai
 		return "", err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", fmt.Errorf("graph mail token failed: %s", graphHTTPErrorMessage(response.StatusCode, raw))
+		return "", clientErrorf("graph mail token failed: %s", graphHTTPErrorMessage(response.StatusCode, raw))
 	}
 	var tokenResponse struct {
 		AccessToken string `json:"access_token"`
@@ -9413,7 +9413,7 @@ func (r *Repository) graphMailAccessToken(ctx context.Context, settings graphMai
 		return "", err
 	}
 	if tokenResponse.AccessToken == "" {
-		return "", errors.New("graph token response missing access_token")
+		return "", clientError("graph token response missing access_token")
 	}
 	return tokenResponse.AccessToken, nil
 }
@@ -9480,7 +9480,7 @@ func (r *Repository) saveDingTalkOAuthState(ctx context.Context, tenantID string
 func (r *Repository) consumeDingTalkOAuthState(ctx context.Context, tenantID string, userID string, state string) error {
 	state = strings.TrimSpace(state)
 	if state == "" {
-		return errors.New("dingtalk oauth state is required")
+		return clientError("dingtalk oauth state is required")
 	}
 	if r.redis == nil {
 		return errors.New("redis is not configured")
@@ -9488,7 +9488,7 @@ func (r *Repository) consumeDingTalkOAuthState(ctx context.Context, tenantID str
 	key := dingTalkOAuthStateKey(tenantID, userID, state)
 	value, err := r.redis.GetDel(ctx, key).Result()
 	if errors.Is(err, redis.Nil) || value == "" {
-		return errors.New("dingtalk oauth state is invalid or expired")
+		return clientError("dingtalk oauth state is invalid or expired")
 	}
 	if err != nil {
 		return err
@@ -9510,7 +9510,7 @@ func (r *Repository) saveDingTalkWebLoginState(ctx context.Context, tenantID str
 func (r *Repository) consumeDingTalkWebLoginState(ctx context.Context, state string) (string, error) {
 	state = strings.TrimSpace(state)
 	if state == "" {
-		return "", errors.New("dingtalk login state is required")
+		return "", clientError("dingtalk login state is required")
 	}
 	if r.redis == nil {
 		return "", errors.New("redis is not configured")
@@ -9518,7 +9518,7 @@ func (r *Repository) consumeDingTalkWebLoginState(ctx context.Context, state str
 	key := dingTalkWebLoginStateKey(state)
 	value, err := r.redis.GetDel(ctx, key).Result()
 	if errors.Is(err, redis.Nil) || value == "" {
-		return "", errors.New("dingtalk login state is invalid or expired")
+		return "", clientError("dingtalk login state is invalid or expired")
 	}
 	if err != nil {
 		return "", err
@@ -9558,14 +9558,14 @@ func (r *Repository) saveDingTalkLoginBindingIntent(ctx context.Context, value d
 func (r *Repository) consumeDingTalkLoginBindingIntent(ctx context.Context, token string) (dingTalkLoginBindingIntentValue, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return dingTalkLoginBindingIntentValue{}, errors.New("dingtalk binding token is required")
+		return dingTalkLoginBindingIntentValue{}, clientError("dingtalk binding token is required")
 	}
 	if r.redis == nil {
 		return dingTalkLoginBindingIntentValue{}, errors.New("redis is not configured")
 	}
 	raw, err := r.redis.GetDel(ctx, dingTalkLoginBindingIntentKey(token)).Bytes()
 	if errors.Is(err, redis.Nil) || len(raw) == 0 {
-		return dingTalkLoginBindingIntentValue{}, errors.New("dingtalk binding token is invalid or expired")
+		return dingTalkLoginBindingIntentValue{}, clientError("dingtalk binding token is invalid or expired")
 	}
 	if err != nil {
 		return dingTalkLoginBindingIntentValue{}, err
@@ -9591,7 +9591,7 @@ func (r *Repository) dingTalkIdentityByAuthCode(ctx context.Context, settings di
 		return dingTalkIdentity{}, err
 	}
 	if identity.UnionID == "" {
-		return dingTalkIdentity{}, errors.New("dingtalk union id is required")
+		return dingTalkIdentity{}, clientError("dingtalk union id is required")
 	}
 	return r.dingTalkIdentityByUnionID(ctx, settings, identity)
 }
@@ -9625,7 +9625,7 @@ func (r *Repository) dingTalkIdentityByQuickAuthCode(ctx context.Context, settin
 	userID := firstNonEmpty(response.Result.UserID, response.UserID)
 	unionID := firstNonEmpty(response.Result.UnionID, response.UnionID)
 	if userID == "" {
-		return dingTalkIdentity{}, errors.New("dingtalk user id is required")
+		return dingTalkIdentity{}, clientError("dingtalk user id is required")
 	}
 	identity, err := r.dingTalkIdentityByUserID(ctx, settings, userID)
 	if err != nil {
@@ -9712,7 +9712,7 @@ func (r *Repository) dingTalkAppAccessToken(ctx context.Context, settings dingTa
 		return "", err
 	}
 	if response.AccessToken == "" {
-		return "", errors.New("dingtalk access token is empty")
+		return "", clientError("dingtalk access token is empty")
 	}
 	return response.AccessToken, nil
 }
@@ -9732,7 +9732,7 @@ func (r *Repository) dingTalkUserAccessToken(ctx context.Context, settings dingT
 		return "", err
 	}
 	if response.AccessToken == "" {
-		return "", errors.New("dingtalk user access token is empty")
+		return "", clientError("dingtalk user access token is empty")
 	}
 	return response.AccessToken, nil
 }
@@ -9944,7 +9944,7 @@ func (r *Repository) dingTalkBoundUser(ctx context.Context, tenantID string, use
 	}
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
-		return User{}, errors.New("dingtalk test user is required")
+		return User{}, clientError("dingtalk test user is required")
 	}
 	var user User
 	err := r.db.QueryRow(ctx, `
@@ -9958,13 +9958,13 @@ WHERE u.id = $1
   AND u.status = 'active'
 `, userID, tenantID).Scan(&user.ID, &user.TenantID, &user.TenantName, &user.TenantCode, &user.Name, &user.Email, &user.Phone, &user.Department, &user.GroupName, &user.Role, &user.Status, &user.EmailVerified, &user.DingTalkUserID, &user.DingTalkUnionID, &user.DingTalkName, &user.DingTalkBound, &user.FinanceEnabled, &user.AuthEpoch)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return User{}, errors.New("dingtalk test user is not active in current tenant")
+		return User{}, clientError("dingtalk test user is not active in current tenant")
 	}
 	if err != nil {
 		return User{}, err
 	}
 	if strings.TrimSpace(user.DingTalkUserID) == "" {
-		return User{}, errors.New("dingtalk test user is not bound")
+		return User{}, clientError("dingtalk test user is not bound")
 	}
 	return user, nil
 }
@@ -10046,18 +10046,18 @@ func (r *Repository) HandleDingTalkEventCallback(ctx context.Context, input Ding
 		return DingTalkEventCallbackResponse{}, err
 	}
 	if !settings.Enabled || settings.EventAesKey == "" || settings.EventToken == "" {
-		return DingTalkEventCallbackResponse{}, errors.New("dingtalk event callback is not configured")
+		return DingTalkEventCallbackResponse{}, clientError("dingtalk event callback is not configured")
 	}
 	input.Signature = strings.TrimSpace(input.Signature)
 	input.Timestamp = strings.TrimSpace(input.Timestamp)
 	input.Nonce = strings.TrimSpace(input.Nonce)
 	input.Encrypt = strings.TrimSpace(input.Encrypt)
 	if input.Signature == "" || input.Timestamp == "" || input.Nonce == "" || input.Encrypt == "" {
-		return DingTalkEventCallbackResponse{}, errors.New("dingtalk event callback input is invalid")
+		return DingTalkEventCallbackResponse{}, clientError("dingtalk event callback input is invalid")
 	}
 	expectedSignature := dingTalkEventSignature(settings.EventToken, input.Timestamp, input.Nonce, input.Encrypt)
 	if subtle.ConstantTimeCompare([]byte(input.Signature), []byte(expectedSignature)) != 1 {
-		return DingTalkEventCallbackResponse{}, errors.New("dingtalk event signature is invalid")
+		return DingTalkEventCallbackResponse{}, clientError("dingtalk event signature is invalid")
 	}
 	event, err := decryptDingTalkEvent(input.Encrypt, settings.EventAesKey, settings.CorpID)
 	if err != nil {
@@ -10115,16 +10115,16 @@ func decryptDingTalkEvent(encrypted string, aesKey string, expectedCorpID string
 		return nil, err
 	}
 	if len(plain) < 20 {
-		return nil, errors.New("dingtalk event payload is invalid")
+		return nil, clientError("dingtalk event payload is invalid")
 	}
 	msgLen := int(plain[16])<<24 | int(plain[17])<<16 | int(plain[18])<<8 | int(plain[19])
 	if msgLen < 0 || 20+msgLen > len(plain) {
-		return nil, errors.New("dingtalk event payload length is invalid")
+		return nil, clientError("dingtalk event payload length is invalid")
 	}
 	msg := []byte(plain[20 : 20+msgLen])
 	receiveID := plain[20+msgLen:]
 	if expectedCorpID != "" && receiveID != "" && receiveID != expectedCorpID {
-		return nil, errors.New("dingtalk event corp id is invalid")
+		return nil, clientError("dingtalk event corp id is invalid")
 	}
 	var event map[string]any
 	if err := json.Unmarshal(msg, &event); err != nil {
@@ -10153,7 +10153,7 @@ func dingTalkCryptPayload(payload string, aesKey string, encrypt bool) (string, 
 		return "", err
 	}
 	if len(key) != 32 {
-		return "", errors.New("dingtalk event aes key is invalid")
+		return "", clientError("dingtalk event aes key is invalid")
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -10171,7 +10171,7 @@ func dingTalkCryptPayload(payload string, aesKey string, encrypt bool) (string, 
 		return "", err
 	}
 	if len(raw) == 0 || len(raw)%aes.BlockSize != 0 {
-		return "", errors.New("dingtalk event encrypted payload is invalid")
+		return "", clientError("dingtalk event encrypted payload is invalid")
 	}
 	plain := make([]byte, len(raw))
 	cipher.NewCBCDecrypter(block, iv).CryptBlocks(plain, raw)
@@ -10197,15 +10197,15 @@ func pkcs7Pad(raw []byte, blockSize int) []byte {
 
 func pkcs7Unpad(raw []byte, blockSize int) ([]byte, error) {
 	if len(raw) == 0 || len(raw)%blockSize != 0 {
-		return nil, errors.New("dingtalk event payload padding is invalid")
+		return nil, clientError("dingtalk event payload padding is invalid")
 	}
 	padding := int(raw[len(raw)-1])
 	if padding == 0 || padding > blockSize || padding > len(raw) {
-		return nil, errors.New("dingtalk event payload padding is invalid")
+		return nil, clientError("dingtalk event payload padding is invalid")
 	}
 	for _, value := range raw[len(raw)-padding:] {
 		if int(value) != padding {
-			return nil, errors.New("dingtalk event payload padding is invalid")
+			return nil, clientError("dingtalk event payload padding is invalid")
 		}
 	}
 	return raw[:len(raw)-padding], nil
@@ -10255,7 +10255,7 @@ func (r *Repository) dingTalkDo(request *http.Request, target any) error {
 		return err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("dingtalk http %d: %s", response.StatusCode, strings.TrimSpace(string(raw)))
+		return clientErrorf("dingtalk http %d: %s", response.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	if target == nil {
 		return nil
@@ -10878,7 +10878,7 @@ func purchasableMaterialImportRecords(filename string, content []byte) ([][]stri
 		}()
 		sheets := workbook.GetSheetList()
 		if len(sheets) == 0 {
-			return nil, errors.New("XLSX 文件没有工作表")
+			return nil, clientError("XLSX 文件没有工作表")
 		}
 		return workbook.GetRows(sheets[0])
 	}
@@ -10909,11 +10909,11 @@ func xlsImportRecords(content []byte) ([][]string, error) {
 		return nil, fmt.Errorf("无法读取 XLS 文件：%w", err)
 	}
 	if workbook == nil || workbook.NumSheets() == 0 {
-		return nil, errors.New("XLS 文件没有工作表")
+		return nil, clientError("XLS 文件没有工作表")
 	}
 	sheet := workbook.GetSheet(0)
 	if sheet == nil {
-		return nil, errors.New("XLS 文件没有工作表")
+		return nil, clientError("XLS 文件没有工作表")
 	}
 	records := make([][]string, 0, int(sheet.MaxRow)+1)
 	for rowIndex := 0; rowIndex <= int(sheet.MaxRow); rowIndex++ {
@@ -11147,7 +11147,7 @@ func (r *Repository) organizationUnitDeletionUsage(ctx context.Context, tx pgx.T
 			return 0, 0, err
 		}
 	default:
-		return 0, 0, errors.New("invalid organization unit kind")
+		return 0, 0, clientError("invalid organization unit kind")
 	}
 	return instrumentCount, dependentCount, nil
 }
@@ -11203,7 +11203,7 @@ WHERE group_name = $1
 			}
 		}
 	default:
-		return errors.New("invalid organization unit kind")
+		return clientError("invalid organization unit kind")
 	}
 	return nil
 }

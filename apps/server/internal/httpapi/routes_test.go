@@ -409,7 +409,7 @@ func TestRespondKeepsClientSafeErrors(t *testing.T) {
 	context, _ := gin.CreateTestContext(recorder)
 	context.Request = httptest.NewRequest(http.MethodPost, "/api/register", nil)
 
-	respond(context, nil, errors.New("invalid registration input"))
+	respond(context, nil, newClientMessageError("invalid registration input"))
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", recorder.Code)
@@ -431,7 +431,7 @@ func TestRespondKeepsGraphMailErrors(t *testing.T) {
 	context, _ := gin.CreateTestContext(recorder)
 	context.Request = httptest.NewRequest(http.MethodPost, "/api/notification-channel-settings/graph-mail/test", nil)
 
-	respond(context, nil, errors.New("graph mail test send failed: graph mail token failed: status=401 code=invalid_client message=凭证无效"))
+	respond(context, nil, newClientMessageError("graph mail test send failed: graph mail token failed: status=401 code=invalid_client message=凭证无效"))
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", recorder.Code)

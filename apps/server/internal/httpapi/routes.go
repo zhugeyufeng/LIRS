@@ -2471,40 +2471,15 @@ func clientSafeError(err error) (string, bool) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "", false
 	}
-	message := strings.TrimSpace(err.Error())
+	var clientErr interface {
+		ClientMessage() string
+	}
+	if !errors.As(err, &clientErr) {
+		return "", false
+	}
+	message := strings.TrimSpace(clientErr.ClientMessage())
 	if message == "" {
 		return "", false
 	}
-	prefixes := []string{
-		"invalid ",
-		"missing ",
-		"minimum ",
-		"reservation ",
-		"instrument ",
-		"user ",
-		"email ",
-		"account ",
-		"tenant ",
-		"current ",
-		"mail ",
-		"personal ",
-		"group ",
-		"department ",
-		"organization ",
-		"config ",
-		"material ",
-		"maintenance ",
-		"insufficient ",
-		"dingtalk ",
-		"graph ",
-		"标准品证书",
-		"无法",
-		"不支持",
-	}
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(message, prefix) {
-			return message, true
-		}
-	}
-	return "", false
+	return message, true
 }
