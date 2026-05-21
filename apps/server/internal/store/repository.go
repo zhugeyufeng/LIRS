@@ -135,6 +135,10 @@ func appToday() time.Time {
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, appLocation)
 }
 
+func appDateString() string {
+	return appNow().Format("2006-01-02")
+}
+
 func WithNotificationSourceContext(ctx context.Context, source string) context.Context {
 	return context.WithValue(ctx, notificationSourceContextKey{}, strings.TrimSpace(source))
 }
@@ -2440,6 +2444,9 @@ func (r *Repository) enqueueNotificationDelivery(item Notification) {
 
 func (r *Repository) enqueueDingTalkNotifications(items ...Notification) {
 	for _, item := range items {
+		if item.ID == "" {
+			continue
+		}
 		r.enqueueNotificationDelivery(item)
 	}
 }
@@ -3773,7 +3780,15 @@ func (r *Repository) CancelReservation(ctx context.Context, id string, reason st
 		reason = "用户取消"
 	}
 	var reservation Reservation
-	err := r.db.QueryRow(ctx, `
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Reservation{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+	var notification Notification
+	err = tx.QueryRow(ctx, `
 UPDATE reservations r
 SET status = 'cancelled', cancel_reason = $2, cancelled_at = now()
 WHERE r.id = $1 AND r.status IN ('pending', 'approved')
@@ -3803,10 +3818,16 @@ RETURNING r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), COALESCE
 	if err != nil {
 		return Reservation{}, err
 	}
-	_, err = r.createNotification(ctx, reservation.TenantID, reservation.UserID, reservation.GroupName, "", "personal", "预约状态更新", fmt.Sprintf("%s 的 %s 预约状态已更新为%s，原因：%s。", reservation.UserName, reservation.InstrumentName, reservationStatusLabel(reservation.Status), reason), notificationLevelForStatus(reservation.Status))
-	if err != nil {
+	if reservation.UserID != "" {
+		notification, err = r.createNotificationTx(ctx, tx, reservation.TenantID, reservation.UserID, reservation.GroupName, "", "personal", "预约状态更新", fmt.Sprintf("%s 的 %s 预约状态已更新为%s，原因：%s。", reservation.UserName, reservation.InstrumentName, reservationStatusLabel(reservation.Status), reason), notificationLevelForStatus(reservation.Status))
+		if err != nil {
+			return Reservation{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return Reservation{}, err
 	}
+	r.enqueueDingTalkNotifications(notification)
 	r.invalidateDashboard(ctx)
 	r.emitAccessControlRevoke(ctx, reservation, reason)
 	r.audit(ctx, reservation.UserName, "reservation.cancel", "reservation", reservation.ID, "", reason)
@@ -3829,15 +3850,25 @@ func (r *Repository) ExpireStaleReservations(ctx context.Context, maxAge time.Du
 	if maxAge <= 0 {
 		maxAge = 24 * time.Hour
 	}
+	const batchSize = 200
 	rows, err := r.db.Query(ctx, `
+WITH stale AS (
+  SELECT id
+  FROM reservations
+  WHERE status = 'pending'
+    AND created_at < now() - ($1 * interval '1 second')
+  ORDER BY created_at
+  LIMIT $2
+  FOR UPDATE SKIP LOCKED
+)
 UPDATE reservations r
 SET status = 'cancelled', cancel_reason = '审批超时自动取消', cancelled_at = now()
-WHERE r.status = 'pending'
-  AND r.created_at < now() - ($1 * interval '1 second')
+FROM stale
+WHERE r.id = stale.id
 RETURNING r.id::text, COALESCE(r.user_id::text, ''), r.user_name, r.group_name,
           r.tenant_id::text,
           COALESCE((SELECT name FROM instruments WHERE id = r.instrument_id), '已删除仪器')
-`, int64(maxAge.Seconds()))
+`, int64(maxAge.Seconds()), batchSize)
 	if err != nil {
 		return 0, err
 	}
@@ -5818,7 +5849,7 @@ func materialUnitCodeDatePart(unitCode string) string {
 			return datePart
 		}
 	}
-	return time.Now().UTC().Format("2006-01-02")
+	return appDateString()
 }
 
 func availableMaterialUnitsForDeduction(ctx context.Context, tx pgx.Tx, materialID string, materialTenantID string, quantity int) ([]string, []string, error) {
@@ -5932,7 +5963,7 @@ func createMaterialUnits(ctx context.Context, tx pgx.Tx, input MaterialUnitGener
 		return nil
 	}
 	prefix := materialUnitCodePrefix(input.MaterialName)
-	datePart := time.Now().UTC().Format("2006-01-02")
+	datePart := appDateString()
 	for index := 0; index < input.Quantity; index++ {
 		for {
 			sequence, err := nextMaterialUnitCodeSequence(ctx, tx, input.TenantID, prefix, datePart)
@@ -7067,29 +7098,24 @@ LEFT JOIN materials m ON m.id = mp.material_id
 func (r *Repository) nextMaterialPurchaseSerialNo(ctx context.Context, tx pgx.Tx, tenantID string) (string, error) {
 	month := appNow().Format("200601")
 	prefix := "SG" + month + "-"
-	var count int
-	if err := tx.QueryRow(ctx, `
-SELECT count(*)
-FROM material_purchases
-WHERE tenant_id = $1::uuid AND purchase_serial_no LIKE $2
-`, tenantID, prefix+"%").Scan(&count); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, tenantID+":"+prefix); err != nil {
 		return "", err
 	}
-	for index := count + 1; index < count+10000; index++ {
-		serialNo := fmt.Sprintf("%s%04d", prefix, index)
-		var exists bool
-		if err := tx.QueryRow(ctx, `
-SELECT EXISTS (
-    SELECT 1 FROM material_purchases WHERE tenant_id = $1::uuid AND purchase_serial_no = $2
-)
-`, tenantID, serialNo).Scan(&exists); err != nil {
-			return "", err
-		}
-		if !exists {
-			return serialNo, nil
-		}
+	var maxIndex int
+	if err := tx.QueryRow(ctx, `
+SELECT COALESCE(MAX(NULLIF(regexp_replace(purchase_serial_no, '^SG[0-9]{6}-', ''), '')::int), 0)
+FROM material_purchases
+WHERE tenant_id = $1::uuid
+  AND purchase_serial_no LIKE $2
+  AND purchase_serial_no ~ '^SG[0-9]{6}-[0-9]{4}$'
+`, tenantID, prefix+"%").Scan(&maxIndex); err != nil {
+		return "", err
 	}
-	return "", errors.New("material purchase serial no exhausted")
+	nextIndex := maxIndex + 1
+	if nextIndex > 9999 {
+		return "", errors.New("material purchase serial no exhausted")
+	}
+	return fmt.Sprintf("%s%04d", prefix, nextIndex), nil
 }
 
 func (r *Repository) ApproveMaterialPurchase(ctx context.Context, id string, approved bool, actor string, comment string) (MaterialPurchase, error) {

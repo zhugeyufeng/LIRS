@@ -61,6 +61,24 @@ func TestContextCanCancel(t *testing.T) {
 	}
 }
 
+func TestAppDateStringUsesApplicationTimezone(t *testing.T) {
+	t.Parallel()
+
+	if appLocation.String() != "CST" {
+		t.Fatalf("expected application timezone CST, got %s", appLocation)
+	}
+	before := time.Now().In(appLocation).Format("2006-01-02")
+	got := appDateString()
+	after := time.Now().In(appLocation).Format("2006-01-02")
+	if got != before && got != after {
+		t.Fatalf("应用日期应使用应用时区，got=%s before=%s after=%s", got, before, after)
+	}
+	fallback := materialUnitCodeDatePart("BAD-CODE")
+	if fallback != got && fallback != after {
+		t.Fatalf("无日期编号应回退到应用日期，got=%s appDate=%s after=%s", fallback, got, after)
+	}
+}
+
 func TestProfileFieldChanged(t *testing.T) {
 	t.Parallel()
 
@@ -1031,6 +1049,17 @@ func TestMaterialSeedRowsMatchColumnList(t *testing.T) {
 		if got := countSeedCSVColumns(row); got != expectedColumns {
 			t.Fatalf("material seed row %d has %d columns, expected %d: %s", index+1, got, expectedColumns, row)
 		}
+	}
+}
+
+func TestSeedUsersDoNotOverwriteExistingAccounts(t *testing.T) {
+	t.Parallel()
+
+	if strings.Contains(seedSQL, "ON CONFLICT (tenant_id, lower(email)) DO UPDATE\nSET phone = EXCLUDED.phone") {
+		t.Fatal("演示用户种子不应在每次启动时覆盖既有账号资料")
+	}
+	if !strings.Contains(seedSQL, "ON CONFLICT (tenant_id, lower(email)) DO NOTHING") {
+		t.Fatal("演示用户种子应只补齐缺失账号")
 	}
 }
 

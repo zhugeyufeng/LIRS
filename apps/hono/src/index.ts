@@ -159,14 +159,16 @@ const tenantSchema = z.object({
   financeEnabled: z.boolean().optional().default(true),
   status: z.enum(["active", "disabled"]).optional().default("active"),
 });
-const smtpSettingsSchema = z.object({
+const graphMailSettingsSchema = z.object({
   enabled: z.boolean().optional().default(false),
-  host: z.string().optional().default(""),
-  port: z.coerce.number().int().positive().optional().default(587),
-  username: z.string().optional().default(""),
-  password: z.string().optional(),
-  fromEmail: z.string().optional().default(""),
-  fromName: z.string().optional().default(""),
+  tenantId: z.string().optional().default(""),
+  clientId: z.string().optional().default(""),
+  clientSecret: z.string().optional().default(""),
+  senderUserPrincipalName: z.string().optional().default(""),
+  saveToSentItems: z.boolean().optional().default(false),
+});
+const graphMailTestSchema = z.object({
+  to: z.string().email(),
 });
 const wechatSettingsSchema = z.object({
   enabled: z.boolean().optional().default(false),
@@ -443,11 +445,145 @@ const businessConfigSchema = z.object({
   description: z.string().optional().default(""),
   configJson: z.string().optional().default("{}"),
 });
+const trainingCourseSchema = z.object({
+  title: z.string().min(1),
+  category: z.string().optional().default(""),
+  instrumentId: z.string().optional().default(""),
+  instructor: z.string().optional().default(""),
+  deliveryMode: z.string().optional().default(""),
+  durationHours: z.coerce.number().nonnegative().optional().default(0),
+  requiredForBooking: z.boolean().optional().default(false),
+  status: z.string().optional().default("active"),
+  description: z.string().optional().default(""),
+});
+const trainingAuthorizationSchema = z.object({
+  userId: z.string().optional().default(""),
+  userName: z.string().optional().default(""),
+  courseId: z.string().optional().default(""),
+  instrumentId: z.string().optional().default(""),
+  status: z.string().optional().default("pending"),
+  expiresAt: z.string().datetime(),
+  notes: z.string().optional().default(""),
+});
+const trainingQuestionSchema = z.object({
+  title: z.string().min(1),
+  questionType: z.string().optional().default("single"),
+  options: z.string().optional().default(""),
+  correctAnswer: z.string().optional().default(""),
+  explanation: z.string().optional().default(""),
+  status: z.string().optional().default("active"),
+});
+const trainingExamSchema = z.object({
+  userId: z.string().optional().default(""),
+  userName: z.string().optional().default(""),
+  courseId: z.string().optional().default(""),
+  score: z.coerce.number().optional().default(0),
+  passed: z.boolean().optional().default(false),
+  answers: z.string().optional().default(""),
+  status: z.string().optional().default("submitted"),
+  notes: z.string().optional().default(""),
+  examAt: z.string().datetime(),
+});
+const trainingPracticalSchema = z.object({
+  userId: z.string().optional().default(""),
+  userName: z.string().optional().default(""),
+  instrumentId: z.string().optional().default(""),
+  assessor: z.string().optional().default(""),
+  score: z.coerce.number().optional().default(0),
+  result: z.string().optional().default("pending"),
+  notes: z.string().optional().default(""),
+  assessmentAt: z.string().datetime(),
+});
+const trainingRuleSchema = z.object({
+  instrumentId: z.string().optional().default(""),
+  requireTraining: z.boolean().optional().default(false),
+  requireExam: z.boolean().optional().default(false),
+  requireApproval: z.boolean().optional().default(false),
+  minScore: z.coerce.number().optional().default(0),
+  status: z.string().optional().default("active"),
+  notes: z.string().optional().default(""),
+});
+const spaceSchema = z.object({
+  name: z.string().min(1),
+  kind: z.string().optional().default("lab"),
+  department: z.string().optional().default(""),
+  location: z.string().optional().default(""),
+  capacity: z.coerce.number().int().nonnegative().optional().default(0),
+  status: z.string().optional().default("available"),
+  accessControlPoint: z.string().optional().default(""),
+  description: z.string().optional().default(""),
+});
+const spaceReservationSchema = z.object({
+  spaceId: z.string().min(1),
+  requesterId: z.string().optional().default(""),
+  requester: z.string().optional().default(""),
+  purpose: z.string().min(1),
+  startTime: z.string().datetime(),
+  endTime: z.string().datetime(),
+});
+const sampleSchema = z.object({
+  code: z.string().min(1),
+  name: z.string().min(1),
+  ownerId: z.string().optional().default(""),
+  ownerName: z.string().optional().default(""),
+  department: z.string().optional().default(""),
+  groupName: z.string().optional().default(""),
+  location: z.string().optional().default(""),
+  status: z.string().optional().default("stored"),
+  hazardLevel: z.string().optional().default("normal"),
+  storageCondition: z.string().optional().default(""),
+  description: z.string().optional().default(""),
+});
+const sampleMovementSchema = z.object({
+  sampleId: z.string().min(1),
+  movementType: z.string().optional().default("transfer"),
+  fromLocation: z.string().optional().default(""),
+  toLocation: z.string().optional().default(""),
+  reason: z.string().optional().default(""),
+});
+const limsTaskSchema = z.object({
+  requesterId: z.string().optional().default(""),
+  sampleId: z.string().optional().default(""),
+  instrumentId: z.string().optional().default(""),
+  title: z.string().min(1),
+  assayType: z.string().optional().default(""),
+  priority: z.string().optional().default("normal"),
+  status: z.string().optional().default("pending"),
+  requesterName: z.string().optional().default(""),
+  dueAt: z.string().datetime(),
+  resultSummary: z.string().optional().default(""),
+});
+const elnRecordSchema = z.object({
+  authorId: z.string().optional().default(""),
+  title: z.string().min(1),
+  project: z.string().optional().default(""),
+  linkedTaskId: z.string().optional().default(""),
+  content: z.string().optional().default(""),
+  status: z.string().optional().default("draft"),
+  authorName: z.string().optional().default(""),
+});
+const iotDeviceSchema = z.object({
+  name: z.string().min(1),
+  vendor: z.string().optional().default(""),
+  deviceCode: z.string().optional().default(""),
+  instrumentId: z.string().optional().default(""),
+  online: z.boolean().optional().default(false),
+  status: z.string().optional().default("offline"),
+  telemetry: z.string().optional().default("{}"),
+  notes: z.string().optional().default(""),
+});
+const assistantQuerySchema = z.object({
+  requesterId: z.string().optional().default(""),
+  requester: z.string().optional().default(""),
+  question: z.string().min(1),
+  context: z.string().optional().default(""),
+});
 
 app.post("/api/tenants", validateAndProxy(tenantSchema));
 app.patch("/api/tenants/:id", validateAndProxy(tenantSchema));
-app.patch("/api/notification-channel-settings/smtp", validateAndProxy(smtpSettingsSchema));
 app.patch("/api/notification-channel-settings/wechat", validateAndProxy(wechatSettingsSchema));
+app.patch("/api/notification-channel-settings/graph-mail", validateAndProxy(graphMailSettingsSchema));
+app.post("/api/notification-channel-settings/graph-mail/test", validateAndProxy(graphMailTestSchema));
 app.get("/api/notification-channel-settings/dingtalk", proxyToGo);
 app.patch("/api/notification-channel-settings/dingtalk", validateAndProxy(dingTalkSettingsSchema));
 app.post("/api/notification-channel-settings/dingtalk/test", validateAndProxy(dingTalkTestSchema));
@@ -489,6 +625,7 @@ app.post("/api/reservations/batch", validateAndProxy(z.object({
 app.patch("/api/reservations/:id/approve", validateAndProxy(reservationDecisionSchema));
 app.patch("/api/reservations/:id/reject", validateAndProxy(reservationDecisionSchema));
 app.patch("/api/reservations/:id/check-in", validateOptionalJsonAndProxy(emptyJsonObject));
+app.patch("/api/reservations/:id/complete", validateOptionalJsonAndProxy(emptyJsonObject));
 app.patch("/api/reservations/:id/check-out", validateOptionalJsonAndProxy(emptyJsonObject));
 app.patch("/api/reservations/:id/cancel", validateOptionalJsonAndProxy(reservationCancelSchema));
 app.post("/api/users", validateAndProxy(userCreateSchema));
@@ -506,6 +643,7 @@ app.patch("/api/financial-accounts/:id", validateAndProxy(financialAccountSchema
 app.post("/api/materials", validateAndProxy(materialSchema));
 app.post("/api/materials/import", proxyToGo);
 app.post("/api/materials/import.csv", proxyToGo);
+app.post("/api/uploads/material-certificates", proxyToGo);
 app.post("/api/materials/categories", validateAndProxy(materialCategorySchema));
 app.patch("/api/materials/categories/:id", validateAndProxy(materialCategorySchema));
 app.delete("/api/materials/categories/:id", proxyToGo);
@@ -543,18 +681,43 @@ app.post("/api/maintenance", validateAndProxy(maintenanceSchema));
 app.patch("/api/maintenance/:id/start", validateOptionalJsonAndProxy(emptyJsonObject));
 app.patch("/api/maintenance/:id/cancel", validateAndProxy(z.object({ reason: z.string().optional().default("") })));
 app.patch("/api/maintenance/:id/complete", validateAndProxy(maintenanceUpdateSchema));
+app.post("/api/training/courses", validateAndProxy(trainingCourseSchema));
+app.patch("/api/training/courses/:id", validateAndProxy(trainingCourseSchema));
+app.post("/api/training/authorizations", validateAndProxy(trainingAuthorizationSchema));
+app.patch("/api/training/authorizations/:id", validateAndProxy(trainingAuthorizationSchema));
+app.post("/api/training/questions", validateAndProxy(trainingQuestionSchema));
+app.patch("/api/training/questions/:id", validateAndProxy(trainingQuestionSchema));
+app.post("/api/training/exams", validateAndProxy(trainingExamSchema));
+app.patch("/api/training/exams/:id", validateAndProxy(trainingExamSchema));
+app.post("/api/training/practicals", validateAndProxy(trainingPracticalSchema));
+app.patch("/api/training/practicals/:id", validateAndProxy(trainingPracticalSchema));
+app.post("/api/training/rules", validateAndProxy(trainingRuleSchema));
+app.patch("/api/training/rules/:id", validateAndProxy(trainingRuleSchema));
 app.post("/api/workflows/:kind", validateAndProxy(businessConfigSchema));
 app.patch("/api/workflows/:kind/:id", validateAndProxy(businessConfigSchema));
 app.post("/api/billing/:kind", validateAndProxy(businessConfigSchema));
 app.patch("/api/billing/:kind/:id", validateAndProxy(businessConfigSchema));
+app.post("/api/spaces", validateAndProxy(spaceSchema));
+app.patch("/api/spaces/:id", validateAndProxy(spaceSchema));
+app.post("/api/space-reservations", validateAndProxy(spaceReservationSchema));
+app.post("/api/samples", validateAndProxy(sampleSchema));
+app.patch("/api/samples/:id", validateAndProxy(sampleSchema));
+app.post("/api/sample-movements", validateAndProxy(sampleMovementSchema));
+app.post("/api/lims/tasks", validateAndProxy(limsTaskSchema));
+app.patch("/api/lims/tasks/:id", validateAndProxy(limsTaskSchema));
+app.post("/api/eln/records", validateAndProxy(elnRecordSchema));
+app.patch("/api/eln/records/:id", validateAndProxy(elnRecordSchema));
+app.post("/api/iot/devices", validateAndProxy(iotDeviceSchema));
+app.patch("/api/iot/devices/:id", validateAndProxy(iotDeviceSchema));
+app.post("/api/ai-assistant", validateAndProxy(assistantQuerySchema));
 
 app.post("/api/logout", proxyToGo);
 app.post("/api/logout-all", proxyToGo);
 app.get("/api/*", proxyToGo);
 app.delete("/api/*", proxyToGo);
-app.post("/api/*", validateOptionalJsonAndProxy(z.record(z.unknown())));
-app.put("/api/*", validateOptionalJsonAndProxy(z.record(z.unknown())));
-app.patch("/api/*", validateOptionalJsonAndProxy(z.record(z.unknown())));
+app.post("/api/*", unsupportedWriteRoute);
+app.put("/api/*", unsupportedWriteRoute);
+app.patch("/api/*", unsupportedWriteRoute);
 
 serve({ fetch: app.fetch, port }, (info) => {
   console.log(`LIRS Hono API listening on ${info.port}`);
@@ -604,6 +767,10 @@ function validateOptionalJsonAndProxy(schema: z.ZodTypeAny) {
 function isJsonRequest(c: Context) {
   const contentType = c.req.header("content-type") ?? "";
   return contentType.toLowerCase().includes("application/json");
+}
+
+function unsupportedWriteRoute(c: Context) {
+  return c.json({ error: "unsupported api route" }, 404);
 }
 
 async function proxyToGo(c: Context, overrideBody?: unknown) {

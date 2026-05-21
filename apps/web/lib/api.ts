@@ -1,3 +1,4 @@
+import { authTokenKey } from "@/lib/auth-cookie";
 import { cachedBusinessData } from "@/lib/business-data-cache";
 
 export type Instrument = {
@@ -1229,7 +1230,6 @@ export type AuthResponse = {
 
 const serverBaseUrl = process.env.API_BASE_URL ?? "http://localhost:8090";
 const browserBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "";
-const authTokenKey = "lirs.authToken";
 const publicSettingsRevalidateSeconds = 60;
 const currentUserCacheSeconds = 60;
 

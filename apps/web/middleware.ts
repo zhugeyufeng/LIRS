@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:8090";
+import { authTokenKey } from "./lib/auth-cookie";
+
 const protectedPrefixes = [
   "/admin",
   "/approvals",
@@ -28,26 +29,14 @@ export async function middleware(request: NextRequest) {
   if (!protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
     return NextResponse.next();
   }
-  const token = request.cookies.get("lirs.authToken")?.value ?? "";
-  if (token && await isValidToken(token)) {
+  const token = request.cookies.get(authTokenKey)?.value ?? "";
+  if (token) {
     return NextResponse.next();
   }
   const url = request.nextUrl.clone();
   url.pathname = "/login";
   url.searchParams.set("next", pathname);
   return NextResponse.redirect(url);
-}
-
-async function isValidToken(token: string) {
-  try {
-    const response = await fetch(`${apiBaseUrl}/api/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
 }
 
 export const config = {

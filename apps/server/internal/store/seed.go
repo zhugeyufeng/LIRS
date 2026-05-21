@@ -25,14 +25,7 @@ VALUES
 ('李明', 'liming@univ.edu.cn', '13800000002', '生命科学学院', '王敏团队', 'demo', 'student', 'active', true),
 ('王敏', 'wangmin@univ.edu.cn', '13800000003', '化学与分子工程学院', '李明团队', 'demo', 'group_leader', 'active', true),
 ('测试普通用户', 'testuser@lirs.local', '13900000000', '生命科学学院', '王敏团队', 'demo', 'student', 'active', true)
-ON CONFLICT (tenant_id, lower(email)) DO UPDATE
-SET phone = EXCLUDED.phone,
-    department = EXCLUDED.department,
-    group_name = EXCLUDED.group_name,
-    role = EXCLUDED.role,
-    status = EXCLUDED.status,
-    email_verified = true,
-    updated_at = now();
+ON CONFLICT (tenant_id, lower(email)) DO NOTHING;
 
 INSERT INTO site_settings (setting_key, value, updated_by)
 VALUES (

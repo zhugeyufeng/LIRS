@@ -1,11 +1,11 @@
 import { NextRequest } from "next/server";
 
+import { authTokenKey } from "@/lib/auth-cookie";
 import { clearBusinessDataCache } from "@/lib/business-data-cache";
 
 const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:8090";
 const proxyTimeoutMs = Number(process.env.API_PROXY_TIMEOUT_MS ?? 60000);
 const maxProxyBodyBytes = Number(process.env.MAX_PROXY_BODY_BYTES ?? 10 * 1024 * 1024);
-const authTokenKey = "lirs.authToken";
 
 export const dynamic = "force-dynamic";
 
