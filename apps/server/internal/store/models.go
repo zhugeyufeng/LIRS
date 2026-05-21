@@ -320,6 +320,31 @@ type AccessControlSettingsInput struct {
 	Actor                  string `json:"actor"`
 }
 
+type AIAssistantSettings struct {
+	Enabled          bool      `json:"enabled"`
+	Provider         string    `json:"provider"`
+	BaseURL          string    `json:"baseUrl"`
+	Model            string    `json:"model"`
+	SystemPrompt     string    `json:"systemPrompt"`
+	Temperature      float64   `json:"temperature"`
+	MaxTokens        int       `json:"maxTokens"`
+	APIKeyConfigured bool      `json:"apiKeyConfigured"`
+	UpdatedBy        string    `json:"updatedBy"`
+	UpdatedAt        time.Time `json:"updatedAt"`
+}
+
+type AIAssistantSettingsInput struct {
+	Enabled      bool    `json:"enabled"`
+	Provider     string  `json:"provider"`
+	BaseURL      string  `json:"baseUrl"`
+	APIKey       string  `json:"apiKey"`
+	Model        string  `json:"model"`
+	SystemPrompt string  `json:"systemPrompt"`
+	Temperature  float64 `json:"temperature"`
+	MaxTokens    int     `json:"maxTokens"`
+	Actor        string  `json:"actor"`
+}
+
 type RegisterInput struct {
 	TenantID         string `json:"tenantId"`
 	TenantCode       string `json:"tenantCode"`

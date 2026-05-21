@@ -49,6 +49,8 @@ type notificationSettingsRepository interface {
 	HandleDingTalkEventCallback(ctx context.Context, input store.DingTalkEventCallbackInput) (store.DingTalkEventCallbackResponse, error)
 	AccessControlSettings(ctx context.Context) (store.AccessControlSettings, error)
 	SaveAccessControlSettings(ctx context.Context, input store.AccessControlSettingsInput) (store.AccessControlSettings, error)
+	AIAssistantSettings(ctx context.Context) (store.AIAssistantSettings, error)
+	SaveAIAssistantSettings(ctx context.Context, input store.AIAssistantSettingsInput) (store.AIAssistantSettings, error)
 }
 
 type instrumentRepository interface {

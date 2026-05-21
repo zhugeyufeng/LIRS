@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { BellDot, Building2, Landmark, MessageSquareCode, PanelBottom, Settings2, ShieldCheck, Type, Wallet, type LucideIcon } from "lucide-react";
+import { BellDot, Bot, Building2, Landmark, MessageSquareCode, PanelBottom, Settings2, ShieldCheck, Type, Wallet, type LucideIcon } from "lucide-react";
 
-type AdminSettingsSection = "overview" | "organization" | "tenants" | "billing" | "notifications" | "dingtalk" | "access-control" | "footer" | "copy";
+type AdminSettingsSection = "overview" | "organization" | "tenants" | "billing" | "notifications" | "dingtalk" | "ai-assistant" | "access-control" | "footer" | "copy";
 
 const items: { key: AdminSettingsSection; label: string; href: string; icon: LucideIcon }[] = [
   { key: "overview", label: "平台配置总览", href: "/admin/settings", icon: Settings2 },
@@ -10,6 +10,7 @@ const items: { key: AdminSettingsSection; label: string; href: string; icon: Luc
   { key: "billing", label: "财务模块开关", href: "/admin/settings/billing", icon: Wallet },
   { key: "notifications", label: "通知通道配置", href: "/admin/settings/notifications", icon: BellDot },
   { key: "dingtalk", label: "钉钉应用设置", href: "/admin/settings/dingtalk", icon: MessageSquareCode },
+  { key: "ai-assistant", label: "AI 模型设置", href: "/admin/settings/ai-assistant", icon: Bot },
   { key: "access-control", label: "第三方集成", href: "/admin/settings/access-control", icon: ShieldCheck },
   { key: "copy", label: "文案中心", href: "/admin/settings/copy", icon: Type },
   { key: "footer", label: "系统基础配置", href: "/admin/settings/footer", icon: PanelBottom },

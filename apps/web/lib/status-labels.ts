@@ -377,6 +377,7 @@ export function materialFeeStatusLabel(status: string | null | undefined) {
 export function auditActionLabel(action: string | null | undefined) {
   return labelFrom(action, {
     "access_control_settings.update": "更新门禁设置",
+    "ai_assistant.settings.update": "更新 AI 模型设置",
     "auth.login": "用户登录",
     "auth.logout_all": "清理全部登录会话",
     "billing.config.create": "创建计费配置",

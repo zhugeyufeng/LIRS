@@ -631,6 +631,30 @@ export type AccessControlSettingsPayload = {
   autoRevokeOnCompletion: boolean;
 };
 
+export type AIAssistantSettings = {
+  enabled: boolean;
+  provider: string;
+  baseUrl: string;
+  model: string;
+  systemPrompt: string;
+  temperature: number;
+  maxTokens: number;
+  apiKeyConfigured: boolean;
+  updatedBy: string;
+  updatedAt: string;
+};
+
+export type AIAssistantSettingsPayload = {
+  enabled: boolean;
+  provider: string;
+  baseUrl: string;
+  apiKey?: string;
+  model: string;
+  systemPrompt: string;
+  temperature: number;
+  maxTokens: number;
+};
+
 export type InstrumentFilters = {
   search?: string;
   category?: string;
@@ -1246,6 +1270,7 @@ export const api = {
   dingTalkSettings: (tenantId?: string) => businessRequest<DingTalkSettings>(withQuery("/api/notification-channel-settings/dingtalk", { tenantId }), `dingtalk-settings:${tenantId ?? ""}`),
   dingTalkBinding: () => request<DingTalkBinding>("/api/me/dingtalk-binding"),
   accessControlSettings: () => businessRequest<AccessControlSettings>("/api/access-control-settings", "access-control-settings"),
+  aiAssistantSettings: (tenantId?: string) => businessRequest<AIAssistantSettings>(withQuery("/api/ai-assistant-settings", { tenantId }), `ai-assistant-settings:${tenantId ?? ""}`),
   instruments: (filters: InstrumentFilters = {}) => businessRequest<Instrument[]>(withQuery("/api/instruments", filters), "instruments"),
   instrument: (id: string) => businessRequest<Instrument>(`/api/instruments/${id}`, "instruments"),
   slots: (id: string, days = 7) => businessRequest<Slot[]>(`/api/instruments/${id}/slots?days=${days}`, "instrument-slots"),
@@ -1464,6 +1489,21 @@ export function createDefaultDingTalkSettings(): DingTalkSettings {
     clientSecretConfigured: false,
     eventAesKeyConfigured: false,
     eventTokenConfigured: false,
+    updatedBy: "system",
+    updatedAt: "",
+  };
+}
+
+export function createDefaultAIAssistantSettings(): AIAssistantSettings {
+  return {
+    enabled: false,
+    provider: "openai_compatible",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4o-mini",
+    systemPrompt: "你是实验室运营系统的 AI 助手。请基于系统提供的机构数据回答预约、资源、培训、样本、空间和物联网设备相关问题。回答必须使用简体中文，结论清晰，不能编造系统数据之外的信息。",
+    temperature: 0.2,
+    maxTokens: 1200,
+    apiKeyConfigured: false,
     updatedBy: "system",
     updatedAt: "",
   };

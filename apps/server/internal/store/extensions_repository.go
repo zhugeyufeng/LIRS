@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -1141,50 +1144,27 @@ func (r *Repository) AskAssistant(ctx context.Context, input AssistantQueryInput
 		return AssistantQuery{}, clientError("question is required")
 	}
 
-	var dashboard Dashboard
-	if d, err := r.Dashboard(ctx); err == nil {
-		dashboard = d
+	settings, err := r.aiAssistantSettingsValue(ctx)
+	if err != nil {
+		return AssistantQuery{}, err
 	}
-
-	countQuery := func(sql string, args ...any) int {
-		var value int
-		if err := r.db.QueryRow(ctx, sql, args...).Scan(&value); err != nil {
-			return 0
-		}
-		return value
+	if !settings.Enabled {
+		return AssistantQuery{}, clientError("AI 助手未启用，请先在后台配置模型 API")
 	}
-
-	instrumentCount := dashboard.ActiveInstruments
-	lowStockCount := countQuery(`SELECT count(*) FROM materials WHERE ($1::boolean OR tenant_id = $2::uuid) AND stock <= warning_line`, tenant.AllTenants, tenant.TenantID)
-	pendingRequests := countQuery(`SELECT count(*) FROM material_requests WHERE ($1::boolean OR tenant_id = $2::uuid) AND status = 'pending'`, tenant.AllTenants, tenant.TenantID)
-	pendingPurchases := countQuery(`SELECT count(*) FROM material_purchases WHERE ($1::boolean OR tenant_id = $2::uuid) AND status IN ('registered', 'returned')`, tenant.AllTenants, tenant.TenantID)
-	courseCount := countQuery(`SELECT count(*) FROM training_courses WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)
-	authCount := countQuery(`SELECT count(*) FROM training_authorizations WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)
-	spaceCount := countQuery(`SELECT count(*) FROM spaces WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)
-	sampleCount := countQuery(`SELECT count(*) FROM samples WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)
-	deviceCount := countQuery(`SELECT count(*) FROM iot_devices WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)
-
-	answer := fmt.Sprintf("当前机构可见数据包括 %d 台仪器、%d 个空间、%d 个样本和 %d 台物联网设备。",
-		instrumentCount, spaceCount, sampleCount, deviceCount)
-	switch {
-	case strings.Contains(input.Question, "预约") || strings.Contains(input.Question, "仪器"):
-		answer = fmt.Sprintf("仪器中心目前显示 %d 台可用或忙碌设备，今日预约 %d 项，待审批 %d 项，已履约 %d 项。建议直接从仪器详情页进入日历预约。",
-			instrumentCount, dashboard.TodayReservations, dashboard.PendingApprovals, dashboard.CompletedReservations)
-	case strings.Contains(input.Question, "耗材"):
-		answer = fmt.Sprintf("耗材中心当前有低库存预警 %d 项，待处理申领 %d 条，待处理申购 %d 条。建议优先处理低库存和待审批订单。",
-			lowStockCount, pendingRequests, pendingPurchases)
-	case strings.Contains(input.Question, "培训"):
-		answer = fmt.Sprintf("培训与准入中心当前有 %d 门课程和 %d 条授权记录。若仪器启用了准入限制，需要先完成培训与授权后再预约。",
-			courseCount, authCount)
-	case strings.Contains(input.Question, "样本"):
-		answer = fmt.Sprintf("样本管理当前有 %d 条样本台账，可在样本页面维护存储位置、风险等级和流转记录。",
-			sampleCount)
-	case strings.Contains(input.Question, "IoT") || strings.Contains(input.Question, "设备") || strings.Contains(input.Question, "门禁"):
-		answer = fmt.Sprintf("物联网设备中心当前接入 %d 台设备，采集终端可以按仪器绑定并维护在线状态、遥测数据和备注。", deviceCount)
+	if settings.APIKey == "" || settings.Model == "" || settings.BaseURL == "" {
+		return AssistantQuery{}, clientError("AI 助手模型 API 配置不完整")
+	}
+	systemContext, err := r.assistantSystemContext(ctx, input.Context)
+	if err != nil {
+		return AssistantQuery{}, err
+	}
+	answer, err := r.callAssistantModel(ctx, settings, input.Question, systemContext)
+	if err != nil {
+		return AssistantQuery{}, WrapClientError("AI 助手调用失败", err)
 	}
 
 	var item AssistantQuery
-	err := r.db.QueryRow(ctx, `
+	err = r.db.QueryRow(ctx, `
 INSERT INTO assistant_queries (tenant_id, requester_id, requester, question, answer, context)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id::text, tenant_id::text, question, answer, context, created_at
@@ -1192,6 +1172,136 @@ RETURNING id::text, tenant_id::text, question, answer, context, created_at
 		&item.ID, &item.TenantID, &item.Question, &item.Answer, &item.Context, &item.CreatedAt,
 	)
 	return item, err
+}
+
+func (r *Repository) assistantSystemContext(ctx context.Context, extraContext string) (string, error) {
+	tenant := TenantFromContext(ctx)
+	var dashboard Dashboard
+	if d, err := r.Dashboard(ctx); err == nil {
+		dashboard = d
+	}
+	countQuery := func(sql string, args ...any) int {
+		var value int
+		if err := r.db.QueryRow(ctx, sql, args...).Scan(&value); err != nil {
+			return 0
+		}
+		return value
+	}
+	lines := []string{
+		"当前机构：" + firstNonEmpty(tenant.TenantName, tenant.TenantID),
+		fmt.Sprintf("仪器：活跃 %d 台，今日预约 %d 项，待审批 %d 项，使用中 %d 项，已完成 %d 项。", dashboard.ActiveInstruments, dashboard.TodayReservations, dashboard.PendingApprovals, dashboard.InUseReservations, dashboard.CompletedReservations),
+		fmt.Sprintf("资源：低库存 %d 项，待处理申领 %d 条，待处理申购 %d 条。",
+			countQuery(`SELECT count(*) FROM materials WHERE ($1::boolean OR tenant_id = $2::uuid) AND status <> 'disabled' AND stock <= warning_line`, tenant.AllTenants, tenant.TenantID),
+			countQuery(`SELECT count(*) FROM material_requests WHERE ($1::boolean OR tenant_id = $2::uuid) AND status = 'pending'`, tenant.AllTenants, tenant.TenantID),
+			countQuery(`SELECT count(*) FROM material_purchases WHERE ($1::boolean OR tenant_id = $2::uuid) AND status IN ('registered', 'returned')`, tenant.AllTenants, tenant.TenantID),
+		),
+		fmt.Sprintf("培训：课程 %d 门，授权记录 %d 条。", countQuery(`SELECT count(*) FROM training_courses WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID), countQuery(`SELECT count(*) FROM training_authorizations WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)),
+		fmt.Sprintf("空间、样本和物联网：空间 %d 个，样本 %d 条，物联网设备 %d 台。", countQuery(`SELECT count(*) FROM spaces WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID), countQuery(`SELECT count(*) FROM samples WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID), countQuery(`SELECT count(*) FROM iot_devices WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)),
+	}
+	extraContext = strings.TrimSpace(extraContext)
+	if extraContext != "" {
+		lines = append(lines, "用户补充背景："+extraContext)
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+func (r *Repository) callAssistantModel(ctx context.Context, settings aiAssistantSettingsValue, question string, systemContext string) (string, error) {
+	settings = normalizeAIAssistantSettingsValue(settings)
+	endpoint, err := assistantChatCompletionsEndpoint(settings.BaseURL)
+	if err != nil {
+		return "", err
+	}
+	payload := map[string]any{
+		"model":       settings.Model,
+		"temperature": settings.Temperature,
+		"max_tokens":  settings.MaxTokens,
+		"messages": []map[string]string{
+			{"role": "system", "content": settings.SystemPrompt},
+			{"role": "system", "content": "系统当前可见数据：\n" + systemContext},
+			{"role": "user", "content": question},
+		},
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(mustJSONBytes(payload)))
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Authorization", "Bearer "+settings.APIKey)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := r.httpClient().Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return "", clientErrorf("模型接口返回失败：%s", assistantHTTPErrorMessage(response.StatusCode, raw))
+	}
+	var decoded struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Error struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return "", err
+	}
+	if decoded.Error.Message != "" {
+		return "", clientError(strings.TrimSpace(decoded.Error.Message))
+	}
+	if len(decoded.Choices) == 0 {
+		return "", clientError("模型接口未返回回答")
+	}
+	answer := strings.TrimSpace(decoded.Choices[0].Message.Content)
+	if answer == "" {
+		return "", clientError("模型接口返回空回答")
+	}
+	return answer, nil
+}
+
+func assistantChatCompletionsEndpoint(baseURL string) (string, error) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return "", clientError("AI 助手 API 地址不能为空")
+	}
+	parsed, err := url.ParseRequestURI(baseURL)
+	if err != nil {
+		return "", clientError("AI 助手 API 地址无效")
+	}
+	if strings.HasSuffix(parsed.Path, "/chat/completions") {
+		return baseURL, nil
+	}
+	return baseURL + "/chat/completions", nil
+}
+
+func assistantHTTPErrorMessage(status int, raw []byte) string {
+	var decoded struct {
+		Error struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err == nil && strings.TrimSpace(decoded.Error.Message) != "" {
+		if decoded.Error.Code != "" {
+			return fmt.Sprintf("status=%d code=%s message=%s", status, decoded.Error.Code, decoded.Error.Message)
+		}
+		return fmt.Sprintf("status=%d message=%s", status, decoded.Error.Message)
+	}
+	text := strings.TrimSpace(string(raw))
+	if text == "" {
+		return fmt.Sprintf("status=%d", status)
+	}
+	if len(text) > 500 {
+		text = text[:500]
+	}
+	return fmt.Sprintf("status=%d body=%s", status, text)
 }
 
 func (r *Repository) DeleteAssistantQuery(ctx context.Context, id string, actor string) (AssistantQuery, error) {

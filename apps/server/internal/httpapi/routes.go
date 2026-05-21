@@ -191,6 +191,34 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			respond(c, item, err)
 		}
 	})
+	api.GET("/ai-assistant-settings", func(c *gin.Context) {
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
+		if !ok {
+			return
+		}
+		requestCtx, ok := tenantAdminRequestContext(c, repo, actor)
+		if !ok {
+			return
+		}
+		item, err := repo.AIAssistantSettings(requestCtx)
+		respond(c, item, err)
+	})
+	api.PATCH("/ai-assistant-settings", func(c *gin.Context) {
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
+		if !ok {
+			return
+		}
+		requestCtx, ok := tenantAdminRequestContext(c, repo, actor)
+		if !ok {
+			return
+		}
+		var input store.AIAssistantSettingsInput
+		if bindJSON(c, &input) {
+			input.Actor = actor.Name
+			item, err := repo.SaveAIAssistantSettings(requestCtx, input)
+			respond(c, item, err)
+		}
+	})
 	api.GET("/instruments", func(c *gin.Context) {
 		filter := store.InstrumentFilter{
 			Search:     c.Query("search"),

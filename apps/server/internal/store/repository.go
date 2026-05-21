@@ -51,6 +51,7 @@ const (
 	wechatSettingsKey        = "wechat"
 	dingTalkSettingsKey      = "dingtalk"
 	accessControlSettingsKey = "access_control"
+	aiAssistantSettingsKey   = "ai_assistant"
 )
 
 func tenantScopedDingTalkSettingsKey(tenantID string) string {
@@ -59,6 +60,14 @@ func tenantScopedDingTalkSettingsKey(tenantID string) string {
 		tenantID = defaultTenantID
 	}
 	return dingTalkSettingsKey + ":" + tenantID
+}
+
+func tenantScopedAIAssistantSettingsKey(tenantID string) string {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		tenantID = defaultTenantID
+	}
+	return aiAssistantSettingsKey + ":" + tenantID
 }
 
 type tenantContextKey struct{}
@@ -194,6 +203,17 @@ type accessControlSettingsValue struct {
 	AccessGroup            string `json:"accessGroup"`
 	AutoGrantOnApproval    bool   `json:"autoGrantOnApproval"`
 	AutoRevokeOnCompletion bool   `json:"autoRevokeOnCompletion"`
+}
+
+type aiAssistantSettingsValue struct {
+	Enabled      bool    `json:"enabled"`
+	Provider     string  `json:"provider"`
+	BaseURL      string  `json:"baseUrl"`
+	APIKey       string  `json:"apiKey"`
+	Model        string  `json:"model"`
+	SystemPrompt string  `json:"systemPrompt"`
+	Temperature  float64 `json:"temperature"`
+	MaxTokens    int     `json:"maxTokens"`
 }
 
 func NewRepository(db *pgxpool.Pool, redisClient *redis.Client) *Repository {
@@ -811,6 +831,90 @@ func (r *Repository) AccessControlSettings(ctx context.Context) (AccessControlSe
 		return AccessControlSettings{}, err
 	}
 	return accessControlSettingsFromValue(value, meta.updatedBy, meta.updatedAt), nil
+}
+
+func (r *Repository) AIAssistantSettings(ctx context.Context) (AIAssistantSettings, error) {
+	value, meta, err := r.readAIAssistantSettings(ctx)
+	if err != nil {
+		return AIAssistantSettings{}, err
+	}
+	return aiAssistantSettingsFromValue(value, meta.updatedBy, meta.updatedAt), nil
+}
+
+func (r *Repository) SaveAIAssistantSettings(ctx context.Context, input AIAssistantSettingsInput) (AIAssistantSettings, error) {
+	tenant := TenantFromContext(ctx)
+	input.Provider = strings.TrimSpace(input.Provider)
+	input.BaseURL = strings.TrimSpace(input.BaseURL)
+	input.APIKey = strings.TrimSpace(input.APIKey)
+	input.Model = strings.TrimSpace(input.Model)
+	input.SystemPrompt = strings.TrimSpace(input.SystemPrompt)
+	input.Actor = strings.TrimSpace(input.Actor)
+	if input.Actor == "" {
+		input.Actor = "system"
+	}
+	oldValue, _, err := r.readAIAssistantSettings(ctx)
+	if err != nil {
+		return AIAssistantSettings{}, err
+	}
+	if input.APIKey == "" {
+		input.APIKey = oldValue.APIKey
+	}
+	if input.Provider == "" {
+		input.Provider = "openai_compatible"
+	}
+	if input.BaseURL == "" {
+		input.BaseURL = defaultAIAssistantSettingsValue().BaseURL
+	}
+	if input.Model == "" {
+		input.Model = defaultAIAssistantSettingsValue().Model
+	}
+	if input.SystemPrompt == "" {
+		input.SystemPrompt = defaultAIAssistantSettingsValue().SystemPrompt
+	}
+	if input.Temperature < 0 {
+		input.Temperature = 0
+	}
+	if input.Temperature > 2 {
+		input.Temperature = 2
+	}
+	if input.MaxTokens <= 0 {
+		input.MaxTokens = defaultAIAssistantSettingsValue().MaxTokens
+	}
+	if input.MaxTokens > 8000 {
+		input.MaxTokens = 8000
+	}
+	if input.Enabled {
+		if input.APIKey == "" {
+			return AIAssistantSettings{}, clientError("AI 助手 API Key 不能为空")
+		}
+		if input.Model == "" {
+			return AIAssistantSettings{}, clientError("AI 助手模型不能为空")
+		}
+		if _, err := url.ParseRequestURI(input.BaseURL); err != nil {
+			return AIAssistantSettings{}, clientError("AI 助手 API 地址无效")
+		}
+	}
+	value := aiAssistantSettingsValue{
+		Enabled:      input.Enabled,
+		Provider:     input.Provider,
+		BaseURL:      strings.TrimRight(input.BaseURL, "/"),
+		APIKey:       input.APIKey,
+		Model:        input.Model,
+		SystemPrompt: input.SystemPrompt,
+		Temperature:  input.Temperature,
+		MaxTokens:    input.MaxTokens,
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return AIAssistantSettings{}, err
+	}
+	settingKey := tenantScopedAIAssistantSettingsKey(tenant.TenantID)
+	meta, err := r.saveJSONSetting(ctx, settingKey, raw, input.Actor)
+	if err != nil {
+		return AIAssistantSettings{}, err
+	}
+	r.audit(ctx, input.Actor, "ai_assistant.settings.update", "site_setting", settingKey, "", input.Provider+"/"+input.Model)
+	return aiAssistantSettingsFromValue(value, meta.updatedBy, meta.updatedAt), nil
 }
 
 func (r *Repository) SaveAccessControlSettings(ctx context.Context, input AccessControlSettingsInput) (AccessControlSettings, error) {
@@ -5849,6 +5953,32 @@ func (r *Repository) readAccessControlSettings(ctx context.Context) (accessContr
 	return normalizeAccessControlSettingsValue(value), meta, nil
 }
 
+func (r *Repository) readAIAssistantSettings(ctx context.Context) (aiAssistantSettingsValue, settingMeta, error) {
+	tenant := TenantFromContext(ctx)
+	var raw []byte
+	var meta settingMeta
+	settingKey := tenantScopedAIAssistantSettingsKey(tenant.TenantID)
+	err := r.db.QueryRow(ctx, `SELECT value, updated_by, updated_at FROM site_settings WHERE setting_key = $1`, settingKey).Scan(&raw, &meta.updatedBy, &meta.updatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return defaultAIAssistantSettingsValue(), settingMeta{updatedBy: "system"}, nil
+	}
+	if err != nil {
+		return aiAssistantSettingsValue{}, settingMeta{}, err
+	}
+	var value aiAssistantSettingsValue
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return aiAssistantSettingsValue{}, settingMeta{}, err
+		}
+	}
+	return normalizeAIAssistantSettingsValue(value), meta, nil
+}
+
+func (r *Repository) aiAssistantSettingsValue(ctx context.Context) (aiAssistantSettingsValue, error) {
+	value, _, err := r.readAIAssistantSettings(ctx)
+	return value, err
+}
+
 func (r *Repository) accessControlSettingsValue(ctx context.Context) (accessControlSettingsValue, error) {
 	value, _, err := r.readAccessControlSettings(ctx)
 	return value, err
@@ -6105,6 +6235,67 @@ func accessControlSettingsFromValue(value accessControlSettingsValue, updatedBy 
 		ClientSecretConfigured: value.ClientSecret != "",
 		UpdatedBy:              updatedBy,
 		UpdatedAt:              updatedAt,
+	}
+}
+
+func defaultAIAssistantSettingsValue() aiAssistantSettingsValue {
+	return aiAssistantSettingsValue{
+		Provider:     "openai_compatible",
+		BaseURL:      "https://api.openai.com/v1",
+		Model:        "gpt-4o-mini",
+		SystemPrompt: "你是实验室运营系统的 AI 助手。请基于系统提供的机构数据回答预约、资源、培训、样本、空间和物联网设备相关问题。回答必须使用简体中文，结论清晰，不能编造系统数据之外的信息。",
+		Temperature:  0.2,
+		MaxTokens:    1200,
+	}
+}
+
+func normalizeAIAssistantSettingsValue(value aiAssistantSettingsValue) aiAssistantSettingsValue {
+	defaults := defaultAIAssistantSettingsValue()
+	value.Provider = strings.TrimSpace(value.Provider)
+	if value.Provider == "" {
+		value.Provider = defaults.Provider
+	}
+	value.BaseURL = strings.TrimRight(strings.TrimSpace(value.BaseURL), "/")
+	if value.BaseURL == "" {
+		value.BaseURL = defaults.BaseURL
+	}
+	value.APIKey = strings.TrimSpace(value.APIKey)
+	value.Model = strings.TrimSpace(value.Model)
+	if value.Model == "" {
+		value.Model = defaults.Model
+	}
+	value.SystemPrompt = strings.TrimSpace(value.SystemPrompt)
+	if value.SystemPrompt == "" {
+		value.SystemPrompt = defaults.SystemPrompt
+	}
+	if value.Temperature < 0 {
+		value.Temperature = 0
+	}
+	if value.Temperature > 2 {
+		value.Temperature = 2
+	}
+	if value.MaxTokens <= 0 {
+		value.MaxTokens = defaults.MaxTokens
+	}
+	if value.MaxTokens > 8000 {
+		value.MaxTokens = 8000
+	}
+	return value
+}
+
+func aiAssistantSettingsFromValue(value aiAssistantSettingsValue, updatedBy string, updatedAt time.Time) AIAssistantSettings {
+	value = normalizeAIAssistantSettingsValue(value)
+	return AIAssistantSettings{
+		Enabled:          value.Enabled,
+		Provider:         value.Provider,
+		BaseURL:          value.BaseURL,
+		Model:            value.Model,
+		SystemPrompt:     value.SystemPrompt,
+		Temperature:      value.Temperature,
+		MaxTokens:        value.MaxTokens,
+		APIKeyConfigured: value.APIKey != "",
+		UpdatedBy:        updatedBy,
+		UpdatedAt:        updatedAt,
 	}
 }
 
