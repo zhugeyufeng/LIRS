@@ -1,6 +1,5 @@
 import Link from "next/link";
 import {
-  Bot,
   Bell,
   BarChart3,
   CalendarCheck2,
@@ -154,12 +153,6 @@ const extensionModules: ModuleEntry[] = [
     title: "IoT 设备中心",
     description: "维护采集终端、仪器绑定和在线状态。",
     icon: Cpu,
-  },
-  {
-    href: "/ai-assistant",
-    title: "AI 助手",
-    description: "基于当前租户数据回答预约、培训和运维问题。",
-    icon: Bot,
   },
   {
     href: "/data-center",
@@ -354,7 +347,7 @@ export default async function HomePage() {
     },
     {
       title: "扩展能力中心",
-      description: "样本、物联网设备和 AI 助手入口。",
+      description: "样本、物联网设备和数据中台入口。",
       modules: extensionModules,
     },
     ...(currentUser && showFinance

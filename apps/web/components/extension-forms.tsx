@@ -7,7 +7,6 @@ import {
   browserDelete,
   browserPatch,
   browserPost,
-  type AssistantQuery,
   type IotDevice,
   type IotDevicePayload,
   type Instrument,
@@ -814,85 +813,6 @@ export function IotDeviceActions({ actorName, device, instruments }: ActorProps 
       <Button className="w-full sm:w-auto" disabled={pending} onClick={deleteDevice} size="sm" type="button" variant="destructive">
         <Trash2 className="h-4 w-4" aria-hidden="true" />
         删除设备
-      </Button>
-      {message ? <span className="text-xs text-slate-500">{message}</span> : null}
-    </div>
-  );
-}
-
-export function AssistantQueryForm({ actorName }: ActorProps) {
-  const router = useRouter();
-  const [message, setMessage] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [pending, setPending] = useState(false);
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setPending(true);
-    setMessage("");
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const payload = {
-      question: String(form.get("question") ?? ""),
-      context: String(form.get("context") ?? ""),
-    };
-    try {
-      const result = await browserPost<AssistantQuery>("/api/ai-assistant", payload);
-      setMessage("已生成回答");
-      setAnswer(result.answer);
-      formElement.reset();
-      startTransition(() => router.refresh());
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "发送失败");
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <form className="space-y-3" onSubmit={submit}>
-      <p className="text-xs text-muted-foreground">当前账号：{actorName}</p>
-      <TextAreaField label="问题描述" name="question" placeholder="例如：今天有哪些预约需要处理？" required />
-      <Field label="问题背景（可选）" name="context" placeholder="可填写仪器、样本或流程背景" />
-      <div className="flex justify-end">
-        <Button disabled={pending} type="submit">
-          <Save className="h-4 w-4" aria-hidden="true" />
-          {pending ? "生成中..." : "发送问题"}
-        </Button>
-      </div>
-      {answer ? <div className="rounded-md border bg-slate-50 p-3 text-sm leading-6 text-slate-700">{answer}</div> : null}
-      {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
-    </form>
-  );
-}
-
-export function AssistantQueryDeleteButton({ item }: { item: AssistantQuery }) {
-  const router = useRouter();
-  const [message, setMessage] = useState("");
-  const [pending, setPending] = useState(false);
-
-  async function deleteQuery() {
-    if (!confirmTwice("确定删除这条 AI 问答记录吗？", "请再次确认。删除后该问答会立即从列表和数据库中移除。")) {
-      return;
-    }
-    setPending(true);
-    setMessage("");
-    try {
-      await browserDelete<AssistantQuery>(`/api/ai-assistant/${item.id}`);
-      setMessage("已删除问答记录");
-      router.refresh();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "删除失败");
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-      <Button className="w-full sm:w-auto" disabled={pending} onClick={deleteQuery} size="sm" type="button" variant="destructive">
-        <Trash2 className="h-4 w-4" aria-hidden="true" />
-        删除问答
       </Button>
       {message ? <span className="text-xs text-slate-500">{message}</span> : null}
     </div>

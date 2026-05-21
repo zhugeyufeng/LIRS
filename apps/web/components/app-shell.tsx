@@ -7,6 +7,7 @@ import {
   Search,
 } from "lucide-react";
 import { AccountMenu } from "@/components/account-menu";
+import { FloatingAssistant } from "@/components/floating-assistant";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { api, copyText, createDefaultCopySettings, createDefaultFooterSettings, type User } from "@/lib/api";
 import { canAccessAdminSection, isAnyAdminRole, type AdminSection } from "@/lib/permissions";
@@ -74,7 +75,6 @@ const primaryNavGroups: PrimaryNavGroup[] = [
     requiresAuth: true,
     items: [
       { href: "/iot/devices", label: "IoT 设备", requiresAuth: true },
-      { href: "/ai-assistant", label: "AI 助手", requiresAuth: true },
       { href: "/data-center", label: "数据中台", requiresAuth: true },
     ],
   },
@@ -238,6 +238,7 @@ export async function AppShell({
         </nav>
       </header>
       <main className={mainClassName}>{children}</main>
+      {currentUser ? <FloatingAssistant currentUser={currentUser} /> : null}
       <footer className="border-t bg-slate-950 text-slate-200">
         <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
           <div className="grid gap-8 xl:grid-cols-[1.2fr_1fr]">

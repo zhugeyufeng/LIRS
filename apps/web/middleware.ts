@@ -17,7 +17,6 @@ const protectedPrefixes = [
   "/spaces",
   "/samples",
   "/iot",
-  "/ai-assistant",
   "/data-center",
   "/settings",
 ];
@@ -53,7 +52,6 @@ export const config = {
     "/spaces/:path*",
     "/samples/:path*",
     "/iot/:path*",
-    "/ai-assistant/:path*",
     "/data-center/:path*",
     "/settings/:path*",
   ],
