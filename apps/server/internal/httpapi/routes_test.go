@@ -236,6 +236,45 @@ func TestMaterialBatchLabelsRemainChinese(t *testing.T) {
 	}
 }
 
+func TestBindOptionalJSONRejectsInvalidPayload(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPatch, "/api/reservations/id/approve", strings.NewReader("{"))
+	context.Request.Header.Set("Content-Type", "application/json")
+
+	var input struct {
+		Comment string `json:"comment"`
+	}
+	if bindOptionalJSON(context, &input) {
+		t.Fatal("非法 JSON 不应继续执行业务")
+	}
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", recorder.Code)
+	}
+}
+
+func TestBindOptionalJSONAllowsEmptyPayload(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPatch, "/api/reservations/id/approve", nil)
+
+	var input struct {
+		Comment string `json:"comment"`
+	}
+	if !bindOptionalJSON(context, &input) {
+		t.Fatal("空请求体应被视为可选 JSON")
+	}
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected response code: %d", recorder.Code)
+	}
+}
+
 func TestMaterialRequestExportWorkbookMatchesStandardUsageTemplate(t *testing.T) {
 	t.Parallel()
 

@@ -171,6 +171,8 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NU
 UPDATE notifications SET source = 'system' WHERE source = '';
 ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_source_check;
 ALTER TABLE notifications ADD CONSTRAINT notifications_source_check CHECK (source IN ('system', 'announcement'));
+CREATE INDEX IF NOT EXISTS notifications_tenant_user_created_at_idx ON notifications (tenant_id, user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS notifications_tenant_scope_created_at_idx ON notifications (tenant_id, target_scope, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS notification_reads (
     notification_id uuid NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
@@ -549,7 +551,7 @@ CREATE TABLE IF NOT EXISTS material_purchases (
     estimated_unit_price numeric(12,2) NOT NULL DEFAULT 0 CHECK (estimated_unit_price >= 0),
     supplier text NOT NULL DEFAULT '',
     reason text NOT NULL,
-    status text NOT NULL DEFAULT 'registered' CHECK (status IN ('pending', 'registered', 'returned', 'ordered', 'received', 'cancelled')),
+    status text NOT NULL DEFAULT 'registered' CHECK (status IN ('pending', 'registered', 'approved', 'rejected', 'returned', 'ordered', 'received', 'cancelled')),
     decided_at timestamptz,
     ordered_at timestamptz,
     received_at timestamptz,
@@ -598,8 +600,8 @@ ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS ordered_at timestamptz;
 ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS received_at timestamptz;
 ALTER TABLE material_purchases ALTER COLUMN group_name SET DEFAULT '默认归属';
 ALTER TABLE material_purchases DROP CONSTRAINT IF EXISTS material_purchases_status_check;
-UPDATE material_purchases SET status = 'registered' WHERE status IN ('pending', 'approved', 'rejected');
-ALTER TABLE material_purchases ADD CONSTRAINT material_purchases_status_check CHECK (status IN ('pending', 'registered', 'returned', 'ordered', 'received', 'cancelled'));
+UPDATE material_purchases SET status = 'registered' WHERE status = 'pending';
+ALTER TABLE material_purchases ADD CONSTRAINT material_purchases_status_check CHECK (status IN ('pending', 'registered', 'approved', 'rejected', 'returned', 'ordered', 'received', 'cancelled'));
 UPDATE material_purchases
 SET purchase_serial_no = 'SG' || to_char(created_at, 'YYYYMM') || '-' || lpad(row_number::text, 4, '0')
 FROM (
@@ -731,6 +733,8 @@ UPDATE notifications SET updated_at = created_at WHERE updated_at IS NULL;
 UPDATE notifications SET tenant_id = '00000000-0000-0000-0000-000000000001' WHERE tenant_id IS NULL;
 ALTER TABLE notifications ALTER COLUMN tenant_id SET DEFAULT '00000000-0000-0000-0000-000000000001';
 ALTER TABLE notifications ALTER COLUMN tenant_id SET NOT NULL;
+CREATE INDEX IF NOT EXISTS notifications_tenant_user_created_at_idx ON notifications (tenant_id, user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS notifications_tenant_scope_created_at_idx ON notifications (tenant_id, target_scope, created_at DESC);
 
 ALTER TABLE notification_reads ADD COLUMN IF NOT EXISTS tenant_id uuid REFERENCES tenants(id);
 UPDATE notification_reads nr SET tenant_id = u.tenant_id FROM users u WHERE nr.user_id = u.id AND nr.tenant_id IS NULL;
@@ -1155,8 +1159,8 @@ FROM users u
 WHERE mp.requester_id = u.id
   AND (mp.requester_phone = '' OR mp.requester_email = '');
 ALTER TABLE material_purchases DROP CONSTRAINT IF EXISTS material_purchases_status_check;
-UPDATE material_purchases SET status = 'registered' WHERE status IN ('pending', 'approved', 'rejected');
-ALTER TABLE material_purchases ADD CONSTRAINT material_purchases_status_check CHECK (status IN ('pending', 'registered', 'returned', 'ordered', 'received', 'cancelled'));
+UPDATE material_purchases SET status = 'registered' WHERE status = 'pending';
+ALTER TABLE material_purchases ADD CONSTRAINT material_purchases_status_check CHECK (status IN ('pending', 'registered', 'approved', 'rejected', 'returned', 'ordered', 'received', 'cancelled'));
 UPDATE material_purchases
 SET purchase_serial_no = 'SG' || to_char(created_at, 'YYYYMM') || '-' || lpad(row_number::text, 4, '0')
 FROM (

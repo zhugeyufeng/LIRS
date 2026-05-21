@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -39,6 +40,46 @@ type Repository struct {
 	db    *pgxpool.Pool
 	redis *redis.Client
 	http  *http.Client
+}
+
+const (
+	notificationDeliveryWorkers        = 8
+	notificationDeliveryQueueSize      = 256
+	notificationFanoutConcurrencyLimit = 8
+)
+
+var appLocation = time.FixedZone("CST", 8*3600)
+
+var notificationDeliveryQueue = make(chan notificationDeliveryJob, notificationDeliveryQueueSize)
+
+type notificationDeliveryJob struct {
+	repo *Repository
+	item Notification
+}
+
+var startNotificationWorkersOnce sync.Once
+
+func startNotificationDeliveryWorkers() {
+	startNotificationWorkersOnce.Do(func() {
+		for i := 0; i < notificationDeliveryWorkers; i++ {
+			go notificationDeliveryWorker()
+		}
+	})
+}
+
+func notificationDeliveryWorker() {
+	for job := range notificationDeliveryQueue {
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					slog.Warn("push notification panic", "notificationId", job.item.ID, "panic", recovered)
+				}
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			job.repo.pushNotificationTargets(ctx, job.item)
+		}()
+	}
 }
 
 const (
@@ -83,6 +124,15 @@ func TenantFromContext(ctx context.Context) TenantContext {
 		tenant.TenantID = defaultTenantID
 	}
 	return tenant
+}
+
+func appNow() time.Time {
+	return time.Now().In(appLocation)
+}
+
+func appToday() time.Time {
+	now := appNow()
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, appLocation)
 }
 
 func WithNotificationSourceContext(ctx context.Context, source string) context.Context {
@@ -160,6 +210,7 @@ type accessControlSettingsValue struct {
 }
 
 func NewRepository(db *pgxpool.Pool, redisClient *redis.Client) *Repository {
+	startNotificationDeliveryWorkers()
 	return &Repository{db: db, redis: redisClient, http: &http.Client{Timeout: 10 * time.Second}}
 }
 
@@ -2380,7 +2431,11 @@ LIMIT 1
 }
 
 func (r *Repository) enqueueNotificationDelivery(item Notification) {
-	go r.pushNotificationTargets(context.Background(), item)
+	select {
+	case notificationDeliveryQueue <- notificationDeliveryJob{repo: r, item: item}:
+	default:
+		slog.Warn("notification delivery queue full", "notificationId", item.ID)
+	}
 }
 
 func (r *Repository) enqueueDingTalkNotifications(items ...Notification) {
@@ -3409,7 +3464,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 	if minAdvanceHours > 0 && input.StartTime.Before(time.Now().UTC().Add(time.Duration(minAdvanceHours)*time.Hour)) {
 		return Reservation{}, fmt.Errorf("reservation must be submitted at least %d hours in advance", minAdvanceHours)
 	}
-	if bookingWindowDays > 0 && input.StartTime.After(time.Now().UTC().AddDate(0, 0, bookingWindowDays)) {
+	if bookingWindowDays > 0 && input.StartTime.After(appToday().AddDate(0, 0, bookingWindowDays+1)) {
 		return Reservation{}, fmt.Errorf("reservation must start within %d days", bookingWindowDays)
 	}
 	if !isWithinServiceHours(input.StartTime, input.EndTime, serviceStartHour, serviceEndHour) {
@@ -4996,7 +5051,7 @@ SET material_id = $2,
     received_at = COALESCE(received_at, now())
 WHERE id = $1
   AND tenant_id = $3::uuid
-  AND status IN ('pending', 'registered', 'ordered')
+  AND status IN ('pending', 'registered', 'approved', 'ordered')
   AND NOT EXISTS (
       SELECT 1
       FROM material_purchase_monthly_confirmations mpmc
@@ -6113,7 +6168,7 @@ func materialNearExpiry(expiresAt string, nearExpiryDays int) bool {
 	if err != nil {
 		return false
 	}
-	today := time.Now().UTC().Truncate(24 * time.Hour)
+	today := appToday()
 	return !expiry.Before(today) && !expiry.After(today.AddDate(0, 0, nearExpiryDays))
 }
 
@@ -6312,7 +6367,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 		if err != nil {
 			return MaterialRequest{}, err
 		}
-		today := time.Now().UTC().Truncate(24 * time.Hour)
+		today := appToday()
 		if expireDate.Before(today) {
 			return MaterialRequest{}, errors.New("material is expired")
 		}
@@ -6345,7 +6400,7 @@ WHERE mu.id = $1
 		if err != nil {
 			return MaterialRequest{}, err
 		}
-		today := time.Now().UTC().Truncate(24 * time.Hour)
+		today := appToday()
 		if expireDate.Before(today) {
 			return MaterialRequest{}, errors.New("material unit is expired")
 		}
@@ -7010,7 +7065,7 @@ LEFT JOIN materials m ON m.id = mp.material_id
 }
 
 func (r *Repository) nextMaterialPurchaseSerialNo(ctx context.Context, tx pgx.Tx, tenantID string) (string, error) {
-	month := time.Now().UTC().Format("200601")
+	month := appNow().Format("200601")
 	prefix := "SG" + month + "-"
 	var count int
 	if err := tx.QueryRow(ctx, `
@@ -7038,8 +7093,15 @@ SELECT EXISTS (
 }
 
 func (r *Repository) ApproveMaterialPurchase(ctx context.Context, id string, approved bool, actor string, comment string) (MaterialPurchase, error) {
-	status := "returned"
+	status := "rejected"
+	if approved {
+		status = "approved"
+	}
 	return r.updateMaterialPurchaseStatus(ctx, id, status, actor, comment)
+}
+
+func (r *Repository) ReturnMaterialPurchase(ctx context.Context, id string, actor string, comment string) (MaterialPurchase, error) {
+	return r.updateMaterialPurchaseStatus(ctx, id, "returned", actor, comment)
 }
 
 func (r *Repository) UpdateMaterialPurchase(ctx context.Context, id string, input MaterialPurchaseUpdateInput) (MaterialPurchase, error) {
@@ -7145,7 +7207,7 @@ func (r *Repository) MarkMaterialPurchaseOrdered(ctx context.Context, id string,
 WITH updated AS (
   UPDATE material_purchases
   SET status = 'ordered', ordered_at = now()
-  WHERE id = $1 AND status = 'registered'
+  WHERE id = $1 AND status IN ('registered', 'approved')
     AND ($2::boolean OR tenant_id = $3::uuid)
   RETURNING *
 )
@@ -7170,7 +7232,7 @@ VALUES ($1, $2, $3, 'order', '已下单')
 		}
 	}
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, actor, "material_purchase.order", "material_purchase", item.ID, "registered", item.Status)
+	r.audit(auditCtx, actor, "material_purchase.order", "material_purchase", item.ID, "", item.Status)
 	return item, nil
 }
 
@@ -7199,7 +7261,7 @@ SELECT mp.id::text, mp.tenant_id::text, mp.material_id::text, m.name, COALESCE(m
        concat_ws(' / ', NULLIF(m.storage_room, ''), NULLIF(m.storage_cabinet, ''), NULLIF(m.storage_layer, ''), NULLIF(m.storage_slot, ''))
 FROM material_purchases mp
 JOIN materials m ON m.id = mp.material_id
-WHERE mp.id = $1 AND mp.status IN ('registered', 'ordered')
+WHERE mp.id = $1 AND mp.status IN ('registered', 'approved', 'ordered')
   AND ($2::boolean OR mp.tenant_id = $3::uuid)
 FOR UPDATE
 `, id, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &itemTenantID, &item.MaterialID, &item.MaterialName, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &productType, &defaultBatchNo, &defaultExpiresAt, &defaultLocation)
@@ -7332,7 +7394,7 @@ func (r *Repository) CancelMaterialPurchase(ctx context.Context, id string, acto
 WITH updated AS (
   UPDATE material_purchases
   SET status = 'cancelled'
-  WHERE id = $1 AND status IN ('pending', 'registered', 'returned', 'ordered')
+  WHERE id = $1 AND status IN ('pending', 'registered', 'approved', 'returned', 'ordered')
     AND ($2::boolean OR tenant_id = $3::uuid)
     AND NOT EXISTS (
         SELECT 1
@@ -8387,7 +8449,7 @@ WHERE (r.idempotency_key = $1 OR (
     AND lower(r.period) = $5
     AND upper(r.period) = $6
 ))
-  AND r.status IN ('pending', 'approved', 'in_use', 'completed')
+  AND r.status IN ('pending', 'approved', 'in_use')
   AND ($7::boolean OR r.tenant_id = $8::uuid)
 ORDER BY r.created_at DESC
 LIMIT 1
@@ -8490,6 +8552,10 @@ WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'reserv
 
 func (r *Repository) updateMaterialPurchaseStatus(ctx context.Context, id string, status string, actor string, comment string) (MaterialPurchase, error) {
 	tenant := TenantFromContext(ctx)
+	action, ok := materialPurchaseStatusAction(status)
+	if !ok {
+		return MaterialPurchase{}, errors.New("invalid material purchase status")
+	}
 	actor = strings.TrimSpace(actor)
 	comment = strings.TrimSpace(comment)
 	if actor == "" {
@@ -8529,7 +8595,6 @@ LEFT JOIN materials m ON m.id = mp.material_id
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
-	action := "return"
 	if _, err := tx.Exec(ctx, `
 INSERT INTO material_purchase_actions (tenant_id, material_purchase_id, actor, action, comment)
 VALUES ($1, $2, $3, $4, $5)
@@ -8550,6 +8615,19 @@ VALUES ($1, $2, $3, $4, $5)
 	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
 	r.audit(auditCtx, actor, "material_purchase."+status, "material_purchase", item.ID, "registered", status)
 	return item, nil
+}
+
+func materialPurchaseStatusAction(status string) (string, bool) {
+	switch status {
+	case "approved":
+		return "approve", true
+	case "rejected":
+		return "reject", true
+	case "returned":
+		return "return", true
+	default:
+		return "", false
+	}
 }
 
 func (r *Repository) audit(ctx context.Context, actor string, action string, targetType string, targetID string, oldValue string, newValue string) {
@@ -9570,9 +9648,9 @@ func (r *Repository) pushDingTalkNotificationTargets(ctx context.Context, item N
 		slog.Warn("load dingtalk notification targets", "notificationId", item.ID, "error", err)
 		return
 	}
-	for _, userID := range userIDs {
+	runNotificationFanout(ctx, userIDs, func(userID string) {
 		r.pushDingTalkNotificationToUser(ctx, settings, tenantID, userID, item.Title, item.Body)
-	}
+	})
 }
 
 func (r *Repository) pushGraphMailNotificationTargets(ctx context.Context, item Notification) {
@@ -9593,9 +9671,39 @@ func (r *Repository) pushGraphMailNotificationTargets(ctx context.Context, item 
 		slog.Warn("load graph mail notification targets", "notificationId", item.ID, "error", err)
 		return
 	}
-	for _, userID := range userIDs {
+	runNotificationFanout(ctx, userIDs, func(userID string) {
 		r.pushGraphMailNotificationToUser(ctx, settings, tenantID, userID, item.Title, item.Body)
+	})
+}
+
+func runNotificationFanout(ctx context.Context, userIDs []string, push func(string)) {
+	if len(userIDs) == 0 {
+		return
 	}
+	limit := notificationFanoutConcurrencyLimit
+	if limit <= 0 {
+		limit = 1
+	}
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for _, userID := range userIDs {
+		userID := userID
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			return
+		case sem <- struct{}{}:
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				<-sem
+			}()
+			push(userID)
+		}()
+	}
+	wg.Wait()
 }
 
 func (r *Repository) notificationTargetUserIDs(ctx context.Context, item Notification, requireDingTalk bool, requireEmail bool) ([]string, error) {
@@ -11081,14 +11189,16 @@ func reservationStatusLabel(status string) string {
 
 func materialWorkflowStatusLabel(status string) string {
 	labels := map[string]string{
-		"pending":   "待审批",
-		"approved":  "已通过",
-		"rejected":  "已拒绝",
-		"outbound":  "已出库",
-		"ordered":   "已下单",
-		"received":  "已到货",
-		"processed": "已处理",
-		"cancelled": "已取消",
+		"pending":    "待审批",
+		"registered": "已登记",
+		"approved":   "已通过",
+		"rejected":   "已拒绝",
+		"returned":   "退回修改",
+		"outbound":   "已出库",
+		"ordered":    "已下单",
+		"received":   "已到货",
+		"processed":  "已处理",
+		"cancelled":  "已取消",
 	}
 	if label, ok := labels[status]; ok {
 		return label

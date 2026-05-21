@@ -4,6 +4,7 @@ import { clearBusinessDataCache } from "@/lib/business-data-cache";
 
 const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:8090";
 const proxyTimeoutMs = Number(process.env.API_PROXY_TIMEOUT_MS ?? 60000);
+const maxProxyBodyBytes = Number(process.env.MAX_PROXY_BODY_BYTES ?? 10 * 1024 * 1024);
 const authTokenKey = "lirs.authToken";
 
 export const dynamic = "force-dynamic";
@@ -35,7 +36,11 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const headers = forwardRequestHeaders(request);
 
   const method = request.method;
-  const body = ["GET", "HEAD"].includes(method) ? undefined : Buffer.from(await request.arrayBuffer());
+  const bodyResult = await readProxyBody(request, method);
+  if (bodyResult instanceof Response) {
+    return bodyResult;
+  }
+  const body = bodyResult;
   let response: Response;
   try {
     response = await fetchWithTimeout(upstreamUrl, {
@@ -99,20 +104,73 @@ function parseJson<T>(text: string): T | null {
 }
 
 function forwardRequestHeaders(request: NextRequest) {
-  const allowedHeaders = new Set(["accept", "accept-language", "authorization", "content-type", "cookie", "user-agent", "x-request-id"]);
+  const allowedHeaders = new Set(["accept", "accept-language", "content-type", "cookie", "user-agent", "x-request-id"]);
   const headers = new Headers();
   for (const [key, value] of request.headers.entries()) {
     if (allowedHeaders.has(key.toLowerCase())) {
       headers.set(key, value);
     }
   }
-  if (!headers.has("authorization")) {
-    const token = request.cookies.get(authTokenKey)?.value;
-    if (token) {
-      headers.set("authorization", `Bearer ${token}`);
-    }
+  const token = request.cookies.get(authTokenKey)?.value;
+  if (token) {
+    headers.set("authorization", `Bearer ${token}`);
   }
   return headers;
+}
+
+async function readProxyBody(request: NextRequest, method: string) {
+  if (["GET", "HEAD"].includes(method)) {
+    return undefined;
+  }
+  if (contentLengthExceeds(request.headers.get("content-length"), maxProxyBodyBytes)) {
+    return Response.json({ error: "请求体超过限制，请上传 10MB 以内的文件" }, { status: 413 });
+  }
+  try {
+    return await readLimitedRequestBody(request, maxProxyBodyBytes);
+  } catch (error) {
+    if (error instanceof ProxyBodyTooLargeError) {
+      return Response.json({ error: "请求体超过限制，请上传 10MB 以内的文件" }, { status: 413 });
+    }
+    throw error;
+  }
+}
+
+async function readLimitedRequestBody(request: NextRequest, maxBytes: number) {
+  if (!request.body) {
+    return undefined;
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      received += value.byteLength;
+      if (received > maxBytes) {
+        throw new ProxyBodyTooLargeError();
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (received === 0) {
+    return undefined;
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), received);
+}
+
+class ProxyBodyTooLargeError extends Error {}
+
+function contentLengthExceeds(value: string | null, maxBytes: number) {
+  if (!value) {
+    return false;
+  }
+  const contentLength = Number(value);
+  return Number.isFinite(contentLength) && contentLength > maxBytes;
 }
 
 async function fetchWithTimeout(input: URL, init: RequestInit, timeoutMs: number) {

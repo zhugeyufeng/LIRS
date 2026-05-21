@@ -187,6 +187,8 @@ function purchaseStatusLabel(status: string) {
   const labels: Record<string, string> = {
     pending: "已登记",
     registered: "已登记",
+    approved: "已通过",
+    rejected: "已拒绝",
     returned: "退回修改",
     ordered: "已下单",
     received: "已入库",

@@ -139,6 +139,7 @@ type repository interface {
 	CreateMaterialPurchase(ctx context.Context, input store.MaterialPurchaseInput) (store.MaterialPurchase, error)
 	UpdateMaterialPurchase(ctx context.Context, id string, input store.MaterialPurchaseUpdateInput) (store.MaterialPurchase, error)
 	ApproveMaterialPurchase(ctx context.Context, id string, approved bool, actor string, comment string) (store.MaterialPurchase, error)
+	ReturnMaterialPurchase(ctx context.Context, id string, actor string, comment string) (store.MaterialPurchase, error)
 	MarkMaterialPurchaseOrdered(ctx context.Context, id string, actor string) (store.MaterialPurchase, error)
 	ReceiveMaterialPurchase(ctx context.Context, id string, actor string) (store.MaterialPurchase, error)
 	CancelMaterialPurchase(ctx context.Context, id string, actor string) (store.MaterialPurchase, error)
@@ -443,8 +444,12 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			return
 		}
 		item, err := repo.Reservations(c.Request.Context())
+		if err != nil {
+			respond(c, nil, err)
+			return
+		}
 		item = filterReservationsForActor(actor, item)
-		respond(c, item, err)
+		respond(c, item, nil)
 	})
 	api.GET("/users", func(c *gin.Context) {
 		if _, ok := requireAnyRole(c, repo, userReaderRoles...); !ok {
@@ -1360,8 +1365,12 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			return
 		}
 		item, err := repo.MaterialRequests(c.Request.Context())
+		if err != nil {
+			respond(c, nil, err)
+			return
+		}
 		item = filterMaterialRequestsForActor(actor, item)
-		respond(c, item, err)
+		respond(c, item, nil)
 	})
 	api.GET("/material-purchases", func(c *gin.Context) {
 		actor, ok := requireActiveUser(c, repo)
@@ -1369,8 +1378,12 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			return
 		}
 		item, err := repo.MaterialPurchases(c.Request.Context())
+		if err != nil {
+			respond(c, nil, err)
+			return
+		}
 		item = filterMaterialPurchasesForActor(actor, item)
-		respond(c, item, err)
+		respond(c, item, nil)
 	})
 	api.GET("/material-damages", func(c *gin.Context) {
 		actor, ok := requireActiveUser(c, repo)
@@ -1378,8 +1391,12 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			return
 		}
 		item, err := repo.MaterialDamages(c.Request.Context())
+		if err != nil {
+			respond(c, nil, err)
+			return
+		}
 		item = filterMaterialDamagesForActor(actor, item)
-		respond(c, item, err)
+		respond(c, item, nil)
 	})
 	api.GET("/maintenance", func(c *gin.Context) {
 		if _, ok := requireAnyRole(c, repo, tenantAdminRoles...); !ok {
@@ -1589,7 +1606,9 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		var input struct {
 			Comment string `json:"comment"`
 		}
-		_ = c.ShouldBindJSON(&input)
+		if !bindOptionalJSON(c, &input) {
+			return
+		}
 		item, err := repo.ApproveReservation(c.Request.Context(), c.Param("id"), true, actor.Name, input.Comment)
 		respond(c, item, err)
 	})
@@ -1604,7 +1623,9 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		var input struct {
 			Comment string `json:"comment"`
 		}
-		_ = c.ShouldBindJSON(&input)
+		if !bindOptionalJSON(c, &input) {
+			return
+		}
 		item, err := repo.ApproveReservation(c.Request.Context(), c.Param("id"), false, actor.Name, input.Comment)
 		respond(c, item, err)
 	})
@@ -1653,7 +1674,9 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		var input struct {
 			Reason string `json:"reason"`
 		}
-		_ = c.ShouldBindJSON(&input)
+		if !bindOptionalJSON(c, &input) {
+			return
+		}
 		bypassCutoff := isAdmin(actor) || canReviewGroup(actor, reservation.GroupName)
 		item, err := repo.CancelReservation(c.Request.Context(), c.Param("id"), input.Reason, bypassCutoff)
 		respond(c, item, err)
@@ -1894,7 +1917,9 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		var input struct {
 			Comment string `json:"comment"`
 		}
-		_ = c.ShouldBindJSON(&input)
+		if !bindOptionalJSON(c, &input) {
+			return
+		}
 		item, err := repo.ApproveMaterialRequest(c.Request.Context(), c.Param("id"), true, actor.Name, input.Comment)
 		respond(c, item, err)
 	})
@@ -1909,7 +1934,9 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		var input struct {
 			Comment string `json:"comment"`
 		}
-		_ = c.ShouldBindJSON(&input)
+		if !bindOptionalJSON(c, &input) {
+			return
+		}
 		item, err := repo.ApproveMaterialRequest(c.Request.Context(), c.Param("id"), false, actor.Name, input.Comment)
 		respond(c, item, err)
 	})
@@ -1950,13 +1977,21 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		if !ok {
 			return
 		}
+		ctx := c.Request.Context()
+		if canManageMaterials(actor) {
+			requestCtx, contextOK := materialWriteRequestContext(c, repo, actor)
+			if !contextOK {
+				return
+			}
+			ctx = requestCtx
+		}
 		if !authorizeMaterialPurchaseOwnerOrAdmin(c, repo, actor, c.Param("id")) {
 			return
 		}
 		var input store.MaterialPurchaseUpdateInput
 		if bindJSON(c, &input) {
 			input.Actor = actor.Name
-			item, err := repo.UpdateMaterialPurchase(c.Request.Context(), c.Param("id"), input)
+			item, err := repo.UpdateMaterialPurchase(ctx, c.Param("id"), input)
 			respond(c, item, err)
 		}
 	})
@@ -1965,14 +2000,20 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		if !ok {
 			return
 		}
+		ctx, ok := materialWriteRequestContext(c, repo, actor)
+		if !ok {
+			return
+		}
 		if !authorizeMaterialPurchaseReview(c, repo, actor, c.Param("id")) {
 			return
 		}
 		var input struct {
 			Comment string `json:"comment"`
 		}
-		_ = c.ShouldBindJSON(&input)
-		item, err := repo.ApproveMaterialPurchase(c.Request.Context(), c.Param("id"), false, actor.Name, input.Comment)
+		if !bindOptionalJSON(c, &input) {
+			return
+		}
+		item, err := repo.ApproveMaterialPurchase(ctx, c.Param("id"), true, actor.Name, input.Comment)
 		respond(c, item, err)
 	})
 	api.PATCH("/material-purchases/:id/reject", func(c *gin.Context) {
@@ -1980,14 +2021,20 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		if !ok {
 			return
 		}
+		ctx, ok := materialWriteRequestContext(c, repo, actor)
+		if !ok {
+			return
+		}
 		if !authorizeMaterialPurchaseReview(c, repo, actor, c.Param("id")) {
 			return
 		}
 		var input struct {
 			Comment string `json:"comment"`
 		}
-		_ = c.ShouldBindJSON(&input)
-		item, err := repo.ApproveMaterialPurchase(c.Request.Context(), c.Param("id"), false, actor.Name, input.Comment)
+		if !bindOptionalJSON(c, &input) {
+			return
+		}
+		item, err := repo.ApproveMaterialPurchase(ctx, c.Param("id"), false, actor.Name, input.Comment)
 		respond(c, item, err)
 	})
 	api.PATCH("/material-purchases/:id/return", func(c *gin.Context) {
@@ -1995,14 +2042,20 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		if !ok {
 			return
 		}
+		ctx, ok := materialWriteRequestContext(c, repo, actor)
+		if !ok {
+			return
+		}
 		if !authorizeMaterialPurchaseReview(c, repo, actor, c.Param("id")) {
 			return
 		}
 		var input struct {
 			Comment string `json:"comment"`
 		}
-		_ = c.ShouldBindJSON(&input)
-		item, err := repo.ApproveMaterialPurchase(c.Request.Context(), c.Param("id"), false, actor.Name, input.Comment)
+		if !bindOptionalJSON(c, &input) {
+			return
+		}
+		item, err := repo.ReturnMaterialPurchase(ctx, c.Param("id"), actor.Name, input.Comment)
 		respond(c, item, err)
 	})
 	api.PATCH("/material-purchases/:id/order", func(c *gin.Context) {
@@ -2010,7 +2063,11 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		if !ok {
 			return
 		}
-		item, err := repo.MarkMaterialPurchaseOrdered(c.Request.Context(), c.Param("id"), actor.Name)
+		ctx, ok := materialWriteRequestContext(c, repo, actor)
+		if !ok {
+			return
+		}
+		item, err := repo.MarkMaterialPurchaseOrdered(ctx, c.Param("id"), actor.Name)
 		respond(c, item, err)
 	})
 	api.PATCH("/material-purchases/:id/receive", func(c *gin.Context) {
@@ -2018,7 +2075,11 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		if !ok {
 			return
 		}
-		item, err := repo.ReceiveMaterialPurchase(c.Request.Context(), c.Param("id"), actor.Name)
+		ctx, ok := materialWriteRequestContext(c, repo, actor)
+		if !ok {
+			return
+		}
+		item, err := repo.ReceiveMaterialPurchase(ctx, c.Param("id"), actor.Name)
 		respond(c, item, err)
 	})
 	api.PATCH("/material-purchases/:id/cancel", func(c *gin.Context) {
@@ -2026,10 +2087,18 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		if !ok {
 			return
 		}
+		ctx := c.Request.Context()
+		if canManageMaterials(actor) {
+			requestCtx, contextOK := materialWriteRequestContext(c, repo, actor)
+			if !contextOK {
+				return
+			}
+			ctx = requestCtx
+		}
 		if !authorizeMaterialPurchaseOwnerOrAdmin(c, repo, actor, c.Param("id")) {
 			return
 		}
-		item, err := repo.CancelMaterialPurchase(c.Request.Context(), c.Param("id"), actor.Name)
+		item, err := repo.CancelMaterialPurchase(ctx, c.Param("id"), actor.Name)
 		respond(c, item, err)
 	})
 	api.POST("/material-purchases/monthly-confirmations", func(c *gin.Context) {
@@ -2069,7 +2138,9 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		var input struct {
 			Comment string `json:"comment"`
 		}
-		_ = c.ShouldBindJSON(&input)
+		if !bindOptionalJSON(c, &input) {
+			return
+		}
 		item, err := repo.ApproveMaterialDamage(c.Request.Context(), c.Param("id"), true, actor.Name, input.Comment)
 		respond(c, item, err)
 	})
@@ -2084,7 +2155,9 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		var input struct {
 			Comment string `json:"comment"`
 		}
-		_ = c.ShouldBindJSON(&input)
+		if !bindOptionalJSON(c, &input) {
+			return
+		}
 		item, err := repo.ApproveMaterialDamage(c.Request.Context(), c.Param("id"), false, actor.Name, input.Comment)
 		respond(c, item, err)
 	})
@@ -2135,7 +2208,9 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		var input struct {
 			Reason string `json:"reason"`
 		}
-		_ = c.ShouldBindJSON(&input)
+		if !bindOptionalJSON(c, &input) {
+			return
+		}
 		item, err := repo.CancelMaintenanceOrder(c.Request.Context(), c.Param("id"), input.Reason, actor.Name)
 		respond(c, item, err)
 	})
@@ -2147,7 +2222,9 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		var input struct {
 			Result string `json:"result"`
 		}
-		_ = c.ShouldBindJSON(&input)
+		if !bindOptionalJSON(c, &input) {
+			return
+		}
 		item, err := repo.CompleteMaintenanceOrder(c.Request.Context(), c.Param("id"), input.Result, actor.Name)
 		respond(c, item, err)
 	})
@@ -2168,6 +2245,20 @@ func get[T any](fn callerFunc[T]) gin.HandlerFunc {
 
 func bindJSON(c *gin.Context, input any) bool {
 	if err := c.ShouldBindJSON(input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json payload"})
+		return false
+	}
+	return true
+}
+
+func bindOptionalJSON(c *gin.Context, input any) bool {
+	if c.Request == nil || c.Request.Body == nil || c.Request.ContentLength == 0 {
+		return true
+	}
+	if err := c.ShouldBindJSON(input); err != nil {
+		if errors.Is(err, io.EOF) {
+			return true
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json payload"})
 		return false
 	}
@@ -2652,6 +2743,17 @@ func tenantAdminRequestContext(c *gin.Context, repo repository, actor store.Acto
 	}
 	c.JSON(http.StatusBadRequest, gin.H{"error": "tenant not found"})
 	return nil, false
+}
+
+func materialWriteRequestContext(c *gin.Context, repo repository, actor store.Actor) (context.Context, bool) {
+	if actor.Role != "super_admin" {
+		return c.Request.Context(), true
+	}
+	ctx, ok := tenantAdminRequestContext(c, repo, actor)
+	if ok {
+		c.Request = c.Request.WithContext(ctx)
+	}
+	return ctx, ok
 }
 
 func isAdmin(actor store.Actor) bool {

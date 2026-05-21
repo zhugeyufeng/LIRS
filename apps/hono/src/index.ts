@@ -15,7 +15,7 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:3000")
   .map((item) => item.trim())
   .filter(Boolean);
 const defaultAllowedOrigin = allowedOrigins[0] ?? "http://localhost:3000";
-const maxRequestBodyBytes = Number(process.env.MAX_REQUEST_BODY_BYTES ?? 1024 * 1024);
+const maxRequestBodyBytes = Number(process.env.MAX_REQUEST_BODY_BYTES ?? 10 * 1024 * 1024);
 const proxyTimeoutMs = Number(process.env.PROXY_TIMEOUT_MS ?? 60000);
 const trustedProxyRanges = (process.env.TRUSTED_PROXY_CIDRS ?? "127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16")
   .split(",")
@@ -35,7 +35,12 @@ app.onError((error, c) => {
 app.use(
   "*",
   cors({
-    origin: (origin) => (origin && allowedOrigins.includes(origin) ? origin : defaultAllowedOrigin),
+    origin: (origin) => {
+      if (!origin) {
+        return defaultAllowedOrigin;
+      }
+      return allowedOrigins.includes(origin) ? origin : "";
+    },
     allowHeaders: ["Origin", "Content-Type", "Authorization"],
     allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
@@ -187,6 +192,25 @@ const dingTalkSettingsSchema = z.object({
 });
 const dingTalkTestSchema = z.object({
   userId: z.string().min(1),
+});
+const dingTalkWebLoginIntentSchema = z.object({
+  tenantId: z.string().optional().default(""),
+  tenantCode: z.string().optional().default(""),
+  redirectUri: z.string().min(1),
+  next: z.string().optional().default(""),
+});
+const dingTalkWebLoginSchema = z.object({
+  tenantId: z.string().optional().default(""),
+  tenantCode: z.string().optional().default(""),
+  authCode: z.string().min(1),
+  state: z.string().min(1),
+  device: z.string().optional().default("web"),
+});
+const dingTalkLoginBindExistingSchema = z.object({
+  bindingToken: z.string().min(1),
+  email: z.string().email(),
+  password: z.string().min(1),
+  device: z.string().optional().default("web"),
 });
 const dingTalkBindingSchema = z.object({
   authCode: z.string().min(1),
@@ -379,6 +403,20 @@ const materialCategorySchema = z.object({
   displayOrder: z.coerce.number().int().optional().default(0),
   status: z.enum(["active", "disabled"]).optional().default("active"),
 });
+const purchasableMaterialSchema = z.object({
+  idNo: z.string().min(1),
+  sequenceNo: z.string().min(1),
+  procurementProjectId: z.string().optional().default(""),
+  procurementProject: z.string().optional().default(""),
+  projectName: z.string().min(1),
+  brand: z.string().min(1),
+  spec: z.string().min(1),
+  unit: z.string().min(1),
+  purchasePrice: z.coerce.number().nonnegative(),
+  remark: z.string().optional().default(""),
+  technicalRequirement: z.string().optional().default(""),
+  minSpec: z.string().optional().default(""),
+});
 const materialAlertActionSchema = z.object({
   alertType: z.string().min(1),
   action: z.enum(["handled", "ignored"]),
@@ -413,6 +451,9 @@ app.patch("/api/notification-channel-settings/wechat", validateAndProxy(wechatSe
 app.get("/api/notification-channel-settings/dingtalk", proxyToGo);
 app.patch("/api/notification-channel-settings/dingtalk", validateAndProxy(dingTalkSettingsSchema));
 app.post("/api/notification-channel-settings/dingtalk/test", validateAndProxy(dingTalkTestSchema));
+app.post("/api/dingtalk/web-login-intent", validateAndProxy(dingTalkWebLoginIntentSchema));
+app.post("/api/dingtalk/web-login", validateAndProxy(dingTalkWebLoginSchema));
+app.post("/api/dingtalk/login-bind-existing", validateAndProxy(dingTalkLoginBindExistingSchema));
 app.post("/api/dingtalk/events", proxyToGo);
 app.post("/api/dingtalk/events/:tenant", proxyToGo);
 app.post("/api/me/dingtalk-binding", validateAndProxy(dingTalkBindingSchema));
@@ -480,6 +521,9 @@ app.patch("/api/material-requests/:id/cancel", validateOptionalJsonAndProxy(empt
 app.post("/api/procurement-projects", validateAndProxy(procurementProjectSchema));
 app.patch("/api/procurement-projects/:id", validateAndProxy(procurementProjectSchema));
 app.delete("/api/procurement-projects/:id", proxyToGo);
+app.post("/api/purchasable-materials", validateAndProxy(purchasableMaterialSchema));
+app.patch("/api/purchasable-materials/:id", validateAndProxy(purchasableMaterialSchema));
+app.delete("/api/purchasable-materials/:id", proxyToGo);
 app.post("/api/material-purchases", validateAndProxy(materialPurchaseSchema));
 app.patch("/api/material-purchases/:id", validateAndProxy(materialPurchaseSchema));
 app.patch("/api/material-purchases/:id/approve", validateOptionalJsonAndProxy(reservationDecisionSchema));

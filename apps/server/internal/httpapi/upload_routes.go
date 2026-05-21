@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,7 +35,9 @@ func materialUploadRoot() string {
 
 func saveMaterialCertificateUpload(c *gin.Context, uploadRoot string) (string, error) {
 	const maxUploadBytes = 8 << 20
+	const maxMultipartOverheadBytes = 1 << 20
 
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadBytes+maxMultipartOverheadBytes)
 	if err := c.Request.ParseMultipartForm(maxUploadBytes); err != nil {
 		return "", errors.New("标准品证书上传失败：文件超过 8MB 或表单无效")
 	}
@@ -69,7 +72,7 @@ func saveMaterialCertificateUpload(c *gin.Context, uploadRoot string) (string, e
 		_ = os.Remove(targetPath)
 		return "", fmt.Errorf("标准品证书上传失败：写入证书失败：%w", err)
 	}
-	written, err := io.Copy(target, io.LimitReader(file, maxUploadBytes-int64(len(signature))+1))
+	written, err := io.Copy(target, io.LimitReader(file, maxUploadBytes-int64(len(signature))))
 	if err != nil {
 		_ = target.Close()
 		_ = os.Remove(targetPath)

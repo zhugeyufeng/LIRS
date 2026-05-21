@@ -848,22 +848,22 @@ export function MaterialPurchaseActions({
           {(close) => <MaterialPurchaseForm inline materials={[]} onSaved={close} purchase={purchase} purchasableMaterials={purchasableMaterials} />}
         </AdminDialog>
       ) : null}
-      {status === "registered" && canOrder ? (
+      {(status === "registered" || status === "approved") && canOrder ? (
         <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-purchases/${id}/order`, undefined, undefined, `确定将申购单“${purchase.purchaseSerialNo || id}”标记为已下单吗？`, "请再次确认。该申购单会进入已下单状态。")} size="sm" variant="outline">
           标记下单
         </Button>
       ) : null}
-      {(status === "registered" || status === "ordered") && canReceive ? (
+      {(status === "registered" || status === "approved" || status === "ordered") && canReceive ? (
         <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-purchases/${id}/receive`, undefined, undefined, `确定将申购单“${purchase.purchaseSerialNo || id}”到货入库吗？`, "请再次确认。系统会按关联资源写入库存流水。")} size="sm">
           到货入库
         </Button>
       ) : null}
-      {canCancel && !locked && (status === "registered" || status === "returned" || status === "ordered") ? (
+      {canCancel && !locked && (status === "registered" || status === "approved" || status === "returned" || status === "ordered") ? (
         <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-purchases/${id}/cancel`, undefined, undefined, `确定取消申购单“${purchase.purchaseSerialNo || id}”吗？`, "请再次确认。取消后该申购单不能继续下单或入库。")} size="sm" variant="ghost">
           取消
         </Button>
       ) : null}
-      {locked && (status === "registered" || status === "returned" || status === "ordered") ? <span className="text-xs text-slate-500">本月已确认，不能退回、取消或修改。</span> : null}
+      {locked && (status === "registered" || status === "approved" || status === "returned" || status === "ordered") ? <span className="text-xs text-slate-500">本月已确认，不能退回、取消或修改。</span> : null}
       {message ? <span className="text-xs text-slate-500 sm:basis-full">{message}</span> : null}
     </div>
   );
@@ -873,6 +873,8 @@ function purchaseStatusLabel(status: string) {
   const labels: Record<string, string> = {
     pending: "已登记",
     registered: "已登记",
+    approved: "已通过",
+    rejected: "已拒绝",
     returned: "退回修改",
     ordered: "已下单",
     received: "已入库",

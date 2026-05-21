@@ -290,6 +290,36 @@ func TestPurchasableMaterialImportProjectHeader(t *testing.T) {
 	}
 }
 
+func TestMaterialPurchaseStatusActionMapsReviewActions(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"approved": "approve",
+		"rejected": "reject",
+		"returned": "return",
+	}
+	for status, want := range cases {
+		got, ok := materialPurchaseStatusAction(status)
+		if !ok || got != want {
+			t.Fatalf("%s action = %q %v, want %q true", status, got, ok, want)
+		}
+	}
+	if _, ok := materialPurchaseStatusAction("ordered"); ok {
+		t.Fatal("非审批状态不应进入申购审批动作映射")
+	}
+}
+
+func TestMaterialWorkflowStatusLabelCoversPurchaseStatuses(t *testing.T) {
+	t.Parallel()
+
+	if got := materialWorkflowStatusLabel("registered"); got != "已登记" {
+		t.Fatalf("unexpected registered label: %q", got)
+	}
+	if got := materialWorkflowStatusLabel("returned"); got != "退回修改" {
+		t.Fatalf("unexpected returned label: %q", got)
+	}
+}
+
 func TestPurchasableMaterialImportRecordsFrom2026XLSX(t *testing.T) {
 	t.Parallel()
 

@@ -54,6 +54,8 @@ export default async function AdminMaterialPurchasesPage({
               <select className="h-10 min-w-0 rounded-md border bg-white px-3 text-sm" defaultValue={params.status ?? ""} name="status">
                 <option value="">全部状态</option>
                 <option value="registered">已登记</option>
+                <option value="approved">已通过</option>
+                <option value="rejected">已拒绝</option>
                 <option value="returned">退回修改</option>
                 <option value="ordered">已下单</option>
                 <option value="received">已入库</option>
@@ -179,6 +181,8 @@ function purchaseStatusLabel(status: string) {
   const labels: Record<string, string> = {
     pending: "已登记",
     registered: "已登记",
+    approved: "已通过",
+    rejected: "已拒绝",
     returned: "退回修改",
     ordered: "已下单",
     received: "已入库",

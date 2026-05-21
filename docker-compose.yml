@@ -91,6 +91,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
       GO_API_BASE_URL: http://api:8080
       PROXY_TIMEOUT_MS: "60000"
+      MAX_REQUEST_BODY_BYTES: "10485760"
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://0.0.0.0:3000}
     ports:
       - "8090:8090"
@@ -112,6 +113,7 @@ services:
       HOSTNAME: 0.0.0.0
       API_BASE_URL: http://hono:8090
       API_PROXY_TIMEOUT_MS: "60000"
+      MAX_PROXY_BODY_BYTES: "10485760"
       NEXT_PUBLIC_API_BASE_URL: ""
     ports:
       - "3000:3000"
