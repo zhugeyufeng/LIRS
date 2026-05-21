@@ -992,188 +992,6 @@ RETURNING id::text, tenant_id::text, sample_id::text, (SELECT code FROM samples 
 	return item, err
 }
 
-func (r *Repository) LimsTasks(ctx context.Context) ([]LimsTask, error) {
-	tenant := TenantFromContext(ctx)
-	rows, err := r.db.Query(ctx, `
-SELECT lt.id::text, lt.tenant_id::text, COALESCE(lt.sample_id::text, ''), COALESCE(s.code, ''), COALESCE(lt.instrument_id::text, ''), COALESCE(i.name, ''),
-       lt.title, lt.assay_type, lt.priority, lt.status, COALESCE(lt.requester_id::text, ''), lt.requester_name, lt.due_at, lt.result_summary, lt.created_at, lt.updated_at
-FROM lims_tasks lt
-LEFT JOIN samples s ON s.id = lt.sample_id
-LEFT JOIN instruments i ON i.id = lt.instrument_id
-WHERE ($1::boolean OR lt.tenant_id = $2::uuid)
-ORDER BY lt.created_at DESC, lt.due_at ASC
-`, tenant.AllTenants, tenant.TenantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := make([]LimsTask, 0)
-	for rows.Next() {
-		var item LimsTask
-		if err := rows.Scan(&item.ID, &item.TenantID, &item.SampleID, &item.SampleCode, &item.InstrumentID, &item.InstrumentName, &item.Title, &item.AssayType, &item.Priority, &item.Status, &item.RequesterID, &item.RequesterName, &item.DueAt, &item.ResultSummary, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
-}
-
-func (r *Repository) SaveLimsTask(ctx context.Context, id string, input LimsTaskInput) (LimsTask, error) {
-	tenant := TenantFromContext(ctx)
-	input.RequesterID = strings.TrimSpace(input.RequesterID)
-	input.SampleID = strings.TrimSpace(input.SampleID)
-	input.InstrumentID = strings.TrimSpace(input.InstrumentID)
-	input.Title = strings.TrimSpace(input.Title)
-	input.AssayType = strings.TrimSpace(input.AssayType)
-	input.Priority = strings.TrimSpace(strings.ToLower(input.Priority))
-	input.Status = strings.TrimSpace(strings.ToLower(input.Status))
-	input.RequesterName = strings.TrimSpace(input.RequesterName)
-	input.ResultSummary = strings.TrimSpace(input.ResultSummary)
-	input.Actor = strings.TrimSpace(input.Actor)
-	if input.Actor == "" {
-		input.Actor = "system"
-	}
-	if input.Title == "" {
-		return LimsTask{}, clientError("task title is required")
-	}
-	if input.Priority == "" {
-		input.Priority = "normal"
-	}
-	if input.Status == "" {
-		input.Status = "pending"
-	}
-	if input.DueAt.IsZero() {
-		input.DueAt = time.Now().Add(3 * 24 * time.Hour)
-	}
-	if input.RequesterName == "" {
-		input.RequesterName = input.Actor
-	}
-	var item LimsTask
-	var err error
-	if id == "" {
-		err = r.db.QueryRow(ctx, `
-INSERT INTO lims_tasks (tenant_id, sample_id, instrument_id, title, assay_type, priority, status, requester_id, requester_name, due_at, result_summary)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING id::text, tenant_id::text, COALESCE(sample_id::text, ''), COALESCE((SELECT code FROM samples WHERE id = sample_id), ''), COALESCE(instrument_id::text, ''), COALESCE((SELECT name FROM instruments WHERE id = instrument_id), ''), title, assay_type, priority, status, COALESCE(requester_id::text, ''), requester_name, due_at, result_summary, created_at, updated_at
-`, tenant.TenantID, optionalID(input.SampleID), optionalID(input.InstrumentID), input.Title, input.AssayType, input.Priority, input.Status, optionalID(input.RequesterID), input.RequesterName, input.DueAt, input.ResultSummary).Scan(
-			&item.ID, &item.TenantID, &item.SampleID, &item.SampleCode, &item.InstrumentID, &item.InstrumentName, &item.Title, &item.AssayType, &item.Priority, &item.Status, &item.RequesterID, &item.RequesterName, &item.DueAt, &item.ResultSummary, &item.CreatedAt, &item.UpdatedAt,
-		)
-		if err == nil {
-			r.audit(ctx, input.Actor, "lims.task.create", "lims_task", item.ID, "", item.Title)
-		}
-		return item, err
-	}
-	err = r.db.QueryRow(ctx, `
-UPDATE lims_tasks
-SET sample_id = $2,
-    instrument_id = $3,
-    title = $4,
-    assay_type = $5,
-    priority = $6,
-    status = $7,
-    requester_id = $8,
-    requester_name = $9,
-    due_at = $10,
-    result_summary = $11,
-    updated_at = now()
-WHERE id = $1 AND ($12::boolean OR tenant_id = $13::uuid)
-RETURNING id::text, tenant_id::text, COALESCE(sample_id::text, ''), COALESCE((SELECT code FROM samples WHERE id = sample_id), ''), COALESCE(instrument_id::text, ''), COALESCE((SELECT name FROM instruments WHERE id = instrument_id), ''), title, assay_type, priority, status, COALESCE(requester_id::text, ''), requester_name, due_at, result_summary, created_at, updated_at
-`, id, optionalID(input.SampleID), optionalID(input.InstrumentID), input.Title, input.AssayType, input.Priority, input.Status, optionalID(input.RequesterID), input.RequesterName, input.DueAt, input.ResultSummary, tenant.AllTenants, tenant.TenantID).Scan(
-		&item.ID, &item.TenantID, &item.SampleID, &item.SampleCode, &item.InstrumentID, &item.InstrumentName, &item.Title, &item.AssayType, &item.Priority, &item.Status, &item.RequesterID, &item.RequesterName, &item.DueAt, &item.ResultSummary, &item.CreatedAt, &item.UpdatedAt,
-	)
-	if err == nil {
-		r.audit(ctx, input.Actor, "lims.task.update", "lims_task", item.ID, "", item.Title)
-	}
-	return item, err
-}
-
-func (r *Repository) ElnRecords(ctx context.Context) ([]ElnRecord, error) {
-	tenant := TenantFromContext(ctx)
-	rows, err := r.db.Query(ctx, `
-SELECT er.id::text, er.tenant_id::text, er.title, COALESCE(er.author_id::text, ''), er.author_name, er.project, COALESCE(er.linked_task_id::text, ''), COALESCE(lt.title, ''),
-       er.content, er.status, er.signed_at, er.created_at, er.updated_at
-FROM eln_records er
-LEFT JOIN lims_tasks lt ON lt.id = er.linked_task_id
-WHERE ($1::boolean OR er.tenant_id = $2::uuid)
-ORDER BY er.created_at DESC
-`, tenant.AllTenants, tenant.TenantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := make([]ElnRecord, 0)
-	for rows.Next() {
-		var item ElnRecord
-		if err := rows.Scan(&item.ID, &item.TenantID, &item.Title, &item.AuthorID, &item.AuthorName, &item.Project, &item.LinkedTaskID, &item.LinkedTaskTitle, &item.Content, &item.Status, &item.SignedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
-}
-
-func (r *Repository) SaveElnRecord(ctx context.Context, id string, input ElnRecordInput) (ElnRecord, error) {
-	tenant := TenantFromContext(ctx)
-	input.AuthorID = strings.TrimSpace(input.AuthorID)
-	input.Title = strings.TrimSpace(input.Title)
-	input.Project = strings.TrimSpace(input.Project)
-	input.LinkedTaskID = strings.TrimSpace(input.LinkedTaskID)
-	input.Content = strings.TrimSpace(input.Content)
-	input.Status = strings.TrimSpace(strings.ToLower(input.Status))
-	input.Actor = strings.TrimSpace(input.Actor)
-	input.AuthorName = strings.TrimSpace(input.AuthorName)
-	if input.Actor == "" {
-		input.Actor = "system"
-	}
-	if input.Title == "" {
-		return ElnRecord{}, clientError("eln title is required")
-	}
-	if input.Status == "" {
-		input.Status = "draft"
-	}
-	if input.AuthorName == "" {
-		input.AuthorName = input.Actor
-	}
-	if input.Content == "" {
-		input.Content = "请填写实验记录内容。"
-	}
-	var item ElnRecord
-	var err error
-	if id == "" {
-		err = r.db.QueryRow(ctx, `
-INSERT INTO eln_records (tenant_id, title, author_id, author_name, project, linked_task_id, content, status, signed_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
-RETURNING id::text, tenant_id::text, title, COALESCE(author_id::text, ''), author_name, project, COALESCE(linked_task_id::text, ''), COALESCE((SELECT title FROM lims_tasks WHERE id = linked_task_id), ''), content, status, signed_at, created_at, updated_at
-`, tenant.TenantID, input.Title, optionalID(input.AuthorID), input.AuthorName, input.Project, optionalID(input.LinkedTaskID), input.Content, input.Status).Scan(
-			&item.ID, &item.TenantID, &item.Title, &item.AuthorID, &item.AuthorName, &item.Project, &item.LinkedTaskID, &item.LinkedTaskTitle, &item.Content, &item.Status, &item.SignedAt, &item.CreatedAt, &item.UpdatedAt,
-		)
-		if err == nil {
-			r.audit(ctx, input.Actor, "eln.record.create", "eln_record", item.ID, "", item.Title)
-		}
-		return item, err
-	}
-	err = r.db.QueryRow(ctx, `
-UPDATE eln_records
-SET title = $2,
-    author_id = $3,
-    author_name = $4,
-    project = $5,
-    linked_task_id = $6,
-    content = $7,
-    status = $8,
-    signed_at = now(),
-    updated_at = now()
-WHERE id = $1 AND ($9::boolean OR tenant_id = $10::uuid)
-RETURNING id::text, tenant_id::text, title, COALESCE(author_id::text, ''), author_name, project, COALESCE(linked_task_id::text, ''), COALESCE((SELECT title FROM lims_tasks WHERE id = linked_task_id), ''), content, status, signed_at, created_at, updated_at
-`, id, input.Title, optionalID(input.AuthorID), input.AuthorName, input.Project, optionalID(input.LinkedTaskID), input.Content, input.Status, tenant.AllTenants, tenant.TenantID).Scan(
-		&item.ID, &item.TenantID, &item.Title, &item.AuthorID, &item.AuthorName, &item.Project, &item.LinkedTaskID, &item.LinkedTaskTitle, &item.Content, &item.Status, &item.SignedAt, &item.CreatedAt, &item.UpdatedAt,
-	)
-	if err == nil {
-		r.audit(ctx, input.Actor, "eln.record.update", "eln_record", item.ID, "", item.Title)
-	}
-	return item, err
-}
-
 func (r *Repository) IotDevices(ctx context.Context) ([]IotDevice, error) {
 	tenant := TenantFromContext(ctx)
 	rows, err := r.db.Query(ctx, `
@@ -1265,6 +1083,26 @@ RETURNING id::text, tenant_id::text, name, vendor, device_code, COALESCE(instrum
 	return item, err
 }
 
+func (r *Repository) DeleteIotDevice(ctx context.Context, id string, actor string) (IotDevice, error) {
+	tenant := TenantFromContext(ctx)
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		actor = "system"
+	}
+	var item IotDevice
+	err := r.db.QueryRow(ctx, `
+DELETE FROM iot_devices
+WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
+RETURNING id::text, tenant_id::text, name, vendor, device_code, COALESCE(instrument_id::text, ''), COALESCE((SELECT name FROM instruments WHERE id = instrument_id), ''), online, status, last_seen_at, telemetry::text, notes, created_at, updated_at
+`, id, tenant.AllTenants, tenant.TenantID).Scan(
+		&item.ID, &item.TenantID, &item.Name, &item.Vendor, &item.DeviceCode, &item.InstrumentID, &item.InstrumentName, &item.Online, &item.Status, &item.LastSeenAt, &item.Telemetry, &item.Notes, &item.CreatedAt, &item.UpdatedAt,
+	)
+	if err == nil {
+		r.audit(ctx, actor, "iot.device.delete", "iot_device", item.ID, item.Name, "deleted")
+	}
+	return item, err
+}
+
 func (r *Repository) AssistantQueries(ctx context.Context) ([]AssistantQuery, error) {
 	tenant := TenantFromContext(ctx)
 	rows, err := r.db.Query(ctx, `
@@ -1324,12 +1162,10 @@ func (r *Repository) AskAssistant(ctx context.Context, input AssistantQueryInput
 	authCount := countQuery(`SELECT count(*) FROM training_authorizations WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)
 	spaceCount := countQuery(`SELECT count(*) FROM spaces WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)
 	sampleCount := countQuery(`SELECT count(*) FROM samples WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)
-	taskCount := countQuery(`SELECT count(*) FROM lims_tasks WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)
-	recordCount := countQuery(`SELECT count(*) FROM eln_records WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)
 	deviceCount := countQuery(`SELECT count(*) FROM iot_devices WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)
 
-	answer := fmt.Sprintf("当前租户可见数据包括 %d 台仪器、%d 个空间、%d 个样本、%d 个 LIMS 任务、%d 条 ELN 记录和 %d 台 IoT 设备。",
-		instrumentCount, spaceCount, sampleCount, taskCount, recordCount, deviceCount)
+	answer := fmt.Sprintf("当前机构可见数据包括 %d 台仪器、%d 个空间、%d 个样本和 %d 台物联网设备。",
+		instrumentCount, spaceCount, sampleCount, deviceCount)
 	switch {
 	case strings.Contains(input.Question, "预约") || strings.Contains(input.Question, "仪器"):
 		answer = fmt.Sprintf("仪器中心目前显示 %d 台可用或忙碌设备，今日预约 %d 项，待审批 %d 项，已履约 %d 项。建议直接从仪器详情页进入日历预约。",
@@ -1341,13 +1177,10 @@ func (r *Repository) AskAssistant(ctx context.Context, input AssistantQueryInput
 		answer = fmt.Sprintf("培训与准入中心当前有 %d 门课程和 %d 条授权记录。若仪器启用了准入限制，需要先完成培训与授权后再预约。",
 			courseCount, authCount)
 	case strings.Contains(input.Question, "样本"):
-		answer = fmt.Sprintf("样本管理当前有 %d 条样本台账，LIMS 任务 %d 条。可将样本流转和检测任务一起追踪。",
-			sampleCount, taskCount)
-	case strings.Contains(input.Question, "LIMS") || strings.Contains(input.Question, "ELN") || strings.Contains(input.Question, "实验记录"):
-		answer = fmt.Sprintf("LIMS / ELN 扩展中心当前有 %d 条任务和 %d 条实验记录。建议从任务进入实验记录，保留签名和附件。",
-			taskCount, recordCount)
+		answer = fmt.Sprintf("样本管理当前有 %d 条样本台账，可在样本页面维护存储位置、风险等级和流转记录。",
+			sampleCount)
 	case strings.Contains(input.Question, "IoT") || strings.Contains(input.Question, "设备") || strings.Contains(input.Question, "门禁"):
-		answer = fmt.Sprintf("IoT 扩展中心当前接入 %d 台设备，门禁和采集终端可以按仪器绑定管理。", deviceCount)
+		answer = fmt.Sprintf("物联网设备中心当前接入 %d 台设备，采集终端可以按仪器绑定并维护在线状态、遥测数据和备注。", deviceCount)
 	}
 
 	var item AssistantQuery
@@ -1358,5 +1191,23 @@ RETURNING id::text, tenant_id::text, question, answer, context, created_at
 `, tenant.TenantID, optionalID(input.RequesterID), firstNonEmpty(input.Requester, input.Actor), input.Question, answer, input.Context).Scan(
 		&item.ID, &item.TenantID, &item.Question, &item.Answer, &item.Context, &item.CreatedAt,
 	)
+	return item, err
+}
+
+func (r *Repository) DeleteAssistantQuery(ctx context.Context, id string, actor string) (AssistantQuery, error) {
+	tenant := TenantFromContext(ctx)
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		actor = "system"
+	}
+	var item AssistantQuery
+	err := r.db.QueryRow(ctx, `
+DELETE FROM assistant_queries
+WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
+RETURNING id::text, tenant_id::text, question, answer, context, created_at
+`, id, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &item.TenantID, &item.Question, &item.Answer, &item.Context, &item.CreatedAt)
+	if err == nil {
+		r.audit(ctx, actor, "assistant.query.delete", "assistant_query", item.ID, item.Question, "deleted")
+	}
 	return item, err
 }

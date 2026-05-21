@@ -206,25 +206,6 @@ export function alertLevelLabel(level: string | null | undefined) {
   }, "未知等级");
 }
 
-export function limsTaskStatusLabel(status: string | null | undefined) {
-  return labelFrom(status, {
-    pending: "待分配",
-    assigned: "已分配",
-    running: "进行中",
-    completed: "已完成",
-    cancelled: "已取消",
-  });
-}
-
-export function elnRecordStatusLabel(status: string | null | undefined) {
-  return labelFrom(status, {
-    draft: "草稿",
-    submitted: "已提交",
-    signed: "已签名",
-    archived: "已归档",
-  });
-}
-
 export function iotDeviceStatusLabel(status: string | null | undefined, online = false) {
   const normalizedStatus = normalizeStatus(status);
   if (online && normalizedStatus !== "disabled") {
@@ -400,17 +381,15 @@ export function auditActionLabel(action: string | null | undefined) {
     "auth.logout_all": "清理全部登录会话",
     "billing.config.create": "创建计费配置",
     "billing.config.update": "更新计费配置",
-    "eln.record.create": "创建电子实验记录",
-    "eln.record.update": "更新电子实验记录",
     "financial_account.save": "保存财务账户",
     "instrument.create": "新增仪器",
     "instrument.delete": "删除仪器",
     "instrument.update": "更新仪器",
     "iot.device.create": "创建设备",
+    "iot.device.delete": "删除设备",
     "iot.device.update": "更新设备",
+    "assistant.query.delete": "删除 AI 问答",
     "ledger.adjust": "调整财务流水",
-    "lims.task.create": "创建检测任务",
-    "lims.task.update": "更新检测任务",
     "maintenance.cancel": "取消维护单",
     "maintenance.complete": "完成维护单",
     "maintenance.create": "创建维护单",
@@ -506,12 +485,11 @@ export function auditActionLabel(action: string | null | undefined) {
 export function auditTargetTypeLabel(targetType: string | null | undefined) {
   return labelFrom(targetType, {
     business_config: "业务配置",
-    eln_record: "电子实验记录",
     financial_account: "财务账户",
+    assistant_query: "AI 问答记录",
     instrument: "仪器",
     iot_device: "物联网设备",
     ledger_entry: "财务流水",
-    lims_task: "检测任务",
     maintenance_order: "维护单",
     material: "资源",
     material_category: "资源目录",

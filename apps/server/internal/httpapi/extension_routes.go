@@ -408,80 +408,6 @@ func registerExtensionRoutes(api *gin.RouterGroup, repo repository) {
 			respond(c, item, err)
 		}
 	})
-	api.GET("/lims/tasks", func(c *gin.Context) {
-		if _, ok := requireActiveUser(c, repo); !ok {
-			return
-		}
-		item, err := repo.LimsTasks(c.Request.Context())
-		respond(c, item, err)
-	})
-	api.POST("/lims/tasks", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
-		if !ok {
-			return
-		}
-		var input store.LimsTaskInput
-		if bindJSON(c, &input) {
-			input.RequesterID = actor.UserID
-			if input.RequesterName == "" {
-				input.RequesterName = actor.Name
-			}
-			input.Actor = actor.Name
-			item, err := repo.SaveLimsTask(c.Request.Context(), "", input)
-			respond(c, item, err)
-		}
-	})
-	api.PATCH("/lims/tasks/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
-		if !ok {
-			return
-		}
-		var input store.LimsTaskInput
-		if bindJSON(c, &input) {
-			input.Actor = actor.Name
-			item, err := repo.SaveLimsTask(c.Request.Context(), c.Param("id"), input)
-			respond(c, item, err)
-		}
-	})
-	api.GET("/eln/records", func(c *gin.Context) {
-		if _, ok := requireActiveUser(c, repo); !ok {
-			return
-		}
-		item, err := repo.ElnRecords(c.Request.Context())
-		respond(c, item, err)
-	})
-	api.POST("/eln/records", func(c *gin.Context) {
-		actor, ok := requireActiveUser(c, repo)
-		if !ok {
-			return
-		}
-		var input store.ElnRecordInput
-		if bindJSON(c, &input) {
-			input.AuthorID = actor.UserID
-			if input.AuthorName == "" {
-				input.AuthorName = actor.Name
-			}
-			input.Actor = actor.Name
-			item, err := repo.SaveElnRecord(c.Request.Context(), "", input)
-			respond(c, item, err)
-		}
-	})
-	api.PATCH("/eln/records/:id", func(c *gin.Context) {
-		actor, ok := requireActiveUser(c, repo)
-		if !ok {
-			return
-		}
-		var input store.ElnRecordInput
-		if bindJSON(c, &input) {
-			input.AuthorID = actor.UserID
-			if input.AuthorName == "" {
-				input.AuthorName = actor.Name
-			}
-			input.Actor = actor.Name
-			item, err := repo.SaveElnRecord(c.Request.Context(), c.Param("id"), input)
-			respond(c, item, err)
-		}
-	})
 	api.GET("/iot/devices", func(c *gin.Context) {
 		if _, ok := requireActiveUser(c, repo); !ok {
 			return
@@ -513,6 +439,14 @@ func registerExtensionRoutes(api *gin.RouterGroup, repo repository) {
 			respond(c, item, err)
 		}
 	})
+	api.DELETE("/iot/devices/:id", func(c *gin.Context) {
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
+		if !ok {
+			return
+		}
+		item, err := repo.DeleteIotDevice(c.Request.Context(), c.Param("id"), actor.Name)
+		respond(c, item, err)
+	})
 	api.GET("/ai-assistant", func(c *gin.Context) {
 		if _, ok := requireActiveUser(c, repo); !ok {
 			return
@@ -535,5 +469,13 @@ func registerExtensionRoutes(api *gin.RouterGroup, repo repository) {
 			item, err := repo.AskAssistant(c.Request.Context(), input)
 			respond(c, item, err)
 		}
+	})
+	api.DELETE("/ai-assistant/:id", func(c *gin.Context) {
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
+		if !ok {
+			return
+		}
+		item, err := repo.DeleteAssistantQuery(c.Request.Context(), c.Param("id"), actor.Name)
+		respond(c, item, err)
 	})
 }

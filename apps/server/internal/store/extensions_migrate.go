@@ -1,6 +1,9 @@
 package store
 
 const extensionMigrationSQL = `
+DROP TABLE IF EXISTS eln_records;
+DROP TABLE IF EXISTS lims_tasks;
+
 CREATE TABLE IF NOT EXISTS training_courses (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id uuid NOT NULL REFERENCES tenants(id),
@@ -158,40 +161,6 @@ CREATE TABLE IF NOT EXISTS sample_movements (
 );
 CREATE INDEX IF NOT EXISTS sample_movements_tenant_created_idx ON sample_movements (tenant_id, created_at DESC);
 
-CREATE TABLE IF NOT EXISTS lims_tasks (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id uuid NOT NULL REFERENCES tenants(id),
-    sample_id uuid REFERENCES samples(id),
-    instrument_id uuid REFERENCES instruments(id) ON DELETE SET NULL,
-    title text NOT NULL,
-    assay_type text NOT NULL DEFAULT '',
-    priority text NOT NULL DEFAULT 'normal' CHECK (priority IN ('normal', 'high', 'urgent')),
-    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'assigned', 'running', 'completed', 'cancelled')),
-    requester_id uuid REFERENCES users(id),
-    requester_name text NOT NULL DEFAULT '',
-    due_at timestamptz NOT NULL DEFAULT (now() + interval '3 days'),
-    result_summary text NOT NULL DEFAULT '',
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS lims_tasks_tenant_status_idx ON lims_tasks (tenant_id, status, due_at);
-
-CREATE TABLE IF NOT EXISTS eln_records (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id uuid NOT NULL REFERENCES tenants(id),
-    title text NOT NULL,
-    author_id uuid REFERENCES users(id),
-    author_name text NOT NULL DEFAULT '',
-    project text NOT NULL DEFAULT '',
-    linked_task_id uuid REFERENCES lims_tasks(id),
-    content text NOT NULL DEFAULT '',
-    status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'signed', 'archived')),
-    signed_at timestamptz NOT NULL DEFAULT now(),
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS eln_records_tenant_status_idx ON eln_records (tenant_id, status, created_at DESC);
-
 CREATE TABLE IF NOT EXISTS iot_devices (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id uuid NOT NULL REFERENCES tenants(id),
@@ -247,8 +216,6 @@ ALTER TABLE training_practical_assessments DROP CONSTRAINT IF EXISTS training_pr
 ALTER TABLE training_practical_assessments ADD CONSTRAINT training_practical_assessments_instrument_id_fkey FOREIGN KEY (instrument_id) REFERENCES instruments(id) ON DELETE SET NULL;
 ALTER TABLE training_rules DROP CONSTRAINT IF EXISTS training_rules_instrument_id_fkey;
 ALTER TABLE training_rules ADD CONSTRAINT training_rules_instrument_id_fkey FOREIGN KEY (instrument_id) REFERENCES instruments(id) ON DELETE CASCADE;
-ALTER TABLE lims_tasks DROP CONSTRAINT IF EXISTS lims_tasks_instrument_id_fkey;
-ALTER TABLE lims_tasks ADD CONSTRAINT lims_tasks_instrument_id_fkey FOREIGN KEY (instrument_id) REFERENCES instruments(id) ON DELETE SET NULL;
 ALTER TABLE iot_devices DROP CONSTRAINT IF EXISTS iot_devices_instrument_id_fkey;
 ALTER TABLE iot_devices ADD CONSTRAINT iot_devices_instrument_id_fkey FOREIGN KEY (instrument_id) REFERENCES instruments(id) ON DELETE SET NULL;
 `

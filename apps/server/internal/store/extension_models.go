@@ -298,66 +298,6 @@ type SampleMovementInput struct {
 	Actor        string `json:"actor"`
 }
 
-type LimsTask struct {
-	ID             string    `json:"id"`
-	TenantID       string    `json:"tenantId,omitempty"`
-	SampleID       string    `json:"sampleId,omitempty"`
-	SampleCode     string    `json:"sampleCode,omitempty"`
-	InstrumentID   string    `json:"instrumentId,omitempty"`
-	InstrumentName string    `json:"instrumentName,omitempty"`
-	Title          string    `json:"title"`
-	AssayType      string    `json:"assayType"`
-	Priority       string    `json:"priority"`
-	Status         string    `json:"status"`
-	RequesterID    string    `json:"requesterId,omitempty"`
-	RequesterName  string    `json:"requesterName"`
-	DueAt          time.Time `json:"dueAt"`
-	ResultSummary  string    `json:"resultSummary"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
-}
-
-type LimsTaskInput struct {
-	RequesterID   string    `json:"requesterId"`
-	SampleID      string    `json:"sampleId"`
-	InstrumentID  string    `json:"instrumentId"`
-	Title         string    `json:"title"`
-	AssayType     string    `json:"assayType"`
-	Priority      string    `json:"priority"`
-	Status        string    `json:"status"`
-	RequesterName string    `json:"requesterName"`
-	DueAt         time.Time `json:"dueAt"`
-	ResultSummary string    `json:"resultSummary"`
-	Actor         string    `json:"actor"`
-}
-
-type ElnRecord struct {
-	ID              string    `json:"id"`
-	TenantID        string    `json:"tenantId,omitempty"`
-	Title           string    `json:"title"`
-	AuthorID        string    `json:"authorId,omitempty"`
-	AuthorName      string    `json:"authorName"`
-	Project         string    `json:"project"`
-	LinkedTaskID    string    `json:"linkedTaskId,omitempty"`
-	LinkedTaskTitle string    `json:"linkedTaskTitle,omitempty"`
-	Content         string    `json:"content"`
-	Status          string    `json:"status"`
-	SignedAt        time.Time `json:"signedAt"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
-}
-
-type ElnRecordInput struct {
-	AuthorID     string `json:"authorId"`
-	Title        string `json:"title"`
-	Project      string `json:"project"`
-	LinkedTaskID string `json:"linkedTaskId"`
-	Content      string `json:"content"`
-	Status       string `json:"status"`
-	Actor        string `json:"actor"`
-	AuthorName   string `json:"authorName"`
-}
-
 type IotDevice struct {
 	ID             string    `json:"id"`
 	TenantID       string    `json:"tenantId,omitempty"`

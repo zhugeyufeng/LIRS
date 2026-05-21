@@ -1,6 +1,6 @@
 import { Search, Wifi, Zap } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
-import { IotDeviceForm } from "@/components/extension-forms";
+import { IotDeviceActions, IotDeviceForm } from "@/components/extension-forms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { isTenantAdminRole } from "@/lib/permissions";
@@ -35,6 +35,7 @@ export default async function IotDevicesPage({
   const onlineCount = devices.filter((item) => item.online || item.status === "online").length;
   const boundCount = devices.filter((item) => item.instrumentId).length;
   const warningCount = devices.filter((item) => item.status === "warning").length;
+  const canManageDevices = isTenantAdminRole(currentUser.role);
 
   return (
     <AppShell currentUser={currentUser}>
@@ -89,6 +90,7 @@ export default async function IotDevicesPage({
                   <div className="rounded-md bg-slate-50 p-3 text-sm leading-6 text-slate-700">{formatTelemetry(device.telemetry)}</div>
                 </div>
                 <p className="mt-3 break-words text-sm leading-6 text-slate-600">{device.notes || "暂无备注。"}</p>
+                {canManageDevices ? <IotDeviceActions actorName={currentUser.name} device={device} instruments={instruments} /> : null}
               </div>
             ))}
             {visibleDevices.length === 0 ? <p className="rounded-lg border border-dashed p-4 text-sm text-slate-500">暂无 IoT 设备。</p> : null}
@@ -104,7 +106,7 @@ export default async function IotDevicesPage({
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {isTenantAdminRole(currentUser.role) ? <IotDeviceForm actorName={currentUser.name} instruments={instruments} /> : <p className="text-sm leading-6 text-slate-500">当前账号没有 IoT 设备维护权限。</p>}
+              {canManageDevices ? <IotDeviceForm actorName={currentUser.name} instruments={instruments} /> : <p className="text-sm leading-6 text-slate-500">当前账号没有 IoT 设备维护权限。</p>}
             </CardContent>
           </Card>
 

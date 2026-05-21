@@ -13,8 +13,7 @@ SELECT '00000000-0000-0000-0000-000000000001'::uuid, title, category,
        instructor, delivery_mode, duration_hours, required_for_booking, seed.status, seed.description
 FROM (VALUES
     ('高分辨率质谱仪准入培训', '仪器培训', '高分辨率质谱仪', '平台工程师', 'blended', 2.0, true, 'active', '覆盖预约规则、样品前处理、上机安全和异常上报。'),
-    ('实验室安全基础培训', '安全培训', '', '安全管理员', 'online', 1.5, true, 'active', '覆盖化学品、样本、门禁和应急处理基础要求。'),
-    ('LIMS/ELN 数据记录规范', '平台使用培训', '', '系统管理员', 'online', 1.0, false, 'active', '覆盖检测任务、实验记录、附件归档和数据留痕。')
+    ('实验室安全基础培训', '安全培训', '', '安全管理员', 'online', 1.5, true, 'active', '覆盖化学品、样本、门禁和应急处理基础要求。')
 ) AS seed(title, category, instrument_name, instructor, delivery_mode, duration_hours, required_for_booking, status, description)
 WHERE NOT EXISTS (
     SELECT 1 FROM training_courses tc
@@ -43,8 +42,7 @@ INSERT INTO training_questions (tenant_id, title, question_type, options, correc
 SELECT '00000000-0000-0000-0000-000000000001'::uuid, seed.title, seed.question_type, seed.options, seed.correct_answer, seed.explanation, seed.status
 FROM (VALUES
     ('预约前是否需要确认仪器状态？', 'single', 'A. 需要\nB. 不需要', 'A', '预约前应确认仪器是否可用及是否需要准入。', 'active'),
-    ('仪器维护中是否允许普通预约？', 'judge', 'A. 允许\nB. 不允许', 'B', '维护中的仪器应暂停预约，避免冲突。', 'active'),
-    ('ELN 记录保存的核心内容是什么？', 'short', '', '实验步骤与数据留痕', 'ELN 记录应保留步骤、参数、原始数据和签名。', 'active')
+    ('仪器维护中是否允许普通预约？', 'judge', 'A. 允许\nB. 不允许', 'B', '维护中的仪器应暂停预约，避免冲突。', 'active')
 ) AS seed(title, question_type, options, correct_answer, explanation, status)
 WHERE NOT EXISTS (
     SELECT 1 FROM training_questions tq
@@ -126,32 +124,6 @@ WHERE s.code IN ('SMP-2026-0001', 'SMP-2026-0002')
   AND NOT EXISTS (
       SELECT 1 FROM sample_movements sm
       WHERE sm.sample_id = s.id AND sm.reason = '样本入库登记'
-  );
-
-INSERT INTO lims_tasks (tenant_id, sample_id, instrument_id, title, assay_type, priority, status, requester_id, requester_name, due_at, result_summary)
-SELECT s.tenant_id, s.id, i.id, seed.task_title, seed.assay_type, seed.priority, seed.status, u.id, u.name, now() + seed.due_offset, seed.result_summary
-FROM (VALUES
-    ('SMP-2026-0001', '流式细胞因子检测', '流式细胞仪', '细胞分析', 'high', 'assigned', '48 hours'::interval, '待排队上机。'),
-    ('SMP-2026-0002', '薄膜晶体结构检测', 'X 射线衍射仪', '材料表征', 'normal', 'pending', '72 hours'::interval, '等待仪器维护结束。')
-) AS seed(sample_code, task_title, instrument_name, assay_type, priority, status, due_offset, result_summary)
-JOIN samples s ON s.code = seed.sample_code AND s.tenant_id = '00000000-0000-0000-0000-000000000001'
-LEFT JOIN instruments i ON i.tenant_id = s.tenant_id AND i.name = seed.instrument_name
-LEFT JOIN users u ON u.tenant_id = s.tenant_id AND u.name = s.owner_name
-WHERE NOT EXISTS (
-    SELECT 1 FROM lims_tasks lt
-    WHERE lt.tenant_id = s.tenant_id AND lt.title = seed.task_title
-);
-
-INSERT INTO eln_records (tenant_id, title, author_id, author_name, project, linked_task_id, content, status)
-SELECT lt.tenant_id, '流式检测实验记录模板', u.id, u.name, '免疫工程样本检测', lt.id,
-       '记录样本制备、抗体组合、上机参数、原始数据位置和异常说明。',
-       'draft'
-FROM lims_tasks lt
-LEFT JOIN users u ON u.tenant_id = lt.tenant_id AND lower(u.email) = 'wangmin@univ.edu.cn'
-WHERE lt.title = '流式细胞因子检测'
-  AND NOT EXISTS (
-      SELECT 1 FROM eln_records er
-      WHERE er.tenant_id = lt.tenant_id AND er.title = '流式检测实验记录模板'
   );
 
 INSERT INTO iot_devices (tenant_id, instrument_id, name, vendor, device_code, online, status, last_seen_at, telemetry, notes)

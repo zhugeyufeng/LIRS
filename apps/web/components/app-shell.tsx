@@ -73,8 +73,6 @@ const primaryNavGroups: PrimaryNavGroup[] = [
     label: "更多",
     requiresAuth: true,
     items: [
-      { href: "/lims/tasks", label: "LIMS 任务", requiresAuth: true },
-      { href: "/eln/records", label: "ELN 记录", requiresAuth: true },
       { href: "/iot/devices", label: "IoT 设备", requiresAuth: true },
       { href: "/ai-assistant", label: "AI 助手", requiresAuth: true },
       { href: "/data-center", label: "数据中台", requiresAuth: true },

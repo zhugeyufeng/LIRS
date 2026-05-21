@@ -2,17 +2,15 @@
 
 import { FormEvent, startTransition, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { PlusCircle, Save } from "lucide-react";
+import { Pencil, PlusCircle, Save, Trash2, X } from "lucide-react";
 import {
+  browserDelete,
+  browserPatch,
   browserPost,
   type AssistantQuery,
-  type ElnRecord,
-  type ElnRecordPayload,
   type IotDevice,
   type IotDevicePayload,
   type Instrument,
-  type LimsTask,
-  type LimsTaskPayload,
   type Sample,
   type SamplePayload,
   type Space,
@@ -32,7 +30,9 @@ import {
   type TrainingRule,
   type TrainingRulePayload,
 } from "@/lib/api";
+import { confirmTwice } from "@/lib/confirm";
 import { spaceReservationStatusLabel } from "@/lib/status-labels";
+import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 
 type ActorProps = {
@@ -675,167 +675,26 @@ export function SampleForm({ actorName }: ActorProps) {
   );
 }
 
-export function LimsTaskForm({ actorName, samples, instruments }: ActorProps & { samples: Sample[]; instruments: Instrument[] }) {
+export function IotDeviceForm({
+  actorName,
+  device,
+  instruments,
+  onSaved,
+}: ActorProps & {
+  device?: IotDevice;
+  instruments: Instrument[];
+  onSaved?: () => void;
+}) {
   const router = useRouter();
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState(false);
+  const editing = Boolean(device);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setPending(true);
-    setMessage("");
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const payload: LimsTaskPayload = {
-      sampleId: String(form.get("sampleId") ?? "") || undefined,
-      instrumentId: String(form.get("instrumentId") ?? "") || undefined,
-      title: String(form.get("title") ?? ""),
-      assayType: String(form.get("assayType") ?? ""),
-      priority: String(form.get("priority") ?? "normal"),
-      status: String(form.get("status") ?? "pending"),
-      requesterName: String(form.get("requesterName") ?? actorName),
-      dueAt: toIsoDateTime(form.get("dueAt")),
-      resultSummary: String(form.get("resultSummary") ?? ""),
-    };
-    try {
-      await browserPost<LimsTask>("/api/lims/tasks", payload);
-      setMessage("LIMS 任务已保存");
-      formElement.reset();
-      startTransition(() => router.refresh());
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "保存失败");
-    } finally {
-      setPending(false);
+    if (editing && !confirmTwice(`确定修改 IoT 设备“${device?.name ?? ""}”吗？`, "请再次确认。设备绑定、在线状态和遥测数据会立即更新。")) {
+      return;
     }
-  }
-
-  return (
-    <form className="space-y-3" onSubmit={submit}>
-      <Field label="任务标题" name="title" placeholder="填写检测任务标题" required />
-      <div className="grid gap-3 md:grid-cols-2">
-        <SelectField label="关联样本" name="sampleId">
-          <option value="">无关联样本</option>
-          {samples.map((sample) => (
-            <option key={sample.id} value={sample.id}>
-              {sample.code} / {sample.name}
-            </option>
-          ))}
-        </SelectField>
-        <SelectField label="关联仪器" name="instrumentId">
-          <option value="">无关联仪器</option>
-          {instruments.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </SelectField>
-      </div>
-      <div className="grid gap-3 md:grid-cols-3">
-        <Field label="检测类型" name="assayType" placeholder="例如：流式检测" />
-        <SelectField defaultValue="normal" label="优先级" name="priority">
-          <option value="normal">普通</option>
-          <option value="high">高</option>
-          <option value="urgent">紧急</option>
-        </SelectField>
-        <Field defaultValue={actorName} label="申请人" name="requesterName" placeholder="输入申请人" />
-      </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <Field label="截止时间" name="dueAt" required type="datetime-local" />
-        <SelectField defaultValue="pending" label="状态" name="status">
-          <option value="pending">待分配</option>
-          <option value="assigned">已分配</option>
-          <option value="running">进行中</option>
-          <option value="completed">已完成</option>
-          <option value="cancelled">已取消</option>
-        </SelectField>
-      </div>
-      <TextAreaField label="结果摘要" name="resultSummary" placeholder="填写预计结果或当前说明" />
-      <div className="flex justify-end">
-        <Button disabled={pending} type="submit">
-          <Save className="h-4 w-4" aria-hidden="true" />
-          {pending ? "保存中..." : "保存任务"}
-        </Button>
-      </div>
-      {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
-    </form>
-  );
-}
-
-export function ElnRecordForm({ actorName, tasks }: ActorProps & { tasks: LimsTask[] }) {
-  const router = useRouter();
-  const [message, setMessage] = useState("");
-  const [pending, setPending] = useState(false);
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setPending(true);
-    setMessage("");
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const payload: ElnRecordPayload = {
-      title: String(form.get("title") ?? ""),
-      authorName: String(form.get("authorName") ?? actorName),
-      authorId: String(form.get("authorId") ?? "") || undefined,
-      project: String(form.get("project") ?? ""),
-      linkedTaskId: String(form.get("linkedTaskId") ?? "") || undefined,
-      content: String(form.get("content") ?? ""),
-      status: String(form.get("status") ?? "draft"),
-    };
-    try {
-      await browserPost<ElnRecord>("/api/eln/records", payload);
-      setMessage("ELN 记录已保存");
-      formElement.reset();
-      startTransition(() => router.refresh());
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "保存失败");
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <form className="space-y-3" onSubmit={submit}>
-      <Field label="记录标题" name="title" placeholder="填写实验记录标题" required />
-      <div className="grid gap-3 md:grid-cols-2">
-        <Field defaultValue={actorName} label="作者" name="authorName" placeholder="输入作者" />
-        <Field label="作者 ID（可选）" name="authorId" placeholder="如果需要精确关联，可填写用户 ID" />
-      </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <Field label="项目/课题" name="project" placeholder="填写项目名称" />
-        <SelectField label="关联 LIMS 任务" name="linkedTaskId">
-          <option value="">无关联任务</option>
-          {tasks.map((task) => (
-            <option key={task.id} value={task.id}>
-              {task.title}
-            </option>
-          ))}
-        </SelectField>
-      </div>
-      <SelectField defaultValue="draft" label="状态" name="status">
-        <option value="draft">草稿</option>
-        <option value="submitted">已提交</option>
-        <option value="signed">已签名</option>
-        <option value="archived">已归档</option>
-      </SelectField>
-      <TextAreaField label="实验内容" name="content" placeholder="填写实验步骤、附件位置和原始数据说明" />
-      <div className="flex justify-end">
-        <Button disabled={pending} type="submit">
-          <Save className="h-4 w-4" aria-hidden="true" />
-          {pending ? "保存中..." : "保存记录"}
-        </Button>
-      </div>
-      {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
-    </form>
-  );
-}
-
-export function IotDeviceForm({ actorName, instruments }: ActorProps & { instruments: Instrument[] }) {
-  const router = useRouter();
-  const [message, setMessage] = useState("");
-  const [pending, setPending] = useState(false);
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
     setPending(true);
     setMessage("");
     const formElement = event.currentTarget;
@@ -851,9 +710,12 @@ export function IotDeviceForm({ actorName, instruments }: ActorProps & { instrum
       notes: String(form.get("notes") ?? ""),
     };
     try {
-      await browserPost<IotDevice>("/api/iot/devices", payload);
-      setMessage("IoT 设备已保存");
-      formElement.reset();
+      const saved = editing ? await browserPatch<IotDevice>(`/api/iot/devices/${device?.id}`, payload) : await browserPost<IotDevice>("/api/iot/devices", payload);
+      setMessage(editing ? `已更新设备：${saved.name}` : `已新增设备：${saved.name}`);
+      if (!editing) {
+        formElement.reset();
+      }
+      onSaved?.();
       startTransition(() => router.refresh());
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "保存失败");
@@ -864,12 +726,12 @@ export function IotDeviceForm({ actorName, instruments }: ActorProps & { instrum
 
   return (
     <form className="space-y-3" onSubmit={submit}>
-      <Field label="设备名称" name="name" placeholder="例如：质谱采集终端" required />
+      <Field defaultValue={device?.name} label="设备名称" name="name" placeholder="例如：质谱采集终端" required />
       <div className="grid gap-3 md:grid-cols-2">
-        <Field label="厂商" name="vendor" placeholder="例如：LIRS-IoT" />
-        <Field label="设备编码" name="deviceCode" placeholder="例如：IOT-0001" />
+        <Field defaultValue={device?.vendor} label="厂商" name="vendor" placeholder="例如：LIRS-IoT" />
+        <Field defaultValue={device?.deviceCode} label="设备编码" name="deviceCode" placeholder="例如：IOT-0001" />
       </div>
-      <SelectField label="关联仪器" name="instrumentId">
+      <SelectField defaultValue={device?.instrumentId ?? ""} label="关联仪器" name="instrumentId">
         <option value="">无关联仪器</option>
         {instruments.map((item) => (
           <option key={item.id} value={item.id}>
@@ -878,27 +740,83 @@ export function IotDeviceForm({ actorName, instruments }: ActorProps & { instrum
         ))}
       </SelectField>
       <div className="grid gap-3 md:grid-cols-2">
-        <SelectField defaultValue="offline" label="状态" name="status">
+        <SelectField defaultValue={device?.status ?? "offline"} label="状态" name="status">
           <option value="online">在线</option>
           <option value="offline">离线</option>
           <option value="warning">预警</option>
           <option value="disabled">停用</option>
         </SelectField>
         <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
-          <input defaultChecked type="checkbox" name="online" />
+          <input defaultChecked={device?.online ?? true} type="checkbox" name="online" />
           <span>当前在线</span>
         </label>
       </div>
-      <TextAreaField defaultValue="{}" label="遥测数据(JSON)" name="telemetry" placeholder='例如：{"temperature":"22.4"}' />
-      <TextAreaField label="备注" name="notes" placeholder="填写接入说明或网关备注" />
-      <div className="flex justify-end">
+      <TextAreaField defaultValue={device?.telemetry ?? "{}"} label="遥测数据(JSON)" name="telemetry" placeholder='例如：{"temperature":"22.4"}' />
+      <TextAreaField defaultValue={device?.notes} label="备注" name="notes" placeholder="填写接入说明或网关备注" />
+      <div className="flex justify-end gap-2">
         <Button disabled={pending} type="submit">
           <Save className="h-4 w-4" aria-hidden="true" />
-          {pending ? "保存中..." : "保存设备"}
+          {pending ? "保存中..." : editing ? "保存修改" : "保存设备"}
         </Button>
       </div>
       {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
     </form>
+  );
+}
+
+export function IotDeviceActions({ actorName, device, instruments }: ActorProps & { device: IotDevice; instruments: Instrument[] }) {
+  const router = useRouter();
+  const [message, setMessage] = useState("");
+  const [pending, setPending] = useState(false);
+
+  async function deleteDevice() {
+    if (!confirmTwice(`确定删除 IoT 设备“${device.name}”吗？删除后该设备会立即从设备列表移除。`, "请再次确认删除该设备。该操作会同步删除数据库中的设备记录。")) {
+      return;
+    }
+    setPending(true);
+    setMessage("");
+    try {
+      const deleted = await browserDelete<IotDevice>(`/api/iot/devices/${device.id}`);
+      setMessage(`已删除设备：${deleted.name}`);
+      router.refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "删除失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+      <AdminDialog
+        description="修改设备名称、厂商、编码、仪器绑定、在线状态、遥测数据和备注。"
+        maxWidth="max-w-3xl"
+        title={`修改 IoT 设备：${device.name}`}
+        trigger={
+          <Button className="w-full sm:w-auto" disabled={pending} size="sm" variant="outline">
+            <Pencil className="h-4 w-4" aria-hidden="true" />
+            修改
+          </Button>
+        }
+      >
+        {(close) => (
+          <div className="space-y-4">
+            <IotDeviceForm actorName={actorName} device={device} instruments={instruments} onSaved={close} />
+            <div className="flex justify-end">
+              <Button className="w-full sm:w-auto" onClick={close} type="button" variant="outline">
+                <X className="h-4 w-4" aria-hidden="true" />
+                取消
+              </Button>
+            </div>
+          </div>
+        )}
+      </AdminDialog>
+      <Button className="w-full sm:w-auto" disabled={pending} onClick={deleteDevice} size="sm" type="button" variant="destructive">
+        <Trash2 className="h-4 w-4" aria-hidden="true" />
+        删除设备
+      </Button>
+      {message ? <span className="text-xs text-slate-500">{message}</span> : null}
+    </div>
   );
 }
 
@@ -945,6 +863,39 @@ export function AssistantQueryForm({ actorName }: ActorProps) {
       {answer ? <div className="rounded-md border bg-slate-50 p-3 text-sm leading-6 text-slate-700">{answer}</div> : null}
       {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
     </form>
+  );
+}
+
+export function AssistantQueryDeleteButton({ item }: { item: AssistantQuery }) {
+  const router = useRouter();
+  const [message, setMessage] = useState("");
+  const [pending, setPending] = useState(false);
+
+  async function deleteQuery() {
+    if (!confirmTwice("确定删除这条 AI 问答记录吗？", "请再次确认。删除后该问答会立即从列表和数据库中移除。")) {
+      return;
+    }
+    setPending(true);
+    setMessage("");
+    try {
+      await browserDelete<AssistantQuery>(`/api/ai-assistant/${item.id}`);
+      setMessage("已删除问答记录");
+      router.refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "删除失败");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+      <Button className="w-full sm:w-auto" disabled={pending} onClick={deleteQuery} size="sm" type="button" variant="destructive">
+        <Trash2 className="h-4 w-4" aria-hidden="true" />
+        删除问答
+      </Button>
+      {message ? <span className="text-xs text-slate-500">{message}</span> : null}
+    </div>
   );
 }
 

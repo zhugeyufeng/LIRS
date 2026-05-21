@@ -7,7 +7,6 @@ import {
   ClipboardCheck,
   Cpu,
   Database,
-  FileText,
   FlaskConical,
   LayoutDashboard,
   MonitorPlay,
@@ -144,18 +143,6 @@ const spaceModules: ModuleEntry[] = [
 ];
 
 const extensionModules: ModuleEntry[] = [
-  {
-    href: "/lims/tasks",
-    title: "LIMS 检测任务",
-    description: "登记样本、分派任务并追踪检测结果。",
-    icon: PackageCheck,
-  },
-  {
-    href: "/eln/records",
-    title: "ELN 实验记录",
-    description: "维护实验记录、签名和关联任务。",
-    icon: FileText,
-  },
   {
     href: "/samples",
     title: "样本管理",
@@ -367,7 +354,7 @@ export default async function HomePage() {
     },
     {
       title: "扩展能力中心",
-      description: "LIMS、ELN、样本、IoT 和 AI 助手入口。",
+      description: "样本、物联网设备和 AI 助手入口。",
       modules: extensionModules,
     },
     ...(currentUser && showFinance

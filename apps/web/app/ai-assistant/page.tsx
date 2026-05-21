@@ -1,8 +1,9 @@
 import { Bot, MessageSquareText, Search, Sparkles } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
-import { AssistantQueryForm } from "@/components/extension-forms";
+import { AssistantQueryDeleteButton, AssistantQueryForm } from "@/components/extension-forms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { isTenantAdminRole } from "@/lib/permissions";
 
 export default async function AiAssistantPage({
   searchParams,
@@ -15,13 +16,14 @@ export default async function AiAssistantPage({
   const queries = await api.assistantQueries().catch(() => []);
   const visibleQueries = queries.filter((item) => [item.question, item.answer, item.context].some((value) => String(value ?? "").toLowerCase().includes(query)));
   const recentCount = queries.filter((item) => Date.now() - new Date(item.createdAt).getTime() <= 7 * 24 * 60 * 60 * 1000).length;
+  const canManageQueries = isTenantAdminRole(currentUser.role);
 
   return (
     <AppShell currentUser={currentUser}>
       <div className="mb-6 flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold">AI 助手</h1>
-          <p className="mt-1 text-sm text-muted-foreground">基于当前租户数据回答预约、培训、样本、LIMS 和 IoT 相关问题。</p>
+          <p className="mt-1 text-sm text-muted-foreground">基于当前机构数据回答预约、培训、样本和物联网设备相关问题。</p>
         </div>
         <form action="/ai-assistant" className="flex w-full max-w-xl gap-2 xl:w-auto">
           <div className="relative min-w-0 flex-1">
@@ -62,6 +64,7 @@ export default async function AiAssistantPage({
                 {item.context ? (
                   <p className="mt-3 rounded-md bg-slate-50 p-3 text-xs leading-6 text-slate-500">背景：{item.context}</p>
                 ) : null}
+                {canManageQueries ? <AssistantQueryDeleteButton item={item} /> : null}
               </div>
             ))}
             {visibleQueries.length === 0 ? <p className="rounded-lg border border-dashed p-4 text-sm text-slate-500">暂无问答记录。</p> : null}

@@ -1,17 +1,15 @@
-import { Database, Activity, Clock3, Cpu, FileText, Layers3, ShieldCheck, TestTube2 } from "lucide-react";
+import { Database, Activity, Clock3, Cpu, ShieldCheck, TestTube2 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 
 export default async function DataCenterPage() {
-  const [dashboard, operations, instruments, materials, samples, tasks, records, devices, notifications] = await Promise.all([
+  const [dashboard, operations, instruments, materials, samples, devices, notifications] = await Promise.all([
     api.dashboard().catch(() => null),
     api.operations().catch(() => null),
     api.instruments().catch(() => []),
     api.materials().catch(() => []),
     api.samples().catch(() => []),
-    api.limsTasks().catch(() => []),
-    api.elnRecords().catch(() => []),
     api.iotDevices().catch(() => []),
     api.notifications().catch(() => []),
   ]);
@@ -20,20 +18,18 @@ export default async function DataCenterPage() {
     <AppShell>
       <div className="mb-6">
         <h1 className="text-2xl font-bold">数据中台</h1>
-        <p className="mt-1 text-sm text-muted-foreground">汇总实验室运行、培训、样本、LIMS、ELN 和 IoT 的核心数据。</p>
+        <p className="mt-1 text-sm text-muted-foreground">汇总实验室运行、培训、样本和物联网设备的核心数据。</p>
       </div>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="仪器" value={instruments.length} icon={Cpu} />
         <Metric label="样本" value={samples.length} icon={TestTube2} />
-        <Metric label="LIMS 任务" value={tasks.length} icon={Layers3} />
-        <Metric label="ELN 记录" value={records.length} icon={FileText} />
+        <Metric label="物联网设备" value={devices.length} icon={Database} />
+        <Metric label="通知" value={notifications.length} icon={ShieldCheck} />
       </div>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="资源" value={materials.length} icon={Activity} />
-        <Metric label="IoT 设备" value={devices.length} icon={Database} />
-        <Metric label="通知" value={notifications.length} icon={ShieldCheck} />
         <Metric label="更新时间" value={operations ? formatDateTime(operations.updatedAt) : "未获取"} icon={Clock3} />
       </div>
 

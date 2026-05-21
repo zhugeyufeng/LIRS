@@ -309,62 +309,6 @@ export type SampleMovementPayload = {
   reason: string;
 };
 
-export type LimsTask = {
-  id: string;
-  sampleId?: string;
-  sampleCode?: string;
-  instrumentId?: string;
-  instrumentName?: string;
-  title: string;
-  assayType: string;
-  priority: string;
-  status: string;
-  requesterId?: string;
-  requesterName: string;
-  dueAt: string;
-  resultSummary: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type LimsTaskPayload = {
-  sampleId?: string;
-  instrumentId?: string;
-  title: string;
-  assayType: string;
-  priority: string;
-  status: string;
-  requesterId?: string;
-  requesterName: string;
-  dueAt: string;
-  resultSummary: string;
-};
-
-export type ElnRecord = {
-  id: string;
-  title: string;
-  authorId?: string;
-  authorName: string;
-  project: string;
-  linkedTaskId?: string;
-  linkedTaskTitle?: string;
-  content: string;
-  status: string;
-  signedAt: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type ElnRecordPayload = {
-  title: string;
-  authorId?: string;
-  authorName: string;
-  project: string;
-  linkedTaskId?: string;
-  content: string;
-  status: string;
-};
-
 export type IotDevice = {
   id: string;
   name: string;
@@ -1317,8 +1261,6 @@ export const api = {
   spaceReservations: () => businessRequest<SpaceReservation[]>("/api/space-reservations", "space-reservations"),
   samples: () => businessRequest<Sample[]>("/api/samples", "samples"),
   sampleMovements: () => businessRequest<SampleMovement[]>("/api/sample-movements", "sample-movements"),
-  limsTasks: () => businessRequest<LimsTask[]>("/api/lims/tasks", "lims-tasks"),
-  elnRecords: () => businessRequest<ElnRecord[]>("/api/eln/records", "eln-records"),
   iotDevices: () => businessRequest<IotDevice[]>("/api/iot/devices", "iot-devices"),
   assistantQueries: () => businessRequest<AssistantQuery[]>("/api/ai-assistant", "assistant-queries"),
   reservations: () => businessRequest<Reservation[]>("/api/reservations", "reservations"),
@@ -1437,7 +1379,6 @@ export function createDefaultCopySettings(): CopySettings {
       copyEntry("搜索申请人、仪器、团队...", "占位符", "搜索申请人、仪器、团队...", "placeholder", "审批搜索"),
       copyEntry("搜索产品、申请人、用途", "占位符", "搜索产品、申请人、用途", "placeholder", "产品申领搜索"),
       copyEntry("搜索课程、讲师、仪器...", "占位符", "搜索课程、讲师、仪器...", "placeholder", "培训课程搜索"),
-      copyEntry("搜索标题、作者、项目、任务...", "占位符", "搜索标题、作者、项目、任务...", "placeholder", "ELN 搜索"),
       copyEntry("搜索编号、名称、负责人...", "占位符", "搜索编号、名称、负责人...", "placeholder", "样本搜索"),
       copyEntry("普通用户入口", "首页分组", "普通用户入口", "group", "游客首页普通用户入口"),
       copyEntry("个人工作台", "首页分组", "个人工作台", "group", "普通用户首页工作台"),
@@ -1463,8 +1404,6 @@ export function createDefaultCopySettings(): CopySettings {
       copyEntry("授权记录", "首页模块", "授权记录", "module", "首页授权记录卡片标题"),
       copyEntry("在线考试", "首页模块", "在线考试", "module", "首页在线考试卡片标题"),
       copyEntry("空间资源", "首页模块", "空间资源", "module", "首页空间资源卡片标题"),
-      copyEntry("LIMS 检测任务", "首页模块", "LIMS 检测任务", "module", "首页 LIMS 卡片标题"),
-      copyEntry("ELN 实验记录", "首页模块", "ELN 实验记录", "module", "首页 ELN 卡片标题"),
       copyEntry("样本管理", "首页模块", "样本管理", "module", "首页样本卡片标题"),
       copyEntry("IoT 设备中心", "首页模块", "IoT 设备中心", "module", "首页 IoT 卡片标题"),
       copyEntry("AI 助手", "首页模块", "AI 助手", "module", "首页 AI 卡片标题"),

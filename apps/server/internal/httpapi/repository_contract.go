@@ -82,14 +82,12 @@ type extensionRepository interface {
 	SaveSample(ctx context.Context, id string, input store.SampleInput) (store.Sample, error)
 	SampleMovements(ctx context.Context) ([]store.SampleMovement, error)
 	CreateSampleMovement(ctx context.Context, input store.SampleMovementInput) (store.SampleMovement, error)
-	LimsTasks(ctx context.Context) ([]store.LimsTask, error)
-	SaveLimsTask(ctx context.Context, id string, input store.LimsTaskInput) (store.LimsTask, error)
-	ElnRecords(ctx context.Context) ([]store.ElnRecord, error)
-	SaveElnRecord(ctx context.Context, id string, input store.ElnRecordInput) (store.ElnRecord, error)
 	IotDevices(ctx context.Context) ([]store.IotDevice, error)
 	SaveIotDevice(ctx context.Context, id string, input store.IotDeviceInput) (store.IotDevice, error)
+	DeleteIotDevice(ctx context.Context, id string, actor string) (store.IotDevice, error)
 	AssistantQueries(ctx context.Context) ([]store.AssistantQuery, error)
 	AskAssistant(ctx context.Context, input store.AssistantQueryInput) (store.AssistantQuery, error)
+	DeleteAssistantQuery(ctx context.Context, id string, actor string) (store.AssistantQuery, error)
 }
 
 type reservationRepository interface {
