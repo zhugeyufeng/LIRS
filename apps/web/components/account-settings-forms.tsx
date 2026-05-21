@@ -7,6 +7,7 @@ import { confirmTwice } from "@/lib/confirm";
 import { Button } from "@/components/ui/button";
 import { PasswordInput } from "@/components/ui/password-input";
 import { roleLabel } from "@/lib/permissions";
+import { userStatusLabel } from "@/lib/status-labels";
 
 export function ProfileSettingsForm({ user }: { user: User }) {
   return (
@@ -18,7 +19,7 @@ export function ProfileSettingsForm({ user }: { user: User }) {
         <ReadonlyItem label="登录邮箱" value={user.email} />
         <ReadonlyItem label="所属单位" value={user.tenantName} />
         <ReadonlyItem label="角色" value={roleLabel(user.role)} />
-        <ReadonlyItem label="账号状态" value={statusLabel(user.status)} />
+        <ReadonlyItem label="账号状态" value={userStatusLabel(user.status)} />
       </div>
       <p className="rounded-lg border border-amber-100 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
         姓名、手机号和所属部门/实验室由管理员在管理后台维护，个人账号不可自行修改。
@@ -135,13 +136,4 @@ function ReadonlyItem({ label, value }: { label: string; value: string }) {
       <p className="mt-1 break-words font-medium text-slate-800">{formatCurrent(value)}</p>
     </div>
   );
-}
-
-function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending_approval: "待审核",
-    active: "已启用",
-    disabled: "已停用",
-  };
-  return labels[status] ?? status;
 }

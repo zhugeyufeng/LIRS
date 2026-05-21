@@ -2,6 +2,7 @@ import { Settings2 } from "lucide-react";
 import { BusinessConfigForm } from "@/components/business-config-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { BusinessConfig } from "@/lib/api";
+import { enablementStatusLabel } from "@/lib/status-labels";
 
 export function BusinessConfigList({
   createTitle,
@@ -80,13 +81,7 @@ function StatusBadge({ status }: { status: string }) {
     disabled: "bg-slate-100 text-slate-600",
     archived: "bg-blue-50 text-blue-700",
   };
-  const labels: Record<string, string> = {
-    active: "启用",
-    draft: "草稿",
-    disabled: "停用",
-    archived: "归档",
-  };
-  return <span className={`inline-flex w-fit rounded-full px-2 py-1 text-xs font-bold ${classes[status] ?? "bg-slate-100 text-slate-600"}`}>{labels[status] ?? status}</span>;
+  return <span className={`inline-flex w-fit rounded-full px-2 py-1 text-xs font-bold ${classes[status] ?? "bg-slate-100 text-slate-600"}`}>{enablementStatusLabel(status)}</span>;
 }
 
 function formatDateTime(value: string) {

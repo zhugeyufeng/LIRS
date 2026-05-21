@@ -5,13 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { formatServiceWindow } from "@/lib/instrument-rules";
-
-const statusLabels: Record<string, string> = {
-  available: "可用",
-  busy: "繁忙",
-  maintenance: "维护中",
-  disabled: "已停用",
-};
+import { instrumentStatusLabel } from "@/lib/status-labels";
 
 export default async function InstrumentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -40,7 +34,7 @@ export default async function InstrumentDetailPage({ params }: { params: Promise
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <span className="w-fit rounded bg-primary px-3 py-1 text-xs font-bold text-white">
-                    {statusLabels[instrument.status] ?? instrument.status}
+                    {instrumentStatusLabel(instrument.status)}
                   </span>
                   <Button asChild variant="outline">
                     <Link href={`/instruments/${instrument.id}/calendar`} prefetch={false}>

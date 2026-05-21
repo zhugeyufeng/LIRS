@@ -4,6 +4,7 @@ import { AppShell } from "@/components/app-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { api, Instrument } from "@/lib/api";
+import { instrumentStatusLabel } from "@/lib/status-labels";
 
 const statusMeta: Record<string, { label: string; className: string }> = {
   available: { label: "可用", className: "bg-emerald-600 text-white" },
@@ -187,7 +188,7 @@ export default async function HomePage({
 }
 
 function InstrumentCard({ instrument }: { instrument: Instrument }) {
-  const meta = statusMeta[instrument.status] ?? { label: instrument.status, className: "bg-slate-500 text-white" };
+  const meta = statusMeta[instrument.status] ?? { label: instrumentStatusLabel(instrument.status), className: "bg-slate-500 text-white" };
 
   return (
     <Card className="group p-4 transition-all duration-300 hover:shadow-md">

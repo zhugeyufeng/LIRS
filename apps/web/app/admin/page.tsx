@@ -17,6 +17,7 @@ import { AdminShell, requireAdmin } from "@/components/admin-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { canAccessAdminSection, type AdminSection } from "@/lib/permissions";
+import { reservationStatusLabel } from "@/lib/status-labels";
 
 export default async function AdminPage() {
   const currentUser = await requireAdmin();
@@ -228,15 +229,7 @@ function AdminMetric({ compact = false, label, value }: { compact?: boolean; lab
 }
 
 function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待审批",
-    approved: "已通过",
-    rejected: "已驳回",
-    in_use: "使用中",
-    completed: "已完成",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
+  return reservationStatusLabel(status);
 }
 
 function formatDateTime(value: string) {

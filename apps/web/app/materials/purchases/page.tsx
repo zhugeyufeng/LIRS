@@ -6,6 +6,7 @@ import { MaterialsNav } from "@/components/materials-nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, MaterialPurchase } from "@/lib/api";
 import { isMaterialAdminRole } from "@/lib/permissions";
+import { materialPurchaseStatusLabel } from "@/lib/status-labels";
 
 export default async function MaterialPurchasesPage({
   searchParams,
@@ -92,7 +93,7 @@ export default async function MaterialPurchasesPage({
                       <td className="p-3 align-top font-bold">{formatMoney(item.estimatedUnitPrice * item.quantity)}</td>
                       <td className="break-words p-3 align-top">{item.reason}</td>
                       <td className="p-3 align-top">
-                        <span className="rounded bg-slate-100 px-2 py-1 text-xs font-bold">{purchaseStatusLabel(item.status)}</span>
+                        <span className="rounded bg-slate-100 px-2 py-1 text-xs font-bold">{materialPurchaseStatusLabel(item.status)}</span>
                       </td>
                       <td className="p-3 align-top">
                         <MaterialPurchaseActions
@@ -152,7 +153,7 @@ function MaterialPurchaseCard({
           <p className="mt-1 break-words text-sm text-slate-500">{item.requester} / {item.groupName}</p>
           {item.purchaseProjectName ? <p className="mt-1 break-words text-xs text-slate-500">{item.purchaseProjectName}</p> : null}
         </div>
-        <span className="w-fit shrink-0 rounded bg-slate-100 px-2 py-1 text-xs font-bold">{purchaseStatusLabel(item.status)}</span>
+        <span className="w-fit shrink-0 rounded bg-slate-100 px-2 py-1 text-xs font-bold">{materialPurchaseStatusLabel(item.status)}</span>
       </div>
       <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
         <InfoItem label="预计金额" value={formatMoney(item.estimatedUnitPrice * item.quantity)} />
@@ -182,19 +183,6 @@ function InfoItem({ label, value }: { label: string; value: string }) {
       <p className="mt-1 break-words font-medium text-slate-800">{value}</p>
     </div>
   );
-}
-
-function purchaseStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    registered: "已登记",
-    approved: "已通过",
-    rejected: "已拒绝",
-    returned: "退回修改",
-    ordered: "已下单",
-    received: "已入库",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
 }
 
 function formatMoney(value: number) {

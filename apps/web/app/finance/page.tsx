@@ -8,6 +8,7 @@ import { LedgerExportButton } from "@/components/ledger-export-button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type User } from "@/lib/api";
 import { isFinanceAdminRole } from "@/lib/permissions";
+import { financeEntryTypeLabel } from "@/lib/status-labels";
 
 export default async function FinancePage({
   searchParams,
@@ -251,12 +252,7 @@ export default async function FinancePage({
 }
 
 function entryTypeLabel(type: string) {
-  const labels: Record<string, string> = {
-    debit: "预约扣费",
-    adjustment: "调整",
-    account_init: "账户初始化",
-  };
-  return labels[type] ?? type;
+  return financeEntryTypeLabel(type);
 }
 
 function Metric({ label, value }: { label: string; value: string | number }) {

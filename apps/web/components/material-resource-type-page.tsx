@@ -17,6 +17,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type InventoryLedgerEntry, type MaterialDamage } from "@/lib/api";
 import { isMaterialAdminRole } from "@/lib/permissions";
+import { materialDamageStatusLabel } from "@/lib/status-labels";
 
 type ResourcePageSearchParams = Promise<{ q?: string; category?: string; status?: string }>;
 
@@ -384,14 +385,7 @@ function LedgerCard({ entry }: { entry: InventoryLedgerEntry }) {
 }
 
 function damageStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待审核",
-    approved: "已通过",
-    rejected: "已拒绝",
-    processed: "已处理",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
+  return materialDamageStatusLabel(status);
 }
 
 function formatDateTime(value: string) {

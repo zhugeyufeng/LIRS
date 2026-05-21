@@ -2,6 +2,7 @@ import { AdminShell, requireAdminSection } from "@/components/admin-shell";
 import { WorkflowTabs } from "@/components/workflow-tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { workflowStatusLabel } from "@/lib/status-labels";
 
 export default async function WorkflowInstancesPage() {
   await requireAdminSection("workflows");
@@ -101,18 +102,7 @@ function InstanceCard({ row }: { row: { id: string; type: string; title: string;
 }
 
 function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待处理",
-    approved: "已通过",
-    rejected: "已驳回",
-    ordered: "采购中",
-    received: "已到货",
-    outbound: "已出库",
-    in_use: "使用中",
-    completed: "已完成",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
+  return workflowStatusLabel(status);
 }
 
 function formatDateTime(value: string) {

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { CalendarPlus } from "lucide-react";
 import { browserPost, Instrument, Reservation, ReservationBatchPayload, Slot } from "@/lib/api";
 import { formatServiceWindow } from "@/lib/instrument-rules";
+import { slotStatusLabel } from "@/lib/status-labels";
 import { Button } from "@/components/ui/button";
 
 type SelectableSlot = Slot & {
@@ -14,14 +15,6 @@ type SelectableSlot = Slot & {
 type SlotRange = {
   startTime: string;
   endTime: string;
-};
-
-const statusLabels: Record<string, string> = {
-  available: "可约",
-  occupied: "已占用",
-  maintenance: "维护",
-  disabled: "停用",
-  unavailable: "不可约",
 };
 
 export function ReservationSlotForm({
@@ -268,7 +261,7 @@ function slotClassName(slot: SelectableSlot) {
 
 function slotLabel(slot: SelectableSlot) {
   if (slot.status === "available" && slot.disabled) {
-    return statusLabels.unavailable;
+    return "不可约";
   }
-  return statusLabels[slot.status] ?? slot.status;
+  return slotStatusLabel(slot.status);
 }

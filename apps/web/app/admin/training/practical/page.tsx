@@ -3,6 +3,7 @@ import { AdminShell, requireAdminSection } from "@/components/admin-shell";
 import { TrainingPracticalForm } from "@/components/extension-forms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { trainingPracticalResultLabel } from "@/lib/status-labels";
 
 export default async function AdminTrainingPracticalPage({
   searchParams,
@@ -51,7 +52,7 @@ export default async function AdminTrainingPracticalPage({
                     <p className="mt-1 break-words text-xs text-slate-500">{item.instrumentName || "未关联仪器"}</p>
                   </div>
                   <span className={`w-fit rounded px-2 py-1 text-xs font-bold ${item.result === "pass" ? "bg-emerald-50 text-emerald-700" : item.result === "fail" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>
-                    {item.result}
+                    {trainingPracticalResultLabel(item.result)}
                   </span>
                 </div>
                 <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">

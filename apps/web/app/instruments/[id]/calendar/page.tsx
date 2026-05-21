@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type Slot } from "@/lib/api";
 import { formatServiceWindow } from "@/lib/instrument-rules";
+import { slotStatusLabel } from "@/lib/status-labels";
 
 type GroupedSlots = Record<string, Slot[]>;
 
@@ -119,14 +120,7 @@ function slotClass(status: string) {
 }
 
 function slotLabel(status: string) {
-  const labels: Record<string, string> = {
-    available: "可预约",
-    occupied: "已占用",
-    maintenance: "维护中",
-    disabled: "已停用",
-    unavailable: "不可预约",
-  };
-  return labels[status] ?? status;
+  return slotStatusLabel(status);
 }
 
 function formatTime(value: string) {

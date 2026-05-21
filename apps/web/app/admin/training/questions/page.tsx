@@ -3,6 +3,7 @@ import { AdminShell, requireAdminSection } from "@/components/admin-shell";
 import { TrainingQuestionForm } from "@/components/extension-forms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { trainingQuestionStatusLabel, trainingQuestionTypeLabel } from "@/lib/status-labels";
 
 export default async function AdminTrainingQuestionsPage({
   searchParams,
@@ -47,9 +48,9 @@ export default async function AdminTrainingQuestionsPage({
                 <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
                   <div className="min-w-0">
                     <p className="break-words font-semibold text-slate-900">{question.title}</p>
-                    <p className="mt-1 text-xs text-slate-500">{question.questionType}</p>
+                    <p className="mt-1 text-xs text-slate-500">{trainingQuestionTypeLabel(question.questionType)}</p>
                   </div>
-                  <span className="w-fit rounded bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">{question.status}</span>
+                  <span className="w-fit rounded bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">{trainingQuestionStatusLabel(question.status)}</span>
                 </div>
                 <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
                   <InfoItem label="正确答案" value={question.correctAnswer || "未填写"} />

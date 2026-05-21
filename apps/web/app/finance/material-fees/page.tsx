@@ -1,6 +1,7 @@
 import { FinanceFrame } from "@/components/finance-frame";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { materialFeeStatusLabel } from "@/lib/status-labels";
 
 export default async function MaterialFeesPage() {
   const currentUser = await api.me();
@@ -74,16 +75,7 @@ function Metric({ label, value }: { label: string; value: string | number }) {
 }
 
 function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待审批",
-    approved: "已通过",
-    rejected: "已驳回",
-    outbound: "已出库",
-    ordered: "采购中",
-    received: "已到货",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
+  return materialFeeStatusLabel(status);
 }
 
 function formatDateTime(value: string) {

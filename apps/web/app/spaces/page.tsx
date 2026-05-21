@@ -5,6 +5,7 @@ import { SpaceForm } from "@/components/extension-forms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { isTenantAdminRole } from "@/lib/permissions";
+import { spaceStatusLabel } from "@/lib/status-labels";
 
 export default async function SpacesPage({
   searchParams,
@@ -134,14 +135,4 @@ function InfoItem({ label, value }: { label: string; value: string }) {
       <p className="mt-1 break-words font-medium text-slate-800">{value}</p>
     </div>
   );
-}
-
-function spaceStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    available: "可用",
-    busy: "占用",
-    maintenance: "维护中",
-    disabled: "停用",
-  };
-  return labels[status] ?? status;
 }

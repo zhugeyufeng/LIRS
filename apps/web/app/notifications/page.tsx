@@ -2,6 +2,7 @@ import { AppShell } from "@/components/app-shell";
 import { MarkAllNotificationsRead, MarkNotificationRead } from "@/components/notification-actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { notificationLevelLabel } from "@/lib/status-labels";
 
 export default async function NotificationsPage() {
   const notifications = await api.notifications();
@@ -51,12 +52,7 @@ export default async function NotificationsPage() {
 }
 
 function levelLabel(level: string) {
-  const labels: Record<string, string> = {
-    info: "普通",
-    warning: "提醒",
-    success: "成功",
-  };
-  return labels[level] ?? level;
+  return notificationLevelLabel(level);
 }
 
 function sourceLabel(source: string) {

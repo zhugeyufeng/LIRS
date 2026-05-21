@@ -6,19 +6,11 @@ import { ReservationDetailDialog } from "@/components/reservation-detail-dialog"
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type Reservation } from "@/lib/api";
+import { reservationStatusLabel } from "@/lib/status-labels";
 
 type SearchParams = {
   q?: string;
   status?: string;
-};
-
-const statusLabels: Record<string, string> = {
-  pending: "待审批",
-  approved: "已通过",
-  rejected: "已驳回",
-  in_use: "使用中",
-  completed: "已完成",
-  cancelled: "已取消",
 };
 
 export default async function ReservationsPage({ searchParams }: { searchParams?: Promise<SearchParams> }) {
@@ -129,7 +121,7 @@ function ReservationRow({ item }: { item: Reservation }) {
             {formatDate(item.startTime)} {formatTime(item.startTime)}-{formatTime(item.endTime)} / {item.groupName || "部门直属"}
           </p>
         </div>
-        <span className={`w-fit shrink-0 rounded-full px-2 py-1 text-xs font-bold ${statusClass(item.status)}`}>{statusLabels[item.status] ?? item.status}</span>
+        <span className={`w-fit shrink-0 rounded-full px-2 py-1 text-xs font-bold ${statusClass(item.status)}`}>{reservationStatusLabel(item.status)}</span>
       </div>
       <p className="mt-3 break-words rounded-md bg-slate-50 p-3 text-sm leading-6 text-slate-600">{item.purpose}</p>
       <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { formatDateTimeRange, formatDurationHours } from "@/lib/datetime";
 import { isTenantAdminRole } from "@/lib/permissions";
+import { reservationStatusLabel } from "@/lib/status-labels";
 
 export default async function ApprovalDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -66,13 +67,5 @@ function Info({ label, value }: { label: string; value: string }) {
 }
 
 function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待处理",
-    approved: "已通过",
-    rejected: "已驳回",
-    in_use: "使用中",
-    completed: "已完成",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
+  return reservationStatusLabel(status);
 }

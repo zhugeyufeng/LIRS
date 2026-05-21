@@ -5,6 +5,7 @@ import { TrainingCourseForm } from "@/components/extension-forms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { isTenantAdminRole } from "@/lib/permissions";
+import { trainingCourseStatusLabel, trainingDeliveryModeLabel } from "@/lib/status-labels";
 
 export default async function TrainingCoursesPage({
   searchParams,
@@ -60,11 +61,11 @@ export default async function TrainingCoursesPage({
                       {course.instrumentName ? ` / ${course.instrumentName}` : ""}
                     </p>
                   </div>
-                  <span className="w-fit rounded bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{course.status}</span>
+                  <span className="w-fit rounded bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{trainingCourseStatusLabel(course.status)}</span>
                 </div>
                 <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
                   <InfoItem label="讲师" value={course.instructor} />
-                  <InfoItem label="授课方式" value={deliveryLabel(course.deliveryMode)} />
+                  <InfoItem label="授课方式" value={trainingDeliveryModeLabel(course.deliveryMode)} />
                   <InfoItem label="时长" value={`${course.durationHours} 小时`} />
                   <InfoItem label="必修" value={course.requiredForBooking ? "是" : "否"} />
                 </div>
@@ -128,13 +129,4 @@ function InfoItem({ label, value }: { label: string; value: string }) {
       <p className="mt-1 break-words font-medium text-slate-800">{value}</p>
     </div>
   );
-}
-
-function deliveryLabel(value: string) {
-  const labels: Record<string, string> = {
-    online: "线上",
-    offline: "线下",
-    blended: "混合",
-  };
-  return labels[value] ?? value;
 }

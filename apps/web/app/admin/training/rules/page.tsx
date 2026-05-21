@@ -3,6 +3,7 @@ import { AdminShell, requireAdminSection } from "@/components/admin-shell";
 import { TrainingRuleForm } from "@/components/extension-forms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { trainingRuleStatusLabel } from "@/lib/status-labels";
 
 export default async function AdminTrainingRulesPage({
   searchParams,
@@ -51,7 +52,7 @@ export default async function AdminTrainingRulesPage({
                     <p className="mt-1 text-xs text-slate-500">最低分 {item.minScore.toFixed(1)}</p>
                   </div>
                   <span className={`w-fit rounded px-2 py-1 text-xs font-bold ${item.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
-                    {item.status}
+                    {trainingRuleStatusLabel(item.status)}
                   </span>
                 </div>
                 <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">

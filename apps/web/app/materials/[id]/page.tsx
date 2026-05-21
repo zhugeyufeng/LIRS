@@ -7,6 +7,14 @@ import { MaterialRequestDialog } from "@/components/material-request-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, Material } from "@/lib/api";
+import {
+  materialBatchStatusLabel,
+  materialProductTypeLabel,
+  materialPurchaseStatusLabel,
+  materialRequestStatusLabel,
+  materialStatusLabel as sharedMaterialStatusLabel,
+  materialUnitStatusLabel,
+} from "@/lib/status-labels";
 
 export default async function MaterialDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -206,26 +214,11 @@ function RecordLine({ left, right, sub }: { left: string; right: string; sub: st
 }
 
 function materialStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    normal: "正常",
-    near_expiry: "临期",
-    low: "低库存",
-    expired: "过期",
-    open_expired: "开封超期",
-    freeze_thaw_exceeded: "冻融超限",
-    damaged: "损毁",
-    disabled: "停用",
-  };
-  return labels[status] ?? status;
+  return sharedMaterialStatusLabel(status);
 }
 
 function productTypeLabel(productType: string) {
-  const labels: Record<string, string> = {
-    consumable: "耗材",
-    reagent: "试剂",
-    standard: "标准品/标准物质",
-  };
-  return labels[productType] ?? productType;
+  return materialProductTypeLabel(productType);
 }
 
 function materialTypePath(productType: string) {
@@ -243,45 +236,17 @@ function materialLocation(item: Pick<Material, "storageRoom" | "storageCabinet" 
 }
 
 function requestStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待审批",
-    approved: "已通过",
-    rejected: "已拒绝",
-    outbound: "已出库",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
+  return materialRequestStatusLabel(status);
 }
 
 function purchaseStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    registered: "已登记",
-    approved: "已通过",
-    rejected: "已拒绝",
-    returned: "退回修改",
-    ordered: "已下单",
-    received: "已入库",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
+  return materialPurchaseStatusLabel(status);
 }
 
 function batchStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    active: "可用",
-    depleted: "已用尽",
-    disabled: "停用",
-  };
-  return labels[status] ?? status;
+  return materialBatchStatusLabel(status);
 }
 
 function unitStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    available: "可领用",
-    reserved: "已预留",
-    used: "已领用",
-    damaged: "已损毁",
-    disabled: "停用",
-  };
-  return labels[status] ?? status;
+  return materialUnitStatusLabel(status);
 }

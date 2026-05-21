@@ -3,6 +3,7 @@ import { AdminShell, requireAdminSection } from "@/components/admin-shell";
 import { TrainingAuthorizationEditDialog } from "@/components/training-authorization-actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { trainingAuthorizationStatusLabel } from "@/lib/status-labels";
 
 export default async function AdminTrainingAuthorizationsPage({
   searchParams,
@@ -151,13 +152,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待审核",
-    active: "已授权",
-    expired: "已过期",
-    revoked: "已撤销",
-  };
-  return labels[status] ?? status;
+  return trainingAuthorizationStatusLabel(status);
 }
 
 function formatDateTime(value: string) {

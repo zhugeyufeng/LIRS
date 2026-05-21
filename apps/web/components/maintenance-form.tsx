@@ -4,6 +4,7 @@ import { FormEvent, startTransition, useOptimistic, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PlusCircle, Save } from "lucide-react";
 import { browserPatch, browserPost, Instrument, MaintenanceOrder, MaintenancePayload } from "@/lib/api";
+import { maintenanceStatusLabel } from "@/lib/status-labels";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 
@@ -158,15 +159,4 @@ export function MaintenanceCompleteButton({ id, status }: { id: string; status: 
       {message ? <span className="text-xs text-slate-500">{message}</span> : null}
     </div>
   );
-}
-
-function maintenanceStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    reported: "已上报",
-    assigned: "已派工",
-    in_progress: "处理中",
-    completed: "已完成",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
 }

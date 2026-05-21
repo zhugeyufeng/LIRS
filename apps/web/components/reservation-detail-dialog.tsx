@@ -4,6 +4,7 @@ import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 import type { Reservation } from "@/lib/api";
 import { formatDateTime, formatDateTimeRange, formatDurationHours } from "@/lib/datetime";
+import { reservationStatusLabel } from "@/lib/status-labels";
 
 export function ReservationDetailDialog({
   actions,
@@ -88,19 +89,7 @@ function Info({ label, value }: { label: string; value: string }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  return <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${statusClass(status)}`}>{statusLabel(status)}</span>;
-}
-
-function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待处理",
-    approved: "已通过",
-    rejected: "已驳回",
-    in_use: "使用中",
-    completed: "已完成",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
+  return <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${statusClass(status)}`}>{reservationStatusLabel(status)}</span>;
 }
 
 function statusClass(status: string) {

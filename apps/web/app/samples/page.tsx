@@ -4,6 +4,7 @@ import { SampleForm } from "@/components/extension-forms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { isMaterialAdminRole } from "@/lib/permissions";
+import { hazardLevelLabel, sampleStatusLabel } from "@/lib/status-labels";
 
 export default async function SamplesPage({
   searchParams,
@@ -74,7 +75,7 @@ export default async function SamplesPage({
                   <InfoItem label="负责人" value={sample.ownerName || "未设置"} />
                   <InfoItem label="位置" value={sample.location || "未设置"} />
                   <InfoItem label="部门/课题组" value={`${sample.department || "未设置"} / ${sample.groupName || "未设置"}`} />
-                  <InfoItem label="风险等级" value={hazardLabel(sample.hazardLevel)} />
+                  <InfoItem label="风险等级" value={hazardLevelLabel(sample.hazardLevel)} />
                   <InfoItem label="保存条件" value={sample.storageCondition || "未设置"} />
                   <InfoItem label="流转提醒" value={sample.hazardLevel === "danger" ? "高危样本需优先处理" : "正常"} />
                 </div>
@@ -137,24 +138,4 @@ function InfoItem({ label, value }: { label: string; value: string }) {
       <p className="mt-1 break-words font-medium text-slate-800">{value}</p>
     </div>
   );
-}
-
-function sampleStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    stored: "入库",
-    testing: "检测中",
-    checked_out: "外借",
-    archived: "归档",
-    disposed: "销毁",
-  };
-  return labels[status] ?? status;
-}
-
-function hazardLabel(level: string) {
-  const labels: Record<string, string> = {
-    normal: "普通",
-    warning: "警示",
-    danger: "高危",
-  };
-  return labels[level] ?? level;
 }

@@ -4,6 +4,7 @@ import { startTransition, useOptimistic, useState } from "react";
 import { useRouter } from "next/navigation";
 import { browserPatch, MaterialPurchase, PurchasableMaterial } from "@/lib/api";
 import { confirmTwice } from "@/lib/confirm";
+import { materialPurchaseStatusLabel } from "@/lib/status-labels";
 import { AdminDialog } from "@/components/admin-dialog";
 import { MaterialPurchaseForm } from "@/components/material-purchase-form";
 import { Button } from "@/components/ui/button";
@@ -41,10 +42,10 @@ export function MaterialPurchaseActions({
     startTransition(() => {
       setVisibleStatus(nextStatus);
     });
-    setMessage(`正在更新为 ${purchaseStatusLabel(nextStatus)}`);
+    setMessage(`正在更新为 ${materialPurchaseStatusLabel(nextStatus)}`);
     try {
       const item = await browserPatch<MaterialPurchase>(path, payload);
-      setMessage(`已更新为 ${purchaseStatusLabel(item.status)}`);
+      setMessage(`已更新为 ${materialPurchaseStatusLabel(item.status)}`);
       close?.();
       startTransition(() => {
         router.refresh();
@@ -63,7 +64,7 @@ export function MaterialPurchaseActions({
 
   return (
     <div className="grid w-full gap-2 sm:flex sm:flex-wrap sm:items-center">
-      <span className="w-fit rounded bg-slate-100 px-2 py-1 text-xs font-bold">{purchaseStatusLabel(visibleStatus)}</span>
+      <span className="w-fit rounded bg-slate-100 px-2 py-1 text-xs font-bold">{materialPurchaseStatusLabel(visibleStatus)}</span>
       {visibleStatus === "registered" && canReview && !locked ? (
         <AdminDialog
           description="退回后申请人可以修改申购物品、数量、单价、供应商和原因，再重新提交。"
@@ -128,17 +129,4 @@ export function MaterialPurchaseActions({
       {message ? <span className="text-xs text-slate-500 sm:basis-full">{message}</span> : null}
     </div>
   );
-}
-
-function purchaseStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    registered: "已登记",
-    approved: "已通过",
-    rejected: "已拒绝",
-    returned: "退回修改",
-    ordered: "已下单",
-    received: "已入库",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
 }

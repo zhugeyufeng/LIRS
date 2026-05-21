@@ -3,6 +3,7 @@ import { BarChart3, Bell, MonitorPlay, TrendingUp } from "lucide-react";
 import { AdminShell, requireAdmin } from "@/components/admin-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { materialStatusLabel } from "@/lib/status-labels";
 
 export default async function AdminAnalyticsPage() {
   await requireAdmin();
@@ -106,20 +107,6 @@ export default async function AdminAnalyticsPage() {
       </div>
     </AdminShell>
   );
-}
-
-function materialStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    normal: "正常",
-    near_expiry: "临期",
-    low: "低库存",
-    expired: "过期",
-    open_expired: "开封超期",
-    freeze_thaw_exceeded: "冻融超限",
-    damaged: "损毁",
-    disabled: "停用",
-  };
-  return labels[status] ?? status;
 }
 
 function Metric({ label, value }: { label: string; value: string | number }) {

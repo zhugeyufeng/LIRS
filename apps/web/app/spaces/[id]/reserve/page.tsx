@@ -5,6 +5,7 @@ import { AppShell } from "@/components/app-shell";
 import { SpaceReservationForm } from "@/components/extension-forms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { spaceReservationStatusLabel, spaceStatusLabel } from "@/lib/status-labels";
 
 export default async function SpaceReservePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -45,7 +46,7 @@ export default async function SpaceReservePage({ params }: { params: Promise<{ i
                       <p className="break-words font-semibold text-slate-900">{item.purpose}</p>
                       <p className="mt-1 break-words text-xs text-slate-500">{item.requester}</p>
                     </div>
-                    <span className="w-fit rounded bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{item.status}</span>
+                    <span className="w-fit rounded bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{spaceReservationStatusLabel(item.status)}</span>
                   </div>
                   <p className="mt-3 text-slate-600">
                     {formatDateTime(item.startTime)} - {formatDateTime(item.endTime)}
@@ -63,7 +64,7 @@ export default async function SpaceReservePage({ params }: { params: Promise<{ i
             <CardContent className="space-y-3 text-sm leading-6 text-slate-600">
               <p>{space.description || "未填写空间说明。"}</p>
               <p>门禁点位：{space.accessControlPoint || "未设置"}</p>
-              <p>状态：{space.status}</p>
+              <p>状态：{spaceStatusLabel(space.status)}</p>
             </CardContent>
           </Card>
         </div>

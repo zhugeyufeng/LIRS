@@ -3,6 +3,7 @@
 import { startTransition, useOptimistic, useState } from "react";
 import { useRouter } from "next/navigation";
 import { browserPatch, Reservation } from "@/lib/api";
+import { reservationStatusLabel } from "@/lib/status-labels";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 
@@ -163,16 +164,4 @@ export function ReservationActions({
       {message ? <span className="text-xs text-slate-500">{message}</span> : null}
     </div>
   );
-}
-
-function reservationStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待审批",
-    approved: "已通过",
-    rejected: "已拒绝",
-    in_use: "使用中",
-    completed: "已完成",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
 }

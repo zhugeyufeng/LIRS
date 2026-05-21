@@ -8,6 +8,7 @@ import { confirmTwice } from "@/lib/confirm";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 import { isTenantAdminRole, roleLabel } from "@/lib/permissions";
+import { userStatusLabel } from "@/lib/status-labels";
 
 const baseRoles = [
   ["unassigned", "待分配"],
@@ -254,7 +255,7 @@ export function UserReviewActions({
     };
     try {
       const updated = await browserPatch<User>(`/api/users/${user.id}/review`, payload);
-      setMessage(`已更新：${updated.status} / ${updated.role}`);
+      setMessage(`已更新：${userStatusLabel(updated.status)} / ${roleLabel(updated.role)}`);
       close?.();
       startTransition(() => {
         router.refresh();
@@ -662,15 +663,6 @@ function userReviewTabs(isSuperAdmin: boolean): Array<{ key: "basic" | "membersh
 function formatCurrent(value: string) {
   const text = value.trim();
   return text === "" ? "未设置" : text;
-}
-
-function userStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending_approval: "待审核",
-    active: "启用",
-    disabled: "停用",
-  };
-  return labels[status] ?? status;
 }
 
 function mergeOptions(options: string[], current: string) {

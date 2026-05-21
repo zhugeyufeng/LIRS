@@ -4,6 +4,7 @@ import { AppShell } from "@/components/app-shell";
 import { ElnRecordForm } from "@/components/extension-forms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { elnRecordStatusLabel } from "@/lib/status-labels";
 
 export default async function ElnRecordsPage({
   searchParams,
@@ -142,13 +143,7 @@ function InfoItem({ label, value }: { label: string; value: string }) {
 }
 
 function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    draft: "草稿",
-    submitted: "已提交",
-    signed: "已签名",
-    archived: "已归档",
-  };
-  return labels[status] ?? status;
+  return elnRecordStatusLabel(status);
 }
 
 function statusClass(status: string) {

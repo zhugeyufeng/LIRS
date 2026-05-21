@@ -4,6 +4,7 @@ import { ArrowLeft, AlertTriangle, HardDrive, ShieldCheck } from "lucide-react";
 import { AdminShell, requireAdmin } from "@/components/admin-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type AuditEvent } from "@/lib/api";
+import { alertLevelLabel } from "@/lib/status-labels";
 
 type Section = "login-logs" | "operation-logs" | "data-audit" | "permission-audit" | "risks" | "backups" | "compliance";
 
@@ -162,7 +163,7 @@ function RiskOverview({ alerts }: { alerts: { source: string; level: string; bod
           <div className="rounded-lg border bg-amber-50 p-3 text-sm text-amber-800" key={`${item.source}-${index}`}>
             <p className="font-medium">{item.source}</p>
             <p className="mt-1 break-words text-xs leading-5">{item.body}</p>
-            <p className="mt-1 text-[10px] uppercase tracking-widest opacity-70">{item.level}</p>
+            <p className="mt-1 text-[10px] opacity-70">{alertLevelLabel(item.level)}</p>
           </div>
         ))}
       </CardContent>

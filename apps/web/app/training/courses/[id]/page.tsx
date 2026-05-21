@@ -5,6 +5,7 @@ import { AppShell } from "@/components/app-shell";
 import { TrainingAuthorizationForm } from "@/components/extension-forms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { trainingAuthorizationStatusLabel, trainingCourseStatusLabel, trainingDeliveryModeLabel, trainingExamStatusLabel } from "@/lib/status-labels";
 
 export default async function TrainingCourseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -38,7 +39,7 @@ export default async function TrainingCourseDetailPage({ params }: { params: Pro
       </div>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
-        <Metric label="课程状态" value={course.status} />
+        <Metric label="课程状态" value={trainingCourseStatusLabel(course.status)} />
         <Metric label="已通过考试" value={passedExams} />
         <Metric label="授权记录" value={courseAuthorizations.length} />
       </div>
@@ -55,7 +56,7 @@ export default async function TrainingCourseDetailPage({ params }: { params: Pro
             <CardContent className="grid gap-4 sm:grid-cols-2">
               <Info label="课程分类" value={course.category} />
               <Info label="关联仪器" value={course.instrumentName || "通用培训"} />
-              <Info label="授课方式" value={deliveryLabel(course.deliveryMode)} />
+              <Info label="授课方式" value={trainingDeliveryModeLabel(course.deliveryMode)} />
               <Info label="讲师/负责人" value={course.instructor || "未填写"} />
               <Info label="课程时长" value={`${course.durationHours} 小时`} />
               <Info label="预约必修" value={course.requiredForBooking ? "是" : "否"} />
@@ -81,7 +82,7 @@ export default async function TrainingCourseDetailPage({ params }: { params: Pro
                       {exam.passed ? "通过" : "未通过"}
                     </span>
                   </div>
-                  <p className="mt-3 text-sm text-slate-600">得分：{exam.score.toFixed(1)} / 状态：{exam.status}</p>
+                  <p className="mt-3 text-sm text-slate-600">得分：{exam.score.toFixed(1)} / 状态：{trainingExamStatusLabel(exam.status)}</p>
                 </div>
               ))}
               {courseExams.length === 0 ? <p className="rounded-lg border border-dashed p-4 text-sm text-slate-500">暂无考试记录。</p> : null}
@@ -100,7 +101,7 @@ export default async function TrainingCourseDetailPage({ params }: { params: Pro
             <CardContent className="space-y-4">
               {myAuthorization ? (
                 <div className="rounded-lg border bg-slate-50/50 p-4 text-sm">
-                  <p className="font-bold text-slate-900">{authorizationStatusLabel(myAuthorization.status)}</p>
+                  <p className="font-bold text-slate-900">{trainingAuthorizationStatusLabel(myAuthorization.status)}</p>
                   <p className="mt-2 text-slate-600">到期：{formatDateTime(myAuthorization.expiresAt)}</p>
                   <p className="mt-2 break-words text-slate-500">{myAuthorization.notes || "暂无备注。"}</p>
                 </div>
@@ -132,25 +133,6 @@ function Info({ label, value }: { label: string; value: string }) {
       <p className="mt-1 break-words font-bold text-slate-900">{value}</p>
     </div>
   );
-}
-
-function deliveryLabel(value: string) {
-  const labels: Record<string, string> = {
-    online: "线上",
-    offline: "线下",
-    blended: "混合",
-  };
-  return labels[value] ?? value;
-}
-
-function authorizationStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待审核",
-    active: "已授权",
-    expired: "已过期",
-    revoked: "已撤销",
-  };
-  return labels[status] ?? status;
 }
 
 function formatDateTime(value: string) {

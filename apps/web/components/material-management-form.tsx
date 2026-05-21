@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AlertTriangle, Download, GripVertical, PackagePlus, Pencil, Save, SlidersHorizontal, Trash2, Upload } from "lucide-react";
 import { browserDelete, browserPatch, browserPost, Material, MaterialAlertAction, MaterialAlertActionPayload, MaterialCategory, MaterialCategoryPayload, MaterialDamage, MaterialDamagePayload, MaterialImportResult, MaterialPayload, PurchasableMaterial, StockAdjustmentPayload } from "@/lib/api";
 import { confirmTwice } from "@/lib/confirm";
+import { materialDamageStatusLabel, materialProductTypeLabel, materialStatusLabel } from "@/lib/status-labels";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 
@@ -1302,37 +1303,15 @@ function materialPayload(form: FormData, fallbackStatus: string): MaterialPayloa
 }
 
 function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    normal: "正常",
-    near_expiry: "临期",
-    low: "低库存",
-    expired: "已过期",
-    open_expired: "开封超期",
-    freeze_thaw_exceeded: "冻融超限",
-    damaged: "损毁",
-    disabled: "停用",
-  };
-  return labels[status] ?? status;
+  return materialStatusLabel(status);
 }
 
 function damageStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待审核",
-    approved: "已通过",
-    rejected: "已拒绝",
-    processed: "已处理",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
+  return materialDamageStatusLabel(status);
 }
 
 function productTypeLabel(productType: string) {
-  const labels: Record<string, string> = {
-    consumable: "耗材",
-    reagent: "试剂",
-    standard: "标准品/标准物质",
-  };
-  return labels[productType] ?? productType;
+  return materialProductTypeLabel(productType);
 }
 
 function purchasableMaterialOptionLabel(item: PurchasableMaterial) {

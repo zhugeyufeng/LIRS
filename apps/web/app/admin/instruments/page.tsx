@@ -5,6 +5,7 @@ import { InstrumentCreateForm, InstrumentStatusForm } from "@/components/instrum
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { formatServiceWindow } from "@/lib/instrument-rules";
+import { instrumentStatusLabel } from "@/lib/status-labels";
 
 export default async function AdminInstrumentsPage({
   searchParams,
@@ -91,7 +92,7 @@ export default async function AdminInstrumentsPage({
                         门禁：{item.accessControlEnabled ? `${item.accessControlGroup || "使用全局默认授权组"}${item.accessControlPoint ? ` / ${item.accessControlPoint}` : ""}` : "未启用"}
                       </p>
                     </div>
-                    <span className="w-fit shrink-0 rounded bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600">{statusLabel(item.status)}</span>
+                    <span className="w-fit shrink-0 rounded bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600">{instrumentStatusLabel(item.status)}</span>
                   </div>
                   <InstrumentStatusForm departments={departments.map((unit) => unit.name)} groups={groups} instrument={item} />
                 </div>
@@ -123,14 +124,4 @@ function Metric({ label, value }: { label: string; value: number }) {
       <p className="mt-2 text-2xl font-bold">{value}</p>
     </div>
   );
-}
-
-function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    available: "可用",
-    busy: "繁忙",
-    maintenance: "维护中",
-    disabled: "停用",
-  };
-  return labels[status] ?? status;
 }

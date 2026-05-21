@@ -4,6 +4,7 @@ import { IotDeviceForm } from "@/components/extension-forms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { isTenantAdminRole } from "@/lib/permissions";
+import { iotDeviceStatusLabel } from "@/lib/status-labels";
 
 export default async function IotDevicesPage({
   searchParams,
@@ -141,13 +142,7 @@ function InfoItem({ label, value }: { label: string; value: string }) {
 }
 
 function deviceStatusLabel(status: string, online: boolean) {
-  const labels: Record<string, string> = {
-    online: "在线",
-    offline: "离线",
-    warning: "预警",
-    disabled: "停用",
-  };
-  return online && status !== "disabled" ? "在线" : labels[status] ?? status;
+  return iotDeviceStatusLabel(status, online);
 }
 
 function deviceStatusClass(status: string, online: boolean) {

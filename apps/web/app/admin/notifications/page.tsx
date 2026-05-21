@@ -4,6 +4,7 @@ import { AdminShell, requireAdminSection } from "@/components/admin-shell";
 import { AnnouncementForm, DeleteNotificationButton } from "@/components/notification-actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, Notification, Tenant } from "@/lib/api";
+import { notificationLevelLabel } from "@/lib/status-labels";
 import { TenantSelector } from "./tenant-selector";
 
 type SearchParams = {
@@ -176,12 +177,7 @@ function scopeLabel(item: Notification) {
 }
 
 function levelLabel(level: string) {
-  const labels: Record<string, string> = {
-    info: "普通",
-    warning: "提醒",
-    success: "成功",
-  };
-  return labels[level] ?? level;
+  return notificationLevelLabel(level);
 }
 
 function formatDateTime(value: string) {

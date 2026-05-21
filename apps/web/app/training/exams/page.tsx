@@ -3,6 +3,7 @@ import { AppShell } from "@/components/app-shell";
 import { TrainingExamForm } from "@/components/extension-forms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { trainingExamStatusLabel, trainingQuestionTypeLabel } from "@/lib/status-labels";
 
 export default async function TrainingExamsPage({
   searchParams,
@@ -62,7 +63,7 @@ export default async function TrainingExamsPage({
                 </div>
                 <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
                   <InfoItem label="得分" value={`${exam.score.toFixed(1)} 分`} />
-                  <InfoItem label="状态" value={exam.status} />
+                  <InfoItem label="状态" value={trainingExamStatusLabel(exam.status)} />
                   <InfoItem label="考试时间" value={formatDateTime(exam.examAt)} />
                   <InfoItem label="关联课程" value={exam.courseTitle || "未关联"} />
                 </div>
@@ -95,7 +96,7 @@ export default async function TrainingExamsPage({
               {questions.slice(0, 6).map((question) => (
                 <div className="rounded-lg border p-3 text-sm" key={question.id}>
                   <p className="break-words font-semibold text-slate-900">{question.title}</p>
-                  <p className="mt-1 text-xs text-slate-500">{question.questionType}</p>
+                  <p className="mt-1 text-xs text-slate-500">{trainingQuestionTypeLabel(question.questionType)}</p>
                   {question.options ? <p className="mt-2 whitespace-pre-line text-xs leading-6 text-slate-500">{question.options}</p> : null}
                 </div>
               ))}

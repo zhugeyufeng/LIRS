@@ -5,6 +5,7 @@ import { UserCreateForm, UserReviewActions } from "@/components/user-review-acti
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { roleLabel } from "@/lib/permissions";
+import { userStatusLabel } from "@/lib/status-labels";
 
 export default async function AdminUsersPage({
   searchParams,
@@ -197,13 +198,4 @@ function Metric({ label, value }: { label: string; value: number }) {
       <p className="mt-2 text-2xl font-bold">{value}</p>
     </div>
   );
-}
-
-function userStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending_approval: "待审核",
-    active: "启用",
-    disabled: "停用",
-  };
-  return labels[status] ?? status;
 }

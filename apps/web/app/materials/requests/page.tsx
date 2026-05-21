@@ -6,6 +6,7 @@ import { MaterialsNav } from "@/components/materials-nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, MaterialRequest } from "@/lib/api";
 import { isMaterialAdminRole } from "@/lib/permissions";
+import { materialRequestStatusLabel } from "@/lib/status-labels";
 
 export default async function MaterialRequestsPage({
   searchParams,
@@ -93,7 +94,7 @@ export default async function MaterialRequestsPage({
                       </td>
                       <td className="break-words p-3 align-top">{item.purpose}</td>
                       <td className="p-3 align-top">
-                        <span className="rounded bg-slate-100 px-2 py-1 text-xs font-bold">{requestStatusLabel(item.status)}</span>
+                        <span className="rounded bg-slate-100 px-2 py-1 text-xs font-bold">{materialRequestStatusLabel(item.status)}</span>
                       </td>
                       <td className="p-3 align-top">
                         <MaterialRequestActions
@@ -140,7 +141,7 @@ function MaterialRequestCard({
           {item.batchNo ? <p className="mt-1 break-words text-xs text-slate-500">批次 {item.batchNo}</p> : null}
           <p className="mt-1 break-words text-sm text-slate-500">{item.requester} / {item.groupName}</p>
         </div>
-        <span className="w-fit shrink-0 rounded bg-slate-100 px-2 py-1 text-xs font-bold">{requestStatusLabel(item.status)}</span>
+        <span className="w-fit shrink-0 rounded bg-slate-100 px-2 py-1 text-xs font-bold">{materialRequestStatusLabel(item.status)}</span>
       </div>
       <p className="mt-3 break-words text-sm text-slate-600">{item.purpose}</p>
       <div className="mt-3">
@@ -148,15 +149,4 @@ function MaterialRequestCard({
       </div>
     </div>
   );
-}
-
-function requestStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待审批",
-    approved: "已通过",
-    rejected: "已拒绝",
-    outbound: "已出库",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
 }

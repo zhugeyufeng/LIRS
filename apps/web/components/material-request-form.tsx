@@ -4,6 +4,7 @@ import { FormEvent, startTransition, useOptimistic, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ClipboardList } from "lucide-react";
 import { browserPatch, browserPost, Material, MaterialRequest, MaterialRequestPayload } from "@/lib/api";
+import { materialRequestStatusLabel } from "@/lib/status-labels";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 
@@ -240,15 +241,4 @@ export function MaterialRequestActions({
       {message ? <span className="text-xs text-slate-500 sm:basis-full">{message}</span> : null}
     </div>
   );
-}
-
-function materialRequestStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待审批",
-    approved: "已通过",
-    rejected: "已拒绝",
-    outbound: "已出库",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
 }

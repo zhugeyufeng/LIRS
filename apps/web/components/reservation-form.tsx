@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { CalendarPlus } from "lucide-react";
 import { browserPost, Instrument, Reservation, ReservationPayload } from "@/lib/api";
 import { formatServiceWindow } from "@/lib/instrument-rules";
+import { reservationStatusLabel } from "@/lib/status-labels";
 import { Button } from "@/components/ui/button";
 
 export function ReservationForm({ instrument }: { instrument: Instrument }) {
@@ -35,7 +36,7 @@ export function ReservationForm({ instrument }: { instrument: Instrument }) {
     payload.idempotencyKey = `${payload.instrumentId}:${payload.purpose}:${payload.startTime}:${payload.endTime}`.toLowerCase();
     try {
       const reservation = await browserPost<Reservation>("/api/reservations", payload);
-      setMessage(`预约已提交，当前状态：${reservation.status}，预计费用 ${(reservation.fee ?? 0).toFixed(2)} 元。`);
+      setMessage(`预约已提交，当前状态：${reservationStatusLabel(reservation.status)}，预计费用 ${(reservation.fee ?? 0).toFixed(2)} 元。`);
       formElement.reset();
       startTransition(() => {
         router.refresh();

@@ -3,6 +3,7 @@ import { AdminShell, requireAdminSection } from "@/components/admin-shell";
 import { MaintenanceCompleteButton, MaintenanceForm } from "@/components/maintenance-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { maintenanceStatusLabel, maintenanceTypeLabel, priorityLabel } from "@/lib/status-labels";
 
 export default async function MaintenancePage() {
   await requireAdminSection("maintenance");
@@ -33,14 +34,14 @@ export default async function MaintenancePage() {
                   <div className="min-w-0">
                     <p className="font-bold">{item.instrumentName}</p>
                     <p className="mt-1 text-sm text-slate-500">
-                      {typeLabel(item.type)} / {priorityLabel(item.priority)} / {item.handler}
+                      {maintenanceTypeLabel(item.type)} / {priorityLabel(item.priority)} / {item.handler}
                     </p>
                     <p className="mt-2 break-words text-sm leading-6">{item.description}</p>
                     <p className="mt-1 break-words text-xs text-slate-500">
                       {formatDateTime(item.startTime)} - {formatDateTime(item.endTime)}
                     </p>
                   </div>
-                  <span className="shrink-0 rounded bg-slate-100 px-2 py-1 text-xs font-bold">{statusLabel(item.status)}</span>
+                  <span className="shrink-0 rounded bg-slate-100 px-2 py-1 text-xs font-bold">{maintenanceStatusLabel(item.status)}</span>
                 </div>
                 <div className="mt-3">
                   <MaintenanceCompleteButton id={item.id} status={item.status} />
@@ -73,27 +74,6 @@ function Metric({ label, value }: { label: string; value: number }) {
       <p className="mt-2 text-2xl font-bold">{value}</p>
     </div>
   );
-}
-
-function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    reported: "已上报",
-    assigned: "已分配",
-    in_progress: "处理中",
-    completed: "已完成",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
-}
-
-function typeLabel(type: string) {
-  const labels: Record<string, string> = { routine: "例行维护", fault: "故障维护", emergency: "紧急维护" };
-  return labels[type] ?? type;
-}
-
-function priorityLabel(priority: string) {
-  const labels: Record<string, string> = { normal: "普通", high: "高优先级", urgent: "紧急" };
-  return labels[priority] ?? priority;
 }
 
 function formatDateTime(value: string) {

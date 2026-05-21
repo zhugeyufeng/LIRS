@@ -3,6 +3,7 @@ import { AppShell } from "@/components/app-shell";
 import { TrainingAuthorizationForm } from "@/components/extension-forms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { trainingAuthorizationStatusLabel } from "@/lib/status-labels";
 
 export default async function TrainingAuthorizationsPage({
   searchParams,
@@ -71,7 +72,7 @@ export default async function TrainingAuthorizationsPage({
                       {item.instrumentName ? ` / ${item.instrumentName}` : ""}
                     </p>
                   </div>
-                  <span className="w-fit rounded bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{authorizationStatusLabel(item.status)}</span>
+                  <span className="w-fit rounded bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{trainingAuthorizationStatusLabel(item.status, "有效")}</span>
                 </div>
                 <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
                   <InfoItem label="到期时间" value={formatDateTime(item.expiresAt)} />
@@ -126,16 +127,6 @@ function InfoItem({ label, value }: { label: string; value: string }) {
       <p className="mt-1 break-words font-medium text-slate-800">{value}</p>
     </div>
   );
-}
-
-function authorizationStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待审核",
-    active: "有效",
-    expired: "已过期",
-    revoked: "已撤销",
-  };
-  return labels[status] ?? status;
 }
 
 function formatDateTime(value: string) {

@@ -6,6 +6,7 @@ import { Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { browserDelete, browserPatch, browserPost, Instrument, InstrumentPayload, OrganizationUnit } from "@/lib/api";
 import { confirmTwice } from "@/lib/confirm";
 import { formatServiceWindow } from "@/lib/instrument-rules";
+import { instrumentStatusLabel } from "@/lib/status-labels";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
 
@@ -91,7 +92,7 @@ export function InstrumentStatusForm({
     };
     try {
       const updated = await browserPatch<Instrument>(`/api/instruments/${instrument.id}`, payload);
-      setMessage(`已更新：${updated.name} / ${statusLabel(updated.status)}`);
+      setMessage(`已更新：${updated.name} / ${instrumentStatusLabel(updated.status)}`);
       close?.();
       startTransition(() => {
         router.refresh();
@@ -194,7 +195,7 @@ function InstrumentFields({
             <option value="maintenance">维护中</option>
             <option value="disabled">停用</option>
           </select>
-          {instrument ? <FieldHint value={`当前：${statusLabel(instrument.status)}`} /> : null}
+          {instrument ? <FieldHint value={`当前：${instrumentStatusLabel(instrument.status)}`} /> : null}
         </label>
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -359,14 +360,4 @@ function FieldHint({ value }: { value: string }) {
 function formatCurrent(value: string | number) {
   const text = String(value).trim();
   return text === "" ? "未设置" : text;
-}
-
-function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    available: "可用",
-    busy: "繁忙",
-    maintenance: "维护中",
-    disabled: "停用",
-  };
-  return labels[status] ?? status;
 }

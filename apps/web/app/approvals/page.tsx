@@ -8,6 +8,7 @@ import { ReservationActions } from "@/components/reservation-actions";
 import { api } from "@/lib/api";
 import { formatDateTimeRange, formatDurationHours } from "@/lib/datetime";
 import { isTenantAdminRole, roleLabel } from "@/lib/permissions";
+import { reservationStatusLabel } from "@/lib/status-labels";
 
 export default async function ApprovalsPage({
   searchParams,
@@ -121,19 +122,11 @@ function Info({ label, value }: { label: string; value: string }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  return <span className={`inline-flex w-fit rounded-full px-2 py-1 text-[10px] font-bold ${statusClass(status)}`}>{statusLabel(status)}</span>;
+  return <span className={`inline-flex w-fit rounded-full px-2 py-1 text-[10px] font-bold ${statusClass(status)}`}>{reservationStatusLabel(status)}</span>;
 }
 
 function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: "待处理",
-    approved: "已通过",
-    rejected: "已驳回",
-    in_use: "使用中",
-    completed: "已完成",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
+  return reservationStatusLabel(status);
 }
 
 function statusClass(status: string) {

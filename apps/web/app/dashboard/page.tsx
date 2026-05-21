@@ -18,6 +18,7 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type Reservation } from "@/lib/api";
+import { reservationStatusLabel } from "@/lib/status-labels";
 
 export default async function DashboardPage({
   searchParams,
@@ -275,16 +276,8 @@ function InfoItem({ label, value }: { label: string; value: string }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const labels: Record<string, string> = {
-    pending: "审批中",
-    approved: "已通过",
-    rejected: "已驳回",
-    in_use: "使用中",
-    completed: "已完成",
-    cancelled: "已取消",
-  };
   const className = status === "approved" ? "bg-emerald-50 text-emerald-700" : status === "pending" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600";
-  return <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-bold ${className}`}>{labels[status] ?? status}</span>;
+  return <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-bold ${className}`}>{reservationStatusLabel(status)}</span>;
 }
 
 function formatDate(value: string) {

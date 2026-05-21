@@ -32,6 +32,7 @@ import {
   type TrainingRule,
   type TrainingRulePayload,
 } from "@/lib/api";
+import { spaceReservationStatusLabel } from "@/lib/status-labels";
 import { Button } from "@/components/ui/button";
 
 type ActorProps = {
@@ -567,7 +568,7 @@ export function SpaceReservationForm({ actorName, space }: ActorProps & { space:
     };
     try {
       const result = await browserPost<SpaceReservation>("/api/space-reservations", payload);
-      setMessage(`预约已提交：${result.status}`);
+      setMessage(`预约已提交：${spaceReservationStatusLabel(result.status)}`);
       formElement.reset();
       startTransition(() => router.refresh());
     } catch (error) {
