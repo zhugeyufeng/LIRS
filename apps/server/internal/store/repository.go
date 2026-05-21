@@ -2788,7 +2788,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 	if maxBookingHours > 0 && input.EndTime.Sub(input.StartTime) > time.Duration(maxBookingHours)*time.Hour {
 		return Reservation{}, fmt.Errorf("reservation exceeds maximum duration of %d hours", maxBookingHours)
 	}
-	if minAdvanceHours > 0 && input.StartTime.Before(time.Now().UTC().Add(time.Duration(minAdvanceHours)*time.Hour)) {
+	if minAdvanceHours > 0 && input.StartTime.Before(appNow().Add(time.Duration(minAdvanceHours)*time.Hour)) {
 		return Reservation{}, fmt.Errorf("reservation must be submitted at least %d hours in advance", minAdvanceHours)
 	}
 	if !reservationWithinBookingWindow(input.StartTime, bookingWindowDays) {

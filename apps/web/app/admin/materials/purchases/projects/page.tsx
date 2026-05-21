@@ -1,7 +1,7 @@
 import { AdminShell, requireAdminSection } from "@/components/admin-shell";
 import { MaterialPurchaseAdminNav } from "@/components/material-purchase-admin-nav";
-import { ProcurementProjectManager } from "@/components/material-purchase-form";
 import { MaterialsNav } from "@/components/materials-nav";
+import { ProcurementProjectManager } from "@/components/procurement-project-manager";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 

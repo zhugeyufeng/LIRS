@@ -1154,6 +1154,18 @@ func TestReservationBookingWindowEndUsesApplicationDate(t *testing.T) {
 	}
 }
 
+func TestReservationAdvanceUsesApplicationNow(t *testing.T) {
+	t.Parallel()
+
+	now := appNow()
+	if now.Location() != appLocation {
+		t.Fatalf("预约提前时间应基于应用时区，got=%s", now.Location())
+	}
+	if now.Add(2 * time.Hour).Before(appNow().Add(time.Hour)) {
+		t.Fatal("两小时后的预约不应早于一小时最小提前要求")
+	}
+}
+
 func TestReservationIntervalAlignment(t *testing.T) {
 	t.Parallel()
 
