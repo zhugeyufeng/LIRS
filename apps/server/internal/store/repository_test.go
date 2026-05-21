@@ -725,6 +725,21 @@ func TestDingTalkOAuthStateKeyScopesTenantAndUser(t *testing.T) {
 	}
 }
 
+func TestDrainNotificationDeliveryWaitsQueuedJobs(t *testing.T) {
+	t.Parallel()
+
+	startNotificationDeliveryWorkers()
+	item := Notification{ID: "drain-test", TenantID: defaultTenantID}
+	notificationDeliveryWG.Add(1)
+	notificationDeliveryQueue <- notificationDeliveryJob{repo: &Repository{}, item: item}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := DrainNotificationDelivery(ctx); err != nil {
+		t.Fatalf("expected queued notification delivery to drain: %v", err)
+	}
+}
+
 func TestDingTalkAppAccessTokenUsesV1Endpoint(t *testing.T) {
 	t.Parallel()
 

@@ -48,6 +48,13 @@ func main() {
 	}()
 
 	repo := store.NewRepository(pool, redisClient)
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := store.DrainNotificationDelivery(shutdownCtx); err != nil {
+			slog.Warn("drain notification delivery", "error", err)
+		}
+	}()
 	startMaintenanceWorker(repo)
 	router := gin.New()
 	router.Use(gin.Recovery(), gin.Logger())

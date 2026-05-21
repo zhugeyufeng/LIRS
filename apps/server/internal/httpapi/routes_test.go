@@ -256,6 +256,15 @@ func TestBindOptionalJSONRejectsInvalidPayload(t *testing.T) {
 	}
 }
 
+func TestSaveMaterialCertificateUploadRejectsOversizedPdf(t *testing.T) {
+	content := append([]byte("%PDF-"), bytes.Repeat([]byte("A"), 8<<20)...)
+	context := materialCertificateUploadContext(t, "cert.pdf", content)
+
+	if _, err := saveMaterialCertificateUpload(context, t.TempDir()); err == nil || !strings.Contains(err.Error(), "超过 8MB") {
+		t.Fatalf("expected oversized pdf error, got %v", err)
+	}
+}
+
 func TestBindOptionalJSONAllowsEmptyPayload(t *testing.T) {
 	t.Parallel()
 

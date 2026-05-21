@@ -30,6 +30,7 @@ import (
 
 	xls "github.com/extrame/xls"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/xuri/excelize/v2"
@@ -51,6 +52,7 @@ const (
 var appLocation = time.FixedZone("CST", 8*3600)
 
 var notificationDeliveryQueue = make(chan notificationDeliveryJob, notificationDeliveryQueueSize)
+var notificationDeliveryWG sync.WaitGroup
 
 type notificationDeliveryJob struct {
 	repo *Repository
@@ -70,6 +72,7 @@ func startNotificationDeliveryWorkers() {
 func notificationDeliveryWorker() {
 	for job := range notificationDeliveryQueue {
 		func() {
+			defer notificationDeliveryWG.Done()
 			defer func() {
 				if recovered := recover(); recovered != nil {
 					slog.Warn("push notification panic", "notificationId", job.item.ID, "panic", recovered)
@@ -137,6 +140,10 @@ func appToday() time.Time {
 
 func appDateString() string {
 	return appNow().Format("2006-01-02")
+}
+
+func appDateSQL() string {
+	return "((now() AT TIME ZONE 'Asia/Shanghai')::date)"
 }
 
 func WithNotificationSourceContext(ctx context.Context, source string) context.Context {
@@ -216,6 +223,20 @@ type accessControlSettingsValue struct {
 func NewRepository(db *pgxpool.Pool, redisClient *redis.Client) *Repository {
 	startNotificationDeliveryWorkers()
 	return &Repository{db: db, redis: redisClient, http: &http.Client{Timeout: 10 * time.Second}}
+}
+
+func DrainNotificationDelivery(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		notificationDeliveryWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (r *Repository) httpClient() *http.Client {
@@ -386,7 +407,7 @@ func (r *Repository) Dashboard(ctx context.Context) (Dashboard, error) {
 	err := r.db.QueryRow(ctx, `
 WITH reservation_counts AS (
     SELECT
-        count(*) FILTER (WHERE lower(period)::date = current_date)::int AS today_reservations,
+        count(*) FILTER (WHERE (lower(period) AT TIME ZONE 'Asia/Shanghai')::date = `+appDateSQL()+`)::int AS today_reservations,
         count(*) FILTER (WHERE status = 'pending')::int AS pending_approvals,
         count(*) FILTER (WHERE status = 'in_use')::int AS in_use_reservations,
         count(*) FILTER (WHERE status = 'completed')::int AS completed_reservations,
@@ -2435,9 +2456,11 @@ LIMIT 1
 }
 
 func (r *Repository) enqueueNotificationDelivery(item Notification) {
+	notificationDeliveryWG.Add(1)
 	select {
 	case notificationDeliveryQueue <- notificationDeliveryJob{repo: r, item: item}:
 	default:
+		notificationDeliveryWG.Done()
 		slog.Warn("notification delivery queue full", "notificationId", item.ID)
 	}
 }
@@ -3851,7 +3874,22 @@ func (r *Repository) ExpireStaleReservations(ctx context.Context, maxAge time.Du
 		maxAge = 24 * time.Hour
 	}
 	const batchSize = 200
-	rows, err := r.db.Query(ctx, `
+	type expiredReservation struct {
+		id             string
+		userID         string
+		userName       string
+		groupName      string
+		tenantID       string
+		instrumentName string
+	}
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+	rows, err := tx.Query(ctx, `
 WITH stale AS (
   SELECT id
   FROM reservations
@@ -3872,27 +3910,40 @@ RETURNING r.id::text, COALESCE(r.user_id::text, ''), r.user_name, r.group_name,
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
 
-	count := 0
+	expired := make([]expiredReservation, 0, batchSize)
 	for rows.Next() {
-		var reservationID, userID, userName, groupName, tenantID, instrumentName string
-		if err := rows.Scan(&reservationID, &userID, &userName, &groupName, &tenantID, &instrumentName); err != nil {
-			return count, err
+		var item expiredReservation
+		if err := rows.Scan(&item.id, &item.userID, &item.userName, &item.groupName, &item.tenantID, &item.instrumentName); err != nil {
+			rows.Close()
+			return len(expired), err
 		}
-		count++
-		if userID != "" {
-			if _, err := r.createNotification(ctx, tenantID, userID, groupName, "", "personal", "预约状态更新", fmt.Sprintf("%s 的 %s 预约状态已更新为已取消，原因：审批超时自动取消。", userName, instrumentName), "warning"); err != nil {
-				return count, err
-			}
-		}
-		auditCtx := WithTenantContext(ctx, TenantContext{TenantID: tenantID})
-		r.audit(auditCtx, "system", "reservation.auto_cancel", "reservation", reservationID, "pending", "cancelled")
+		expired = append(expired, item)
 	}
 	if err := rows.Err(); err != nil {
-		return count, err
+		rows.Close()
+		return len(expired), err
 	}
+	rows.Close()
+	notifications := make([]Notification, 0, len(expired))
+	for _, item := range expired {
+		if item.userID != "" {
+			notification, err := r.createNotificationTx(ctx, tx, item.tenantID, item.userID, item.groupName, "", "personal", "预约状态更新", fmt.Sprintf("%s 的 %s 预约状态已更新为已取消，原因：审批超时自动取消。", item.userName, item.instrumentName), "warning")
+			if err != nil {
+				return len(expired), err
+			}
+			notifications = append(notifications, notification)
+		}
+		if err := r.auditTx(ctx, tx, item.tenantID, "system", "reservation.auto_cancel", "reservation", item.id, "pending", "cancelled"); err != nil {
+			return len(expired), err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return len(expired), err
+	}
+	count := len(expired)
 	if count > 0 {
+		r.enqueueDingTalkNotifications(notifications...)
 		r.invalidateDashboard(ctx)
 		r.enqueueEvent(ctx, "reservation.auto_cancelled", map[string]any{"count": count})
 	}
@@ -4061,16 +4112,17 @@ func materialStatusSQL(alias string) string {
 	stock := materialStockSQL(alias)
 	warningLine := materialColumn(alias, "warning_line")
 	damageQuantity := materialDamageQuantitySQL(alias)
+	appDate := appDateSQL()
 	return fmt.Sprintf(`CASE
     WHEN %[1]s = 'disabled' THEN 'disabled'
-    WHEN %[2]s IS NOT NULL AND %[2]s < current_date THEN 'expired'
-    WHEN %[3]s IS NOT NULL AND %[4]s > 0 AND (%[3]s + %[4]s) < current_date THEN 'open_expired'
+    WHEN %[2]s IS NOT NULL AND %[2]s < %[11]s THEN 'expired'
+    WHEN %[3]s IS NOT NULL AND %[4]s > 0 AND (%[3]s + %[4]s) < %[11]s THEN 'open_expired'
     WHEN %[5]s > 0 AND %[6]s >= %[5]s THEN 'freeze_thaw_exceeded'
     WHEN %[1]s = 'damaged' OR %[7]s > 0 THEN 'damaged'
-    WHEN %[2]s IS NOT NULL AND %[2]s <= current_date + %[8]s THEN 'near_expiry'
+    WHEN %[2]s IS NOT NULL AND %[2]s <= %[11]s + %[8]s THEN 'near_expiry'
     WHEN %[9]s <= %[10]s THEN 'low'
     ELSE 'normal'
-END`, status, expiresAt, openedAt, openExpireDays, freezeThawLimit, freezeThawCount, damageQuantity, nearExpiryDays, stock, warningLine)
+END`, status, expiresAt, openedAt, openExpireDays, freezeThawLimit, freezeThawCount, damageQuantity, nearExpiryDays, stock, warningLine, appDate)
 }
 
 func materialExpiresAtSQL(alias string) string {
@@ -7001,7 +7053,7 @@ LEFT JOIN procurement_projects pp ON pp.id = pm.procurement_project_id
 WHERE pm.id = $1
   AND pm.status = 'active'
   AND (pp.id IS NULL OR pp.status = 'active')
-  AND (pp.expires_at IS NULL OR pp.expires_at >= CURRENT_DATE)
+  AND (pp.expires_at IS NULL OR pp.expires_at >= `+appDateSQL()+`)
   AND ($2::boolean OR pm.tenant_id = $3::uuid)
 `, input.PurchasableMaterialID, tenant.AllTenants, tenant.TenantID).Scan(
 			&purchasable.ID, &purchasable.IDNo, &purchasable.SequenceNo, &purchasable.ProcurementProjectID, &purchasable.ProcurementProject, &purchasable.ProcurementExpiresAt, &purchasable.ProcurementProjectStatus, &purchasable.ProjectName, &purchasable.Brand, &purchasable.Spec, &purchasable.Unit, &purchasable.PurchasePrice, &purchasable.Remark, &purchasable.TechnicalRequirement, &purchasable.MinSpec, &purchasable.Status, &purchasable.CreatedAt, &purchasable.UpdatedAt,
@@ -7086,12 +7138,13 @@ LEFT JOIN materials m ON m.id = mp.material_id
 		return MaterialPurchase{}, err
 	}
 	notifications = append(notifications, notification)
+	if err := r.auditTx(ctx, tx, materialTenantID, item.Requester, "material_purchase.create", "material_purchase", item.ID, "", item.Status); err != nil {
+		return MaterialPurchase{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialPurchase{}, err
 	}
 	r.enqueueDingTalkNotifications(notifications...)
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: materialTenantID})
-	r.audit(auditCtx, item.Requester, "material_purchase.create", "material_purchase", item.ID, "", item.Status)
 	return item, nil
 }
 
@@ -7155,7 +7208,7 @@ LEFT JOIN procurement_projects pp ON pp.id = pm.procurement_project_id
 WHERE pm.id = $1
   AND pm.status = 'active'
   AND (pp.id IS NULL OR pp.status = 'active')
-  AND (pp.expires_at IS NULL OR pp.expires_at >= CURRENT_DATE)
+  AND (pp.expires_at IS NULL OR pp.expires_at >= `+appDateSQL()+`)
   AND ($2::boolean OR pm.tenant_id = $3::uuid)
 `, input.PurchasableMaterialID, tenant.AllTenants, tenant.TenantID).Scan(
 		&purchasable.ID, &purchasable.IDNo, &purchasable.SequenceNo, &purchasable.ProcurementProjectID, &purchasable.ProcurementProject, &purchasable.ProcurementExpiresAt, &purchasable.ProcurementProjectStatus, &purchasable.ProjectName, &purchasable.Brand, &purchasable.Spec, &purchasable.Unit, &purchasable.PurchasePrice, &purchasable.Remark, &purchasable.TechnicalRequirement, &purchasable.MinSpec, &purchasable.Status, &purchasable.CreatedAt, &purchasable.UpdatedAt,
@@ -8567,12 +8620,13 @@ WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'reserv
 		}
 		notifications = append(notifications, notification)
 	}
+	if err := r.auditTx(ctx, tx, itemTenantID, actor, "material."+status, "material_request", item.ID, "pending", status); err != nil {
+		return MaterialRequest{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialRequest{}, err
 	}
 	r.enqueueDingTalkNotifications(notifications...)
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, actor, "material."+status, "material_request", item.ID, "pending", status)
 	return item, nil
 }
 
@@ -8634,12 +8688,13 @@ VALUES ($1, $2, $3, $4, $5)
 		}
 		notifications = append(notifications, notification)
 	}
+	if err := r.auditTx(ctx, tx, itemTenantID, actor, "material_purchase."+status, "material_purchase", item.ID, "registered", status); err != nil {
+		return MaterialPurchase{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialPurchase{}, err
 	}
 	r.enqueueDingTalkNotifications(notifications...)
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, actor, "material_purchase."+status, "material_purchase", item.ID, "registered", status)
 	return item, nil
 }
 
@@ -8661,12 +8716,27 @@ func (r *Repository) audit(ctx context.Context, actor string, action string, tar
 		return
 	}
 	tenant := TenantFromContext(ctx)
-	if _, err := r.db.Exec(ctx, `
-INSERT INTO audit_events (tenant_id, actor, action, target_type, target_id, old_value, new_value)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-`, tenant.TenantID, actor, action, targetType, targetID, oldValue, newValue); err != nil {
+	if err := r.auditTx(ctx, r.db, tenant.TenantID, actor, action, targetType, targetID, oldValue, newValue); err != nil {
 		slog.Warn("write audit event", "action", action, "error", err)
 	}
+}
+
+type auditWriter interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+func (r *Repository) auditTx(ctx context.Context, writer auditWriter, tenantID string, actor string, action string, targetType string, targetID string, oldValue string, newValue string) error {
+	if writer == nil {
+		return nil
+	}
+	if strings.TrimSpace(tenantID) == "" {
+		tenantID = defaultTenantID
+	}
+	_, err := writer.Exec(ctx, `
+INSERT INTO audit_events (tenant_id, actor, action, target_type, target_id, old_value, new_value)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+`, tenantID, actor, action, targetType, targetID, oldValue, newValue)
+	return err
 }
 
 type settingMeta struct {
@@ -9725,6 +9795,9 @@ func runNotificationFanout(ctx context.Context, userIDs []string, push func(stri
 			defer wg.Done()
 			defer func() {
 				<-sem
+				if recovered := recover(); recovered != nil {
+					slog.Warn("push notification target panic", "userId", userID, "panic", recovered)
+				}
 			}()
 			push(userID)
 		}()

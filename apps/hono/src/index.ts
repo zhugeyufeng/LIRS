@@ -37,9 +37,9 @@ app.use(
   cors({
     origin: (origin) => {
       if (!origin) {
-        return defaultAllowedOrigin;
+        return undefined;
       }
-      return allowedOrigins.includes(origin) ? origin : "";
+      return allowedOrigins.includes(origin) ? origin : undefined;
     },
     allowHeaders: ["Origin", "Content-Type", "Authorization"],
     allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
