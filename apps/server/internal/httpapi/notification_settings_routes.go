@@ -35,7 +35,7 @@ func registerGraphMailRoutes(api *gin.RouterGroup, repo repository) {
 
 func registerDingTalkNotificationRoutes(api *gin.RouterGroup, repo repository) {
 	api.POST("/notification-channel-settings/dingtalk/test", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}

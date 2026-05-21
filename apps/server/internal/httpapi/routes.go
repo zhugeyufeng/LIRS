@@ -21,173 +21,6 @@ import (
 	"lirs/apps/server/internal/store"
 )
 
-type repository interface {
-	Health(ctx context.Context) error
-	Dashboard(ctx context.Context) (store.Dashboard, error)
-	Tenants(ctx context.Context) ([]store.Tenant, error)
-	SaveTenant(ctx context.Context, id string, input store.TenantInput) (store.Tenant, error)
-	FooterSettings(ctx context.Context) (store.FooterSettings, error)
-	SaveFooterSettings(ctx context.Context, input store.FooterSettingsInput) (store.FooterSettings, error)
-	CopySettings(ctx context.Context) (store.CopySettings, error)
-	SaveCopySettings(ctx context.Context, input store.CopySettingsInput) (store.CopySettings, error)
-	NotificationChannelSettings(ctx context.Context) (store.NotificationChannelSettings, error)
-	SaveGraphMailSettings(ctx context.Context, input store.GraphMailSettingsInput) (store.GraphMailSettings, error)
-	TestGraphMailSettings(ctx context.Context, input store.GraphMailTestInput) (store.GraphMailTestResult, error)
-	SaveWeChatSettings(ctx context.Context, input store.WeChatSettingsInput) (store.WeChatSettings, error)
-	DingTalkSettings(ctx context.Context) (store.DingTalkSettings, error)
-	SaveDingTalkSettings(ctx context.Context, input store.DingTalkSettingsInput) (store.DingTalkSettings, error)
-	TestDingTalkSettings(ctx context.Context, input store.DingTalkTestInput) (store.DingTalkTestResult, error)
-	HandleDingTalkEventCallback(ctx context.Context, input store.DingTalkEventCallbackInput) (store.DingTalkEventCallbackResponse, error)
-	AccessControlSettings(ctx context.Context) (store.AccessControlSettings, error)
-	SaveAccessControlSettings(ctx context.Context, input store.AccessControlSettingsInput) (store.AccessControlSettings, error)
-	Instruments(ctx context.Context, filter store.InstrumentFilter) ([]store.Instrument, error)
-	Instrument(ctx context.Context, id string) (store.Instrument, error)
-	DeleteInstrument(ctx context.Context, id string, actor string) (store.Instrument, error)
-	TrainingCourses(ctx context.Context) ([]store.TrainingCourse, error)
-	SaveTrainingCourse(ctx context.Context, id string, input store.TrainingCourseInput) (store.TrainingCourse, error)
-	TrainingAuthorizations(ctx context.Context) ([]store.TrainingAuthorization, error)
-	SaveTrainingAuthorization(ctx context.Context, id string, input store.TrainingAuthorizationInput) (store.TrainingAuthorization, error)
-	TrainingQuestions(ctx context.Context) ([]store.TrainingQuestion, error)
-	SaveTrainingQuestion(ctx context.Context, id string, input store.TrainingQuestionInput) (store.TrainingQuestion, error)
-	TrainingExams(ctx context.Context) ([]store.TrainingExam, error)
-	SaveTrainingExam(ctx context.Context, id string, input store.TrainingExamInput) (store.TrainingExam, error)
-	TrainingPracticals(ctx context.Context) ([]store.TrainingPractical, error)
-	SaveTrainingPractical(ctx context.Context, id string, input store.TrainingPracticalInput) (store.TrainingPractical, error)
-	TrainingRules(ctx context.Context) ([]store.TrainingRule, error)
-	SaveTrainingRule(ctx context.Context, id string, input store.TrainingRuleInput) (store.TrainingRule, error)
-	BusinessConfigs(ctx context.Context, domain string, kind string) ([]store.BusinessConfig, error)
-	SaveBusinessConfig(ctx context.Context, domain string, kind string, id string, input store.BusinessConfigInput) (store.BusinessConfig, error)
-	Spaces(ctx context.Context) ([]store.Space, error)
-	SaveSpace(ctx context.Context, id string, input store.SpaceInput) (store.Space, error)
-	SpaceReservations(ctx context.Context) ([]store.SpaceReservation, error)
-	CreateSpaceReservation(ctx context.Context, input store.SpaceReservationInput) (store.SpaceReservation, error)
-	Samples(ctx context.Context) ([]store.Sample, error)
-	SaveSample(ctx context.Context, id string, input store.SampleInput) (store.Sample, error)
-	SampleMovements(ctx context.Context) ([]store.SampleMovement, error)
-	CreateSampleMovement(ctx context.Context, input store.SampleMovementInput) (store.SampleMovement, error)
-	LimsTasks(ctx context.Context) ([]store.LimsTask, error)
-	SaveLimsTask(ctx context.Context, id string, input store.LimsTaskInput) (store.LimsTask, error)
-	ElnRecords(ctx context.Context) ([]store.ElnRecord, error)
-	SaveElnRecord(ctx context.Context, id string, input store.ElnRecordInput) (store.ElnRecord, error)
-	IotDevices(ctx context.Context) ([]store.IotDevice, error)
-	SaveIotDevice(ctx context.Context, id string, input store.IotDeviceInput) (store.IotDevice, error)
-	AssistantQueries(ctx context.Context) ([]store.AssistantQuery, error)
-	AskAssistant(ctx context.Context, input store.AssistantQueryInput) (store.AssistantQuery, error)
-	Reservation(ctx context.Context, id string) (store.Reservation, error)
-	InstrumentSlots(ctx context.Context, id string, start time.Time, days int) ([]store.Slot, error)
-	SaveInstrument(ctx context.Context, id string, input store.InstrumentInput) (store.Instrument, error)
-	Reservations(ctx context.Context) ([]store.Reservation, error)
-	Users(ctx context.Context) ([]store.User, error)
-	CreateUser(ctx context.Context, input store.UserCreateInput) (store.User, error)
-	ReviewUser(ctx context.Context, id string, input store.UserReviewInput) (store.User, error)
-	SaveUserMembership(ctx context.Context, id string, input store.UserMembershipInput) (store.User, error)
-	DeleteUser(ctx context.Context, id string, actor string) (store.User, error)
-	OrganizationUnits(ctx context.Context, kind string) ([]store.OrganizationUnit, error)
-	SaveOrganizationUnit(ctx context.Context, id string, input store.OrganizationUnitInput) (store.OrganizationUnit, error)
-	DeleteOrganizationUnit(ctx context.Context, id string, actor string) (store.OrganizationUnit, error)
-	Notifications(ctx context.Context, actor store.Actor) ([]store.Notification, error)
-	MarkNotificationRead(ctx context.Context, id string, actor store.Actor) (store.Notification, error)
-	MarkAllNotificationsRead(ctx context.Context, actor store.Actor) (int, error)
-	DeleteNotification(ctx context.Context, id string, actor string) (store.Notification, error)
-	Announce(ctx context.Context, input store.AnnouncementInput) (store.Notification, error)
-	UpdateNotification(ctx context.Context, id string, input store.AnnouncementInput) (store.Notification, error)
-	Ledger(ctx context.Context, actor store.Actor) ([]store.LedgerEntry, error)
-	AdjustLedger(ctx context.Context, input store.LedgerAdjustmentInput) (store.LedgerEntry, error)
-	FinancialAccounts(ctx context.Context, actor store.Actor) ([]store.FinancialAccount, error)
-	SaveFinancialAccount(ctx context.Context, id string, input store.FinancialAccountInput) (store.FinancialAccount, error)
-	Register(ctx context.Context, input store.RegisterInput) (store.User, error)
-	RequestEmailVerificationCode(ctx context.Context, input store.EmailVerificationCodeInput) (store.EmailVerificationCodeResponse, error)
-	CreateReservation(ctx context.Context, input store.ReservationInput) (store.Reservation, error)
-	CreateReservationBatch(ctx context.Context, input store.ReservationBatchInput) ([]store.Reservation, error)
-	ApproveReservation(ctx context.Context, id string, approved bool, actor string, comment string) (store.Reservation, error)
-	CheckInReservation(ctx context.Context, id string) (store.Reservation, error)
-	CompleteReservation(ctx context.Context, id string) (store.Reservation, error)
-	CancelReservation(ctx context.Context, id string, reason string, bypassCutoff bool) (store.Reservation, error)
-	Materials(ctx context.Context) ([]store.Material, error)
-	Material(ctx context.Context, id string) (store.Material, error)
-	MaterialByQRCode(ctx context.Context, code string) (store.Material, error)
-	DeleteMaterial(ctx context.Context, id string, actor string) (store.Material, error)
-	MaterialCategories(ctx context.Context) ([]store.MaterialCategory, error)
-	SaveMaterialCategory(ctx context.Context, id string, input store.MaterialCategoryInput) (store.MaterialCategory, error)
-	DeleteMaterialCategory(ctx context.Context, id string, actor string) (store.MaterialCategory, error)
-	MaterialRequest(ctx context.Context, id string) (store.MaterialRequest, error)
-	InventoryLedger(ctx context.Context) ([]store.InventoryLedgerEntry, error)
-	SaveMaterial(ctx context.Context, id string, input store.MaterialInput) (store.Material, error)
-	ImportMaterials(ctx context.Context, input store.MaterialImportInput) (store.MaterialImportResult, error)
-	ImportMaterialsCSV(ctx context.Context, content string, actor string) (store.MaterialImportResult, error)
-	MaterialAnalytics(ctx context.Context) (store.MaterialAnalytics, error)
-	MaterialAlertActions(ctx context.Context) ([]store.MaterialAlertAction, error)
-	CreateMaterialAlertAction(ctx context.Context, materialID string, input store.MaterialAlertActionInput) (store.MaterialAlertAction, error)
-	AdjustMaterialStock(ctx context.Context, id string, input store.StockAdjustmentInput) (store.Material, error)
-	MaterialRequests(ctx context.Context) ([]store.MaterialRequest, error)
-	MaterialRequestsForMonth(ctx context.Context, month string) ([]store.MaterialRequestExportRow, error)
-	CreateMaterialRequest(ctx context.Context, input store.MaterialRequestInput) (store.MaterialRequest, error)
-	ApproveMaterialRequest(ctx context.Context, id string, approved bool, actor string, comment string) (store.MaterialRequest, error)
-	OutboundMaterialRequest(ctx context.Context, id string, actor string) (store.MaterialRequest, error)
-	CancelMaterialRequest(ctx context.Context, id string, actor string) (store.MaterialRequest, error)
-	ProcurementProjects(ctx context.Context) ([]store.ProcurementProject, error)
-	SaveProcurementProject(ctx context.Context, id string, input store.ProcurementProjectInput) (store.ProcurementProject, error)
-	DeleteProcurementProject(ctx context.Context, id string, actor string) (store.ProcurementProject, error)
-	PurchasableMaterials(ctx context.Context) ([]store.PurchasableMaterial, error)
-	SavePurchasableMaterial(ctx context.Context, id string, input store.PurchasableMaterialInput) (store.PurchasableMaterial, error)
-	DeletePurchasableMaterial(ctx context.Context, id string, actor string) (store.PurchasableMaterial, error)
-	ImportPurchasableMaterials(ctx context.Context, input store.PurchasableMaterialImportInput) (store.MaterialImportResult, error)
-	MaterialPurchase(ctx context.Context, id string) (store.MaterialPurchase, error)
-	MaterialPurchases(ctx context.Context) ([]store.MaterialPurchase, error)
-	MaterialPurchaseMonthlyConfirmations(ctx context.Context) ([]store.MaterialPurchaseMonthlyConfirmation, error)
-	ConfirmMaterialPurchaseMonth(ctx context.Context, month string, actor string) (store.MaterialPurchaseMonthlyConfirmation, error)
-	CreateMaterialPurchase(ctx context.Context, input store.MaterialPurchaseInput) (store.MaterialPurchase, error)
-	UpdateMaterialPurchase(ctx context.Context, id string, input store.MaterialPurchaseUpdateInput) (store.MaterialPurchase, error)
-	ApproveMaterialPurchase(ctx context.Context, id string, approved bool, actor string, comment string) (store.MaterialPurchase, error)
-	ReturnMaterialPurchase(ctx context.Context, id string, actor string, comment string) (store.MaterialPurchase, error)
-	MarkMaterialPurchaseOrdered(ctx context.Context, id string, actor string) (store.MaterialPurchase, error)
-	ReceiveMaterialPurchase(ctx context.Context, id string, actor string) (store.MaterialPurchase, error)
-	CancelMaterialPurchase(ctx context.Context, id string, actor string) (store.MaterialPurchase, error)
-	MaterialDamage(ctx context.Context, id string) (store.MaterialDamage, error)
-	MaterialDamages(ctx context.Context) ([]store.MaterialDamage, error)
-	CreateMaterialDamage(ctx context.Context, input store.MaterialDamageInput) (store.MaterialDamage, error)
-	ApproveMaterialDamage(ctx context.Context, id string, approved bool, actor string, comment string) (store.MaterialDamage, error)
-	ProcessMaterialDamage(ctx context.Context, id string, actor string) (store.MaterialDamage, error)
-	CancelMaterialDamage(ctx context.Context, id string, actor string) (store.MaterialDamage, error)
-	MaintenanceOrders(ctx context.Context) ([]store.MaintenanceOrder, error)
-	CreateMaintenanceOrder(ctx context.Context, input store.MaintenanceInput) (store.MaintenanceOrder, error)
-	StartMaintenanceOrder(ctx context.Context, id string, actor string) (store.MaintenanceOrder, error)
-	CancelMaintenanceOrder(ctx context.Context, id string, reason string, actor string) (store.MaintenanceOrder, error)
-	CompleteMaintenanceOrder(ctx context.Context, id string, result string, actor string) (store.MaintenanceOrder, error)
-	AuditEvents(ctx context.Context) ([]store.AuditEvent, error)
-	Operations(ctx context.Context) (store.Operations, error)
-	Login(ctx context.Context, input store.LoginInput) (store.AuthResponse, error)
-	DingTalkQuickLogin(ctx context.Context, input store.DingTalkQuickLoginInput) (store.AuthResponse, error)
-	DingTalkWebLoginIntent(ctx context.Context, input store.DingTalkWebLoginIntentInput) (store.DingTalkWebLoginIntent, error)
-	DingTalkWebLogin(ctx context.Context, input store.DingTalkWebLoginInput) (store.DingTalkWebLoginResult, error)
-	BindDingTalkLoginToExistingUser(ctx context.Context, input store.DingTalkLoginBindExistingInput) (store.AuthResponse, error)
-	CurrentUser(ctx context.Context, token string) (store.User, error)
-	Logout(ctx context.Context, token string) error
-	LogoutAll(ctx context.Context, userID string) error
-	VerifyEmail(ctx context.Context, token string) (store.User, error)
-	UpdateCurrentUserProfile(ctx context.Context, id string, input store.UserProfileInput) (store.User, error)
-	CurrentUserDingTalkBinding(ctx context.Context, id string) (store.DingTalkBinding, error)
-	BindCurrentUserDingTalk(ctx context.Context, id string, input store.DingTalkBindingInput) (store.DingTalkBinding, error)
-	UnbindCurrentUserDingTalk(ctx context.Context, id string, actor string) (store.DingTalkBinding, error)
-	ChangePassword(ctx context.Context, id string, input store.PasswordChangeInput) error
-}
-
-type authRepository interface {
-	CurrentUser(ctx context.Context, token string) (store.User, error)
-}
-
-var anyAdminRoles = []string{"material_admin", "finance_admin", "tenant_admin", "lab_admin", "super_admin"}
-var tenantAdminRoles = []string{"tenant_admin", "lab_admin", "super_admin"}
-var userReaderRoles = []string{"finance_admin", "tenant_admin", "lab_admin", "super_admin"}
-var materialAdminRoles = []string{"material_admin", "tenant_admin", "lab_admin", "super_admin"}
-var financeAdminRoles = []string{"finance_admin", "tenant_admin", "lab_admin", "super_admin"}
-
-const (
-	anonymousTenantID      = "00000000-0000-0000-0000-000000000000"
-	currentUserContextKey  = "lirs.current_user"
-	currentActorContextKey = "lirs.current_actor"
-)
-
 func RegisterRoutes(router *gin.Engine, repo repository) {
 	router.GET("/healthz", func(c *gin.Context) {
 		if err := repo.Health(c.Request.Context()); err != nil {
@@ -233,7 +66,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/tenants/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -251,7 +84,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 	api.GET("/footer-settings", get(caller(repo.FooterSettings)))
 	api.GET("/copy-settings", get(caller(repo.CopySettings)))
 	api.PATCH("/copy-settings", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -283,7 +116,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.GET("/notification-channel-settings/dingtalk", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -295,7 +128,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.PATCH("/notification-channel-settings/dingtalk", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -395,7 +228,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/instruments", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -407,7 +240,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/instruments/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -419,7 +252,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.DELETE("/instruments/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -427,7 +260,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.PATCH("/footer-settings", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -452,14 +285,14 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, nil)
 	})
 	api.GET("/users", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, userReaderRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, userReaderRoles()...); !ok {
 			return
 		}
 		item, err := repo.Users(c.Request.Context())
 		respond(c, item, err)
 	})
 	api.POST("/users", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -493,7 +326,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/organization-units", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -509,7 +342,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/organization-units/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -525,7 +358,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.DELETE("/organization-units/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -640,7 +473,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, nil)
 	})
 	api.POST("/financial-accounts", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, financeAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, financeAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -656,7 +489,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/financial-accounts/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, financeAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, financeAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -679,28 +512,28 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.GET("/materials/analytics", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, materialAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, materialAdminRoles()...); !ok {
 			return
 		}
 		item, err := repo.MaterialAnalytics(c.Request.Context())
 		respond(c, item, err)
 	})
 	api.GET("/materials/categories", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, materialAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, materialAdminRoles()...); !ok {
 			return
 		}
 		item, err := repo.MaterialCategories(c.Request.Context())
 		respond(c, item, err)
 	})
 	api.GET("/materials/alert-actions", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, materialAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, materialAdminRoles()...); !ok {
 			return
 		}
 		item, err := repo.MaterialAlertActions(c.Request.Context())
 		respond(c, item, err)
 	})
 	api.GET("/materials/import-template.csv", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, materialAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, materialAdminRoles()...); !ok {
 			return
 		}
 		c.Header("Content-Type", "text/csv; charset=utf-8")
@@ -712,7 +545,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		writer.Flush()
 	})
 	api.GET("/materials/export.csv", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -760,7 +593,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		writer.Flush()
 	})
 	api.POST("/materials/import.csv", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -773,7 +606,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/materials/import", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -800,7 +633,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		materialRequestsMonthlyExport(c, repo, true)
 	})
 	api.GET("/material-damages/export.csv", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -828,7 +661,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/training/courses", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -840,7 +673,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/training/courses/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -892,7 +725,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/training/authorizations/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -911,7 +744,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/training/questions", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -923,7 +756,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/training/questions/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -971,7 +804,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/training/exams/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -983,14 +816,14 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.GET("/training/practicals", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, materialAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, materialAdminRoles()...); !ok {
 			return
 		}
 		item, err := repo.TrainingPracticals(c.Request.Context())
 		respond(c, item, err)
 	})
 	api.POST("/training/practicals", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1002,7 +835,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/training/practicals/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1014,14 +847,14 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.GET("/training/rules", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, materialAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, materialAdminRoles()...); !ok {
 			return
 		}
 		item, err := repo.TrainingRules(c.Request.Context())
 		respond(c, item, err)
 	})
 	api.POST("/training/rules", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1033,7 +866,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/training/rules/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1045,14 +878,14 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.GET("/workflows/:kind", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, tenantAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, tenantAdminRoles()...); !ok {
 			return
 		}
 		item, err := repo.BusinessConfigs(c.Request.Context(), "workflow", c.Param("kind"))
 		respond(c, item, err)
 	})
 	api.POST("/workflows/:kind", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1064,7 +897,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/workflows/:kind/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1076,7 +909,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.GET("/billing/:kind", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, financeAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, financeAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1088,7 +921,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/billing/:kind", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, financeAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, financeAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1104,7 +937,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/billing/:kind/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, financeAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, financeAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1127,7 +960,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/spaces", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1139,7 +972,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/spaces/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1179,7 +1012,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/samples", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1191,7 +1024,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/samples/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1210,7 +1043,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/sample-movements", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1229,7 +1062,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/lims/tasks", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1245,7 +1078,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/lims/tasks/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1303,7 +1136,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/iot/devices", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1315,7 +1148,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/iot/devices/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1350,7 +1183,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.GET("/inventory-ledger", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, materialAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, materialAdminRoles()...); !ok {
 			return
 		}
 		item, err := repo.InventoryLedger(c.Request.Context())
@@ -1403,28 +1236,28 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, nil)
 	})
 	api.GET("/maintenance", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, tenantAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, tenantAdminRoles()...); !ok {
 			return
 		}
 		item, err := repo.MaintenanceOrders(c.Request.Context())
 		respond(c, item, err)
 	})
 	api.GET("/audit-events", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, tenantAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, tenantAdminRoles()...); !ok {
 			return
 		}
 		item, err := repo.AuditEvents(c.Request.Context())
 		respond(c, item, err)
 	})
 	api.GET("/operations", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, tenantAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, tenantAdminRoles()...); !ok {
 			return
 		}
 		item, err := repo.Operations(c.Request.Context())
 		respond(c, item, err)
 	})
 	api.GET("/operations/export.csv", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, tenantAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, tenantAdminRoles()...); !ok {
 			return
 		}
 		item, err := repo.Operations(c.Request.Context())
@@ -1686,7 +1519,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.PATCH("/users/:id/review", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1715,7 +1548,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.DELETE("/users/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1750,7 +1583,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.DELETE("/notifications/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1762,7 +1595,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/notifications", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1778,7 +1611,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/notifications/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1794,7 +1627,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.POST("/ledger/adjustments", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, financeAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, financeAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1810,7 +1643,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.POST("/materials", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1822,7 +1655,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.POST("/materials/categories", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1834,7 +1667,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/materials/categories/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1846,7 +1679,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.DELETE("/materials/categories/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1854,7 +1687,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.PATCH("/materials/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1866,7 +1699,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.DELETE("/materials/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1874,7 +1707,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/materials/:id/stock-adjustments", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1886,7 +1719,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.POST("/materials/:id/alert-actions", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -1945,7 +1778,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.PATCH("/material-requests/:id/outbound", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -2000,7 +1833,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/material-purchases/:id/approve", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -2021,7 +1854,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.PATCH("/material-purchases/:id/reject", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -2042,7 +1875,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.PATCH("/material-purchases/:id/return", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -2063,7 +1896,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.PATCH("/material-purchases/:id/order", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -2075,7 +1908,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.PATCH("/material-purchases/:id/receive", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -2106,7 +1939,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/material-purchases/monthly-confirmations", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -2166,7 +1999,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.PATCH("/material-damages/:id/process", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -2185,7 +2018,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/maintenance", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -2197,7 +2030,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.PATCH("/maintenance/:id/start", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -2205,7 +2038,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.PATCH("/maintenance/:id/cancel", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -2219,7 +2052,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		respond(c, item, err)
 	})
 	api.PATCH("/maintenance/:id/complete", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, tenantAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, tenantAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -2475,621 +2308,6 @@ func materialRequestExportWorkbook(month string, rows []store.MaterialRequestExp
 		Selection:   []excelize.Selection{{SQRef: "A4:L4", ActiveCell: "A4", Pane: "bottomLeft"}},
 	})
 	return file, nil
-}
-
-func bearerToken(c *gin.Context) (string, bool) {
-	header := strings.TrimSpace(c.GetHeader("Authorization"))
-	if header == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
-		return "", false
-	}
-	const prefix = "Bearer "
-	if !strings.HasPrefix(header, prefix) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header"})
-		return "", false
-	}
-	token := strings.TrimSpace(strings.TrimPrefix(header, prefix))
-	if token == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
-		return "", false
-	}
-	return token, true
-}
-
-func tenantContextMiddleware(repo authRepository) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Request = c.Request.WithContext(store.WithTenantContext(c.Request.Context(), store.TenantContext{TenantID: anonymousTenantID}))
-		header := strings.TrimSpace(c.GetHeader("Authorization"))
-		if strings.HasPrefix(header, "Bearer ") {
-			token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
-			if token != "" {
-				if user, err := repo.CurrentUser(c.Request.Context(), token); err == nil {
-					rememberCurrentUser(c, user)
-				}
-			}
-		}
-		c.Next()
-	}
-}
-
-func optionalCurrentUser(c *gin.Context, repo authRepository) (store.User, bool) {
-	if user, ok := cachedCurrentUser(c); ok {
-		return user, true
-	}
-	header := strings.TrimSpace(c.GetHeader("Authorization"))
-	if !strings.HasPrefix(header, "Bearer ") {
-		return store.User{}, false
-	}
-	token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
-	if token == "" {
-		return store.User{}, false
-	}
-	user, err := repo.CurrentUser(c.Request.Context(), token)
-	if err != nil {
-		return store.User{}, false
-	}
-	rememberCurrentUser(c, user)
-	return user, true
-}
-
-func requireAuthenticated(c *gin.Context, repo authRepository) (store.Actor, bool) {
-	token, ok := bearerToken(c)
-	if !ok {
-		return store.Actor{}, false
-	}
-	if actor, ok := cachedCurrentActor(c); ok {
-		return actor, true
-	}
-	user, err := repo.CurrentUser(c.Request.Context(), token)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired session"})
-		return store.Actor{}, false
-	}
-	return rememberCurrentUser(c, user), true
-}
-
-func cachedCurrentUser(c *gin.Context) (store.User, bool) {
-	value, ok := c.Get(currentUserContextKey)
-	if !ok {
-		return store.User{}, false
-	}
-	user, ok := value.(store.User)
-	return user, ok
-}
-
-func cachedCurrentActor(c *gin.Context) (store.Actor, bool) {
-	value, ok := c.Get(currentActorContextKey)
-	if !ok {
-		return store.Actor{}, false
-	}
-	actor, ok := value.(store.Actor)
-	return actor, ok
-}
-
-func rememberCurrentUser(c *gin.Context, user store.User) store.Actor {
-	actor := actorFromUser(user)
-	c.Set(currentUserContextKey, user)
-	c.Set(currentActorContextKey, actor)
-	c.Request = c.Request.WithContext(store.WithTenantContext(c.Request.Context(), store.TenantContext{
-		TenantID:       user.TenantID,
-		TenantName:     user.TenantName,
-		FinanceEnabled: user.FinanceEnabled,
-		AllTenants:     user.Role == "super_admin",
-		Actor:          actor,
-	}))
-	return actor
-}
-
-func actorFromUser(user store.User) store.Actor {
-	return store.Actor{
-		UserID:         user.ID,
-		TenantID:       user.TenantID,
-		TenantName:     user.TenantName,
-		Name:           user.Name,
-		Email:          user.Email,
-		Department:     user.Department,
-		Role:           user.Role,
-		Status:         user.Status,
-		GroupName:      user.GroupName,
-		EmailVerified:  user.EmailVerified,
-		FinanceEnabled: user.FinanceEnabled,
-		AuthEpoch:      user.AuthEpoch,
-	}
-}
-
-func requireActiveUser(c *gin.Context, repo authRepository) (store.Actor, bool) {
-	actor, ok := requireAuthenticated(c, repo)
-	if !ok {
-		return store.Actor{}, false
-	}
-	if actor.Status != "active" || actor.Role == "unassigned" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "account is not approved"})
-		return store.Actor{}, false
-	}
-	if !actor.EmailVerified {
-		c.JSON(http.StatusForbidden, gin.H{"error": "email is not verified"})
-		return store.Actor{}, false
-	}
-	return actor, true
-}
-
-func requireAnyRole(c *gin.Context, repo authRepository, roles ...string) (store.Actor, bool) {
-	actor, ok := requireActiveUser(c, repo)
-	if !ok {
-		return store.Actor{}, false
-	}
-	for _, allowed := range roles {
-		if actor.Role == allowed {
-			return actor, true
-		}
-	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-	return store.Actor{}, false
-}
-
-func requireFinanceEnabled(c *gin.Context, actor store.Actor) bool {
-	if actor.Role == "super_admin" || actor.FinanceEnabled {
-		return true
-	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "finance module is disabled for this tenant"})
-	return false
-}
-
-func financeRequestContext(c *gin.Context, repo repository, actor store.Actor) (context.Context, bool) {
-	if actor.Role != "super_admin" {
-		if !requireFinanceEnabled(c, actor) {
-			return nil, false
-		}
-		return c.Request.Context(), true
-	}
-
-	tenantID := strings.TrimSpace(c.Query("tenantId"))
-	if tenantID == "" || tenantID == actor.TenantID {
-		if !actor.FinanceEnabled {
-			c.JSON(http.StatusForbidden, gin.H{"error": "finance module is disabled for this tenant"})
-			return nil, false
-		}
-		return store.WithTenantContext(c.Request.Context(), store.TenantContext{
-			TenantID:       actor.TenantID,
-			TenantName:     actor.TenantName,
-			FinanceEnabled: actor.FinanceEnabled,
-		}), true
-	}
-
-	tenants, err := repo.Tenants(c.Request.Context())
-	if err != nil {
-		respond(c, nil, err)
-		return nil, false
-	}
-	for _, tenant := range tenants {
-		if tenant.ID != tenantID {
-			continue
-		}
-		if tenant.Status != "active" {
-			c.JSON(http.StatusForbidden, gin.H{"error": "tenant is disabled"})
-			return nil, false
-		}
-		if !tenant.FinanceEnabled {
-			c.JSON(http.StatusForbidden, gin.H{"error": "finance module is disabled for this tenant"})
-			return nil, false
-		}
-		return store.WithTenantContext(c.Request.Context(), store.TenantContext{
-			TenantID:       tenant.ID,
-			TenantName:     tenant.Name,
-			FinanceEnabled: tenant.FinanceEnabled,
-		}), true
-	}
-	c.JSON(http.StatusBadRequest, gin.H{"error": "tenant not found"})
-	return nil, false
-}
-
-func organizationUnitRequestContext(c *gin.Context, repo repository, actor store.Actor) (context.Context, bool) {
-	tenantID := strings.TrimSpace(c.Query("tenantId"))
-	if actor.Role != "super_admin" || tenantID == "" || tenantID == actor.TenantID {
-		return store.WithTenantContext(c.Request.Context(), store.TenantContext{
-			TenantID:       actor.TenantID,
-			TenantName:     actor.TenantName,
-			FinanceEnabled: actor.FinanceEnabled,
-		}), true
-	}
-
-	tenants, err := repo.Tenants(c.Request.Context())
-	if err != nil {
-		respond(c, nil, err)
-		return nil, false
-	}
-	for _, tenant := range tenants {
-		if tenant.ID != tenantID {
-			continue
-		}
-		return store.WithTenantContext(c.Request.Context(), store.TenantContext{
-			TenantID:       tenant.ID,
-			TenantName:     tenant.Name,
-			FinanceEnabled: tenant.FinanceEnabled,
-		}), true
-	}
-	c.JSON(http.StatusBadRequest, gin.H{"error": "tenant not found"})
-	return nil, false
-}
-
-func tenantAdminRequestContext(c *gin.Context, repo repository, actor store.Actor) (context.Context, bool) {
-	tenantID := strings.TrimSpace(c.Query("tenantId"))
-	if actor.Role != "super_admin" || tenantID == "" || tenantID == actor.TenantID {
-		return store.WithTenantContext(c.Request.Context(), store.TenantContext{
-			TenantID:       actor.TenantID,
-			TenantName:     actor.TenantName,
-			FinanceEnabled: actor.FinanceEnabled,
-			AllTenants:     false,
-			Actor:          actor,
-		}), true
-	}
-
-	tenants, err := repo.Tenants(c.Request.Context())
-	if err != nil {
-		respond(c, nil, err)
-		return nil, false
-	}
-	for _, tenant := range tenants {
-		if tenant.ID != tenantID {
-			continue
-		}
-		if tenant.Status != "active" {
-			c.JSON(http.StatusForbidden, gin.H{"error": "tenant is disabled"})
-			return nil, false
-		}
-		return store.WithTenantContext(c.Request.Context(), store.TenantContext{
-			TenantID:       tenant.ID,
-			TenantName:     tenant.Name,
-			FinanceEnabled: tenant.FinanceEnabled,
-			AllTenants:     false,
-			Actor:          actor,
-		}), true
-	}
-	c.JSON(http.StatusBadRequest, gin.H{"error": "tenant not found"})
-	return nil, false
-}
-
-func materialWriteRequestContext(c *gin.Context, repo repository, actor store.Actor) (context.Context, bool) {
-	if actor.Role != "super_admin" {
-		return c.Request.Context(), true
-	}
-	ctx, ok := tenantAdminRequestContext(c, repo, actor)
-	if ok {
-		c.Request = c.Request.WithContext(ctx)
-	}
-	return ctx, ok
-}
-
-func isAdmin(actor store.Actor) bool {
-	return actor.Role == "tenant_admin" || actor.Role == "lab_admin" || actor.Role == "super_admin"
-}
-
-func canManageMaterials(actor store.Actor) bool {
-	return actor.Role == "material_admin" || isAdmin(actor)
-}
-
-func canManageFinance(actor store.Actor) bool {
-	return actor.Role == "finance_admin" || isAdmin(actor)
-}
-
-func canManageTraining(actor store.Actor) bool {
-	return actor.Role == "material_admin" || isAdmin(actor)
-}
-
-func canAccessReservation(actor store.Actor, item store.Reservation) bool {
-	if isAdmin(actor) {
-		return true
-	}
-	if actor.Role == "group_leader" && actor.GroupName != "" && actor.GroupName == item.GroupName {
-		return true
-	}
-	return item.UserID != "" && item.UserID == actor.UserID
-}
-
-func canReviewGroup(actor store.Actor, groupName string) bool {
-	if isAdmin(actor) {
-		return true
-	}
-	return actor.Role == "group_leader" && actor.GroupName != "" && actor.GroupName == groupName
-}
-
-func canReviewMaterialGroup(actor store.Actor, groupName string) bool {
-	if canManageMaterials(actor) {
-		return true
-	}
-	return actor.Role == "group_leader" && actor.GroupName != "" && actor.GroupName == groupName
-}
-
-func filterReservationsForActor(actor store.Actor, items []store.Reservation) []store.Reservation {
-	filtered := make([]store.Reservation, 0, len(items))
-	for _, item := range items {
-		if canAccessReservation(actor, item) {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
-}
-
-func filterLedgerForActor(actor store.Actor, items []store.LedgerEntry) []store.LedgerEntry {
-	if canManageFinance(actor) {
-		return items
-	}
-	filtered := make([]store.LedgerEntry, 0, len(items))
-	for _, item := range items {
-		if item.UserID == actor.UserID {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
-}
-
-func filterFinancialAccountsForActor(actor store.Actor, items []store.FinancialAccount) []store.FinancialAccount {
-	if canManageFinance(actor) {
-		return items
-	}
-	filtered := make([]store.FinancialAccount, 0, 1)
-	for _, item := range items {
-		if item.UserID == actor.UserID {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
-}
-
-func filterMaterialRequestsForActor(actor store.Actor, items []store.MaterialRequest) []store.MaterialRequest {
-	if canManageMaterials(actor) {
-		return items
-	}
-	filtered := make([]store.MaterialRequest, 0, len(items))
-	for _, item := range items {
-		if actor.Role == "group_leader" && item.GroupName == actor.GroupName {
-			filtered = append(filtered, item)
-			continue
-		}
-		if item.RequesterID == actor.UserID {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
-}
-
-func filterMaterialRequestExportRowsForActor(actor store.Actor, items []store.MaterialRequestExportRow) []store.MaterialRequestExportRow {
-	if canManageMaterials(actor) {
-		return items
-	}
-	filtered := make([]store.MaterialRequestExportRow, 0, len(items))
-	for _, item := range items {
-		if actor.Role == "group_leader" && item.GroupName == actor.GroupName {
-			filtered = append(filtered, item)
-			continue
-		}
-		if item.RequesterID == actor.UserID {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
-}
-
-func filterMaterialPurchasesForActor(actor store.Actor, items []store.MaterialPurchase) []store.MaterialPurchase {
-	if canManageMaterials(actor) {
-		return items
-	}
-	filtered := make([]store.MaterialPurchase, 0, len(items))
-	for _, item := range items {
-		if actor.Role == "group_leader" && item.GroupName == actor.GroupName {
-			filtered = append(filtered, item)
-			continue
-		}
-		if item.RequesterID == actor.UserID {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
-}
-
-func filterMaterialDamagesForActor(actor store.Actor, items []store.MaterialDamage) []store.MaterialDamage {
-	if canManageMaterials(actor) {
-		return items
-	}
-	filtered := make([]store.MaterialDamage, 0, len(items))
-	for _, item := range items {
-		if actor.Role == "group_leader" && item.GroupName == actor.GroupName {
-			filtered = append(filtered, item)
-			continue
-		}
-		if item.ReporterID == actor.UserID {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
-}
-
-func canAccessNotification(actor store.Actor, item store.Notification) bool {
-	switch item.TargetScope {
-	case "", "global":
-		return true
-	case "personal":
-		return item.UserID != "" && item.UserID == actor.UserID
-	case "group":
-		return item.GroupName != "" && item.GroupName == actor.GroupName
-	case "department":
-		return item.Department != "" && item.Department == actor.Department
-	default:
-		return isAdmin(actor)
-	}
-}
-
-func filterNotificationsForActor(actor store.Actor, items []store.Notification) []store.Notification {
-	filtered := make([]store.Notification, 0, len(items))
-	for _, item := range items {
-		if canAccessNotification(actor, item) {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
-}
-
-func authorizeReservationReview(c *gin.Context, repo repository, actor store.Actor, id string) bool {
-	item, ok := findReservation(c, repo, id)
-	if !ok {
-		return false
-	}
-	if canReviewGroup(actor, item.GroupName) {
-		return true
-	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-	return false
-}
-
-func authorizeReservationOwnerOrAdmin(c *gin.Context, repo repository, actor store.Actor, id string) bool {
-	item, ok := findReservation(c, repo, id)
-	if !ok {
-		return false
-	}
-	if isAdmin(actor) || item.UserID == actor.UserID {
-		return true
-	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-	return false
-}
-
-func authorizeReservationCancel(c *gin.Context, repo repository, actor store.Actor, id string) (store.Reservation, bool) {
-	item, ok := findReservation(c, repo, id)
-	if !ok {
-		return store.Reservation{}, false
-	}
-	if isAdmin(actor) || item.UserID == actor.UserID || canReviewGroup(actor, item.GroupName) {
-		return item, true
-	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-	return store.Reservation{}, false
-}
-
-func authorizeMaterialRequestReview(c *gin.Context, repo repository, actor store.Actor, id string) bool {
-	item, ok := findMaterialRequest(c, repo, id)
-	if !ok {
-		return false
-	}
-	if canReviewMaterialGroup(actor, item.GroupName) {
-		return true
-	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-	return false
-}
-
-func authorizeMaterialRequestOwnerOrAdmin(c *gin.Context, repo repository, actor store.Actor, id string) bool {
-	item, ok := findMaterialRequest(c, repo, id)
-	if !ok {
-		return false
-	}
-	if canManageMaterials(actor) || item.RequesterID == actor.UserID {
-		return true
-	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-	return false
-}
-
-func authorizeMaterialPurchaseReview(c *gin.Context, repo repository, actor store.Actor, id string) bool {
-	item, ok := findMaterialPurchase(c, repo, id)
-	if !ok {
-		return false
-	}
-	if canReviewMaterialGroup(actor, item.GroupName) {
-		return true
-	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-	return false
-}
-
-func authorizeMaterialPurchaseOwnerOrAdmin(c *gin.Context, repo repository, actor store.Actor, id string) bool {
-	item, ok := findMaterialPurchase(c, repo, id)
-	if !ok {
-		return false
-	}
-	if canManageMaterials(actor) || item.RequesterID == actor.UserID {
-		return true
-	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-	return false
-}
-
-func authorizeMaterialDamageReview(c *gin.Context, repo repository, actor store.Actor, id string) bool {
-	item, ok := findMaterialDamage(c, repo, id)
-	if !ok {
-		return false
-	}
-	if canReviewMaterialGroup(actor, item.GroupName) {
-		return true
-	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-	return false
-}
-
-func authorizeMaterialDamageOwnerOrAdmin(c *gin.Context, repo repository, actor store.Actor, id string) bool {
-	item, ok := findMaterialDamage(c, repo, id)
-	if !ok {
-		return false
-	}
-	if canManageMaterials(actor) || item.ReporterID == actor.UserID {
-		return true
-	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-	return false
-}
-
-func authorizeNotificationAccess(c *gin.Context, repo repository, actor store.Actor, id string) bool {
-	items, err := repo.Notifications(c.Request.Context(), actor)
-	if err != nil {
-		respond(c, nil, err)
-		return false
-	}
-	for _, item := range items {
-		if item.ID == id {
-			if canAccessNotification(actor, item) {
-				return true
-			}
-			c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
-			return false
-		}
-	}
-	c.JSON(http.StatusNotFound, gin.H{"error": "resource not found"})
-	return false
-}
-
-func findReservation(c *gin.Context, repo repository, id string) (store.Reservation, bool) {
-	item, err := repo.Reservation(c.Request.Context(), id)
-	if err != nil {
-		respond(c, nil, err)
-		return store.Reservation{}, false
-	}
-	return item, true
-}
-
-func findMaterialRequest(c *gin.Context, repo repository, id string) (store.MaterialRequest, bool) {
-	item, err := repo.MaterialRequest(c.Request.Context(), id)
-	if err != nil {
-		respond(c, nil, err)
-		return store.MaterialRequest{}, false
-	}
-	return item, true
-}
-
-func findMaterialPurchase(c *gin.Context, repo repository, id string) (store.MaterialPurchase, bool) {
-	item, err := repo.MaterialPurchase(c.Request.Context(), id)
-	if err != nil {
-		respond(c, nil, err)
-		return store.MaterialPurchase{}, false
-	}
-	return item, true
-}
-
-func findMaterialDamage(c *gin.Context, repo repository, id string) (store.MaterialDamage, bool) {
-	item, err := repo.MaterialDamage(c.Request.Context(), id)
-	if err != nil {
-		respond(c, nil, err)
-		return store.MaterialDamage{}, false
-	}
-	return item, true
 }
 
 func materialProductTypeLabel(productType string) string {

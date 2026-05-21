@@ -29,7 +29,7 @@ func registerProcurementRoutes(api *gin.RouterGroup, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/procurement-projects", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -41,7 +41,7 @@ func registerProcurementRoutes(api *gin.RouterGroup, repo repository) {
 		}
 	})
 	api.PATCH("/procurement-projects/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -53,7 +53,7 @@ func registerProcurementRoutes(api *gin.RouterGroup, repo repository) {
 		}
 	})
 	api.DELETE("/procurement-projects/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -61,7 +61,7 @@ func registerProcurementRoutes(api *gin.RouterGroup, repo repository) {
 		respond(c, item, err)
 	})
 	api.POST("/purchasable-materials", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -73,7 +73,7 @@ func registerProcurementRoutes(api *gin.RouterGroup, repo repository) {
 		}
 	})
 	api.PATCH("/purchasable-materials/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -85,7 +85,7 @@ func registerProcurementRoutes(api *gin.RouterGroup, repo repository) {
 		}
 	})
 	api.DELETE("/purchasable-materials/:id", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -93,7 +93,7 @@ func registerProcurementRoutes(api *gin.RouterGroup, repo repository) {
 		respond(c, item, err)
 	})
 	api.GET("/purchasable-materials/import-template.csv", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, materialAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, materialAdminRoles()...); !ok {
 			return
 		}
 		c.Header("Content-Type", "text/csv; charset=utf-8")
@@ -106,7 +106,7 @@ func registerProcurementRoutes(api *gin.RouterGroup, repo repository) {
 		writer.Flush()
 	})
 	api.GET("/purchasable-materials/export.csv", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, materialAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, materialAdminRoles()...); !ok {
 			return
 		}
 		items, err := repo.PurchasableMaterials(c.Request.Context())
@@ -125,7 +125,7 @@ func registerProcurementRoutes(api *gin.RouterGroup, repo repository) {
 		writer.Flush()
 	})
 	api.POST("/purchasable-materials/import", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}
@@ -147,7 +147,7 @@ func registerProcurementRoutes(api *gin.RouterGroup, repo repository) {
 		respond(c, item, err)
 	})
 	api.GET("/material-purchases/monthly-export.csv", func(c *gin.Context) {
-		actor, ok := requireAnyRole(c, repo, materialAdminRoles...)
+		actor, ok := requireAnyRole(c, repo, materialAdminRoles()...)
 		if !ok {
 			return
 		}

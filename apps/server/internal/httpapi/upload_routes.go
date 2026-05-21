@@ -17,7 +17,7 @@ func registerUploadRoutes(router *gin.Engine, api *gin.RouterGroup, repo reposit
 	uploadRoot := materialUploadRoot()
 	router.StaticFS("/files", gin.Dir(uploadRoot, false))
 	api.POST("/uploads/material-certificates", func(c *gin.Context) {
-		if _, ok := requireAnyRole(c, repo, materialAdminRoles...); !ok {
+		if _, ok := requireAnyRole(c, repo, materialAdminRoles()...); !ok {
 			return
 		}
 		url, err := saveMaterialCertificateUpload(c, uploadRoot)
