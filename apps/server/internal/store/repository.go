@@ -7223,9 +7223,16 @@ WHERE pm.id = $1
 	if input.EstimatedUnitPrice == 0 {
 		input.EstimatedUnitPrice = purchasable.PurchasePrice
 	}
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return MaterialPurchase{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 	var item MaterialPurchase
 	var itemTenantID string
-	err := r.db.QueryRow(ctx, fmt.Sprintf(`
+	err = tx.QueryRow(ctx, fmt.Sprintf(`
 WITH updated AS (
   UPDATE material_purchases
   SET purchasable_material_id = $2,
@@ -7265,14 +7272,18 @@ LEFT JOIN materials m ON m.id = mp.material_id
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
-	if _, err := r.db.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 INSERT INTO material_purchase_actions (tenant_id, material_purchase_id, actor, action, comment)
 VALUES ($1, $2, $3, 'resubmit', '申请人修改后重新提交')
 `, itemTenantID, item.ID, input.Actor); err != nil {
 		return MaterialPurchase{}, err
 	}
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, input.Actor, "material_purchase.resubmit", "material_purchase", item.ID, "returned", item.Status)
+	if err := r.auditTx(ctx, tx, itemTenantID, input.Actor, "material_purchase.resubmit", "material_purchase", item.ID, "returned", item.Status); err != nil {
+		return MaterialPurchase{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return MaterialPurchase{}, err
+	}
 	return item, nil
 }
 
@@ -7282,9 +7293,17 @@ func (r *Repository) MarkMaterialPurchaseOrdered(ctx context.Context, id string,
 	if actor == "" {
 		actor = "system"
 	}
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return MaterialPurchase{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+	notifications := make([]Notification, 0, 1)
 	var item MaterialPurchase
 	var itemTenantID string
-	err := r.db.QueryRow(ctx, fmt.Sprintf(`
+	err = tx.QueryRow(ctx, fmt.Sprintf(`
 WITH updated AS (
   UPDATE material_purchases
   SET status = 'ordered', ordered_at = now()
@@ -7301,19 +7320,26 @@ LEFT JOIN materials m ON m.id = mp.material_id
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
-	if _, err := r.db.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 INSERT INTO material_purchase_actions (tenant_id, material_purchase_id, actor, action, comment)
 VALUES ($1, $2, $3, 'order', '已下单')
 `, itemTenantID, item.ID, actor); err != nil {
 		return MaterialPurchase{}, err
 	}
 	if item.RequesterID != "" {
-		if _, err := r.createNotification(ctx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申购状态更新", fmt.Sprintf("%s x%d 的申购状态已更新为%s。", item.MaterialName, item.Quantity, materialWorkflowStatusLabel(item.Status)), notificationLevelForStatus(item.Status)); err != nil {
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申购状态更新", fmt.Sprintf("%s x%d 的申购状态已更新为%s。", item.MaterialName, item.Quantity, materialWorkflowStatusLabel(item.Status)), notificationLevelForStatus(item.Status))
+		if err != nil {
 			return MaterialPurchase{}, err
 		}
+		notifications = append(notifications, notification)
 	}
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, actor, "material_purchase.order", "material_purchase", item.ID, "", item.Status)
+	if err := r.auditTx(ctx, tx, itemTenantID, actor, "material_purchase.order", "material_purchase", item.ID, "", item.Status); err != nil {
+		return MaterialPurchase{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return MaterialPurchase{}, err
+	}
+	r.enqueueDingTalkNotifications(notifications...)
 	return item, nil
 }
 
@@ -7454,12 +7480,13 @@ VALUES ($1, $2, $3, 'receive', '到货入库')
 		}
 		notifications = append(notifications, created...)
 	}
+	if err := r.auditTx(ctx, tx, itemTenantID, actor, "material_purchase.receive", "material_purchase", item.ID, oldStatus, item.Status); err != nil {
+		return MaterialPurchase{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return MaterialPurchase{}, err
 	}
 	r.enqueueDingTalkNotifications(notifications...)
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, actor, "material_purchase.receive", "material_purchase", item.ID, oldStatus, item.Status)
 	return item, nil
 }
 
@@ -7469,9 +7496,17 @@ func (r *Repository) CancelMaterialPurchase(ctx context.Context, id string, acto
 	if actor == "" {
 		actor = "system"
 	}
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return MaterialPurchase{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+	notifications := make([]Notification, 0, 1)
 	var item MaterialPurchase
 	var itemTenantID string
-	err := r.db.QueryRow(ctx, fmt.Sprintf(`
+	err = tx.QueryRow(ctx, fmt.Sprintf(`
 WITH updated AS (
   UPDATE material_purchases
   SET status = 'cancelled'
@@ -7494,19 +7529,26 @@ LEFT JOIN materials m ON m.id = mp.material_id
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
-	if _, err := r.db.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 INSERT INTO material_purchase_actions (tenant_id, material_purchase_id, actor, action, comment)
 VALUES ($1, $2, $3, 'cancel', '已取消')
 `, itemTenantID, item.ID, actor); err != nil {
 		return MaterialPurchase{}, err
 	}
 	if item.RequesterID != "" {
-		if _, err := r.createNotification(ctx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申购状态更新", fmt.Sprintf("%s x%d 的申购状态已更新为%s。", item.MaterialName, item.Quantity, materialWorkflowStatusLabel(item.Status)), notificationLevelForStatus(item.Status)); err != nil {
+		notification, err := r.createNotificationTx(ctx, tx, itemTenantID, item.RequesterID, item.GroupName, "", "personal", "耗材申购状态更新", fmt.Sprintf("%s x%d 的申购状态已更新为%s。", item.MaterialName, item.Quantity, materialWorkflowStatusLabel(item.Status)), notificationLevelForStatus(item.Status))
+		if err != nil {
 			return MaterialPurchase{}, err
 		}
+		notifications = append(notifications, notification)
 	}
-	auditCtx := WithTenantContext(ctx, TenantContext{TenantID: itemTenantID})
-	r.audit(auditCtx, actor, "material_purchase.cancel", "material_purchase", item.ID, "", item.Status)
+	if err := r.auditTx(ctx, tx, itemTenantID, actor, "material_purchase.cancel", "material_purchase", item.ID, "", item.Status); err != nil {
+		return MaterialPurchase{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return MaterialPurchase{}, err
+	}
+	r.enqueueDingTalkNotifications(notifications...)
 	return item, nil
 }
 
