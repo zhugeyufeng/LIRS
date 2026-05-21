@@ -83,7 +83,7 @@ func respond(c *gin.Context, payload any, err error) {
 		return
 	}
 	slog.Error("api request failed", "method", c.Request.Method, "path", c.FullPath(), "error", err)
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+	c.JSON(http.StatusInternalServerError, gin.H{"error": publicErrorMessage(err)})
 }
 
 func postgresClientError(err error) (int, string, bool) {
@@ -120,4 +120,18 @@ func clientSafeError(err error) (string, bool) {
 		return "", false
 	}
 	return message, true
+}
+
+func publicErrorMessage(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code != "" && pgErr.Message != "" {
+			return strings.TrimSpace(pgErr.Message + " (SQLSTATE " + pgErr.Code + ")")
+		}
+	}
+	message := strings.TrimSpace(err.Error())
+	if message == "" {
+		return "未知错误"
+	}
+	return message
 }

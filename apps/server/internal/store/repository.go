@@ -1430,10 +1430,10 @@ FOR UPDATE
 		return OrganizationUnit{}, err
 	}
 	if instrumentCount > 0 {
-		return OrganizationUnit{}, fmt.Errorf("organization unit still has %d instruments", instrumentCount)
+		return OrganizationUnit{}, clientErrorf("无法删除%s“%s”：仍有 %d 台仪器使用该%s，请先修改或删除相关仪器。", organizationUnitKindLabel(item.Kind), item.Name, instrumentCount, organizationUnitKindLabel(item.Kind))
 	}
 	if dependentCount > 0 {
-		return OrganizationUnit{}, fmt.Errorf("organization unit still has %d dependent records", dependentCount)
+		return OrganizationUnit{}, clientErrorf("无法删除%s“%s”：仍有 %d 条关联记录，请先处理相关用户、团队或业务记录。", organizationUnitKindLabel(item.Kind), item.Name, dependentCount)
 	}
 
 	if _, err := tx.Exec(ctx, `DELETE FROM organization_units WHERE id = $1`, item.ID); err != nil {
@@ -7606,6 +7606,17 @@ func validOrganizationUnitKind(kind string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func organizationUnitKindLabel(kind string) string {
+	switch kind {
+	case "department":
+		return "用户部门"
+	case "group":
+		return "部门二级团队"
+	default:
+		return "组织条目"
 	}
 }
 

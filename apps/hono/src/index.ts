@@ -29,7 +29,7 @@ app.onError((error, c) => {
     return c.json({ error: "request body too large" }, 413);
   }
   console.error("unhandled hono error", error);
-  return c.json({ error: "internal server error" }, 500);
+  return c.json({ error: publicErrorMessage(error) }, 500);
 });
 
 app.use(
@@ -772,6 +772,16 @@ function isJsonRequest(c: Context) {
 
 function unsupportedWriteRoute(c: Context) {
   return c.json({ error: "unsupported api route" }, 404);
+}
+
+function publicErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message.trim() !== "") {
+    return error.message.trim();
+  }
+  if (typeof error === "string" && error.trim() !== "") {
+    return error.trim();
+  }
+  return "未知错误";
 }
 
 async function proxyToGo(c: Context, overrideBody?: unknown) {

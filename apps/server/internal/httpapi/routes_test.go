@@ -379,7 +379,7 @@ func TestRespondMapsKnownDatabaseErrors(t *testing.T) {
 	}
 }
 
-func TestRespondMasksUnknownDatabaseErrors(t *testing.T) {
+func TestRespondReturnsUnknownDatabaseErrors(t *testing.T) {
 	t.Parallel()
 
 	gin.SetMode(gin.TestMode)
@@ -396,8 +396,8 @@ func TestRespondMasksUnknownDatabaseErrors(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["error"] != "internal server error" {
-		t.Fatalf("expected masked error, got %q", payload["error"])
+	if payload["error"] != "database failure (SQLSTATE XX000)" {
+		t.Fatalf("expected real database error, got %q", payload["error"])
 	}
 }
 
