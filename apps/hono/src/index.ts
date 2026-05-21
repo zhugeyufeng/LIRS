@@ -217,6 +217,7 @@ const dingTalkLoginBindExistingSchema = z.object({
 const dingTalkBindingSchema = z.object({
   authCode: z.string().min(1),
   state: z.string().optional().default(""),
+  actor: z.string().optional().default(""),
 });
 const accessControlSettingsSchema = z.object({
   enabled: z.boolean().optional().default(false),
