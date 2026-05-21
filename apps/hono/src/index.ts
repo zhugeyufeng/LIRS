@@ -579,6 +579,16 @@ const assistantQuerySchema = z.object({
   question: z.string().min(1),
   context: z.string().optional().default(""),
 });
+const aiAssistantSettingsSchema = z.object({
+  enabled: z.boolean().optional().default(false),
+  provider: z.string().optional().default("openai_compatible"),
+  baseUrl: z.string().optional().default(""),
+  apiKey: z.string().optional().default(""),
+  model: z.string().optional().default(""),
+  systemPrompt: z.string().optional().default(""),
+  temperature: z.number().optional().default(0.2),
+  maxTokens: z.number().optional().default(1200),
+});
 
 app.post("/api/tenants", validateAndProxy(tenantSchema));
 app.patch("/api/tenants/:id", validateAndProxy(tenantSchema));
@@ -597,6 +607,7 @@ app.post("/api/me/dingtalk-binding", validateAndProxy(dingTalkBindingSchema));
 app.delete("/api/me/dingtalk-binding", proxyToGo);
 app.get("/api/access-control-settings", proxyToGo);
 app.patch("/api/access-control-settings", validateAndProxy(accessControlSettingsSchema));
+app.patch("/api/ai-assistant-settings", validateAndProxy(aiAssistantSettingsSchema));
 app.post("/api/instruments", validateAndProxy(instrumentSchema));
 app.patch("/api/instruments/:id", validateAndProxy(instrumentSchema));
 app.delete("/api/instruments/:id", proxyToGo);
