@@ -580,10 +580,12 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			return
 		}
 		item, err := repo.Ledger(ctx, actor)
-		if err == nil {
-			item = filterLedgerForActor(actor, item)
+		if err != nil {
+			respond(c, nil, err)
+			return
 		}
-		respond(c, item, err)
+		item = filterLedgerForActor(actor, item)
+		respond(c, item, nil)
 	})
 	api.GET("/ledger/export.csv", func(c *gin.Context) {
 		actor, ok := requireActiveUser(c, repo)
@@ -630,10 +632,12 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			return
 		}
 		item, err := repo.FinancialAccounts(ctx, actor)
-		if err == nil {
-			item = filterFinancialAccountsForActor(actor, item)
+		if err != nil {
+			respond(c, nil, err)
+			return
 		}
-		respond(c, item, err)
+		item = filterFinancialAccountsForActor(actor, item)
+		respond(c, item, nil)
 	})
 	api.POST("/financial-accounts", func(c *gin.Context) {
 		actor, ok := requireAnyRole(c, repo, financeAdminRoles...)

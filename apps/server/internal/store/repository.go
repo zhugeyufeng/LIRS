@@ -3847,13 +3847,15 @@ RETURNING r.id::text, r.tenant_id::text, COALESCE(r.user_id::text, ''), COALESCE
 			return Reservation{}, err
 		}
 	}
+	if err := r.auditTx(ctx, tx, reservation.TenantID, reservation.UserName, "reservation.cancel", "reservation", reservation.ID, "", reason); err != nil {
+		return Reservation{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Reservation{}, err
 	}
 	r.enqueueDingTalkNotifications(notification)
 	r.invalidateDashboard(ctx)
 	r.emitAccessControlRevoke(ctx, reservation, reason)
-	r.audit(ctx, reservation.UserName, "reservation.cancel", "reservation", reservation.ID, "", reason)
 	return reservation, nil
 }
 
