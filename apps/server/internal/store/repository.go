@@ -5082,7 +5082,7 @@ SET material_id = $2,
     received_at = COALESCE(received_at, now())
 WHERE id = $1
   AND tenant_id = $3::uuid
-  AND status IN ('pending', 'registered', 'approved', 'ordered')
+  AND status IN ('registered', 'approved', 'ordered')
   AND NOT EXISTS (
       SELECT 1
       FROM material_purchase_monthly_confirmations mpmc
@@ -7420,7 +7420,7 @@ func (r *Repository) CancelMaterialPurchase(ctx context.Context, id string, acto
 WITH updated AS (
   UPDATE material_purchases
   SET status = 'cancelled'
-  WHERE id = $1 AND status IN ('pending', 'registered', 'approved', 'returned', 'ordered')
+  WHERE id = $1 AND status IN ('registered', 'approved', 'returned', 'ordered')
     AND ($2::boolean OR tenant_id = $3::uuid)
     AND NOT EXISTS (
         SELECT 1

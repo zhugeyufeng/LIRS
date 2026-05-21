@@ -1063,6 +1063,20 @@ func TestSeedUsersDoNotOverwriteExistingAccounts(t *testing.T) {
 	}
 }
 
+func TestMaterialPurchaseStatusConstraintDropsPending(t *testing.T) {
+	t.Parallel()
+
+	if !strings.Contains(migrationSQL, "UPDATE material_purchases SET status = 'registered' WHERE status = 'pending';") {
+		t.Fatal("迁移应先把历史 pending 申购转为 registered")
+	}
+	if strings.Contains(migrationSQL, "CHECK (status IN ('pending', 'registered'") {
+		t.Fatal("申购状态约束不应继续允许 pending")
+	}
+	if !strings.Contains(migrationSQL, "CHECK (status IN ('registered', 'approved', 'rejected', 'returned', 'ordered', 'received', 'cancelled'))") {
+		t.Fatal("申购状态约束应只允许当前状态机")
+	}
+}
+
 func TestNormalizeServiceHours(t *testing.T) {
 	t.Parallel()
 

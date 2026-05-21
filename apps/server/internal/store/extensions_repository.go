@@ -1320,7 +1320,7 @@ func (r *Repository) AskAssistant(ctx context.Context, input AssistantQueryInput
 	instrumentCount := dashboard.ActiveInstruments
 	lowStockCount := countQuery(`SELECT count(*) FROM materials WHERE ($1::boolean OR tenant_id = $2::uuid) AND stock <= warning_line`, tenant.AllTenants, tenant.TenantID)
 	pendingRequests := countQuery(`SELECT count(*) FROM material_requests WHERE ($1::boolean OR tenant_id = $2::uuid) AND status = 'pending'`, tenant.AllTenants, tenant.TenantID)
-	pendingPurchases := countQuery(`SELECT count(*) FROM material_purchases WHERE ($1::boolean OR tenant_id = $2::uuid) AND status = 'pending'`, tenant.AllTenants, tenant.TenantID)
+	pendingPurchases := countQuery(`SELECT count(*) FROM material_purchases WHERE ($1::boolean OR tenant_id = $2::uuid) AND status IN ('registered', 'returned')`, tenant.AllTenants, tenant.TenantID)
 	courseCount := countQuery(`SELECT count(*) FROM training_courses WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)
 	authCount := countQuery(`SELECT count(*) FROM training_authorizations WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)
 	spaceCount := countQuery(`SELECT count(*) FROM spaces WHERE ($1::boolean OR tenant_id = $2::uuid)`, tenant.AllTenants, tenant.TenantID)

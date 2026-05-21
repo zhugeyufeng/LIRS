@@ -551,7 +551,7 @@ CREATE TABLE IF NOT EXISTS material_purchases (
     estimated_unit_price numeric(12,2) NOT NULL DEFAULT 0 CHECK (estimated_unit_price >= 0),
     supplier text NOT NULL DEFAULT '',
     reason text NOT NULL,
-    status text NOT NULL DEFAULT 'registered' CHECK (status IN ('pending', 'registered', 'approved', 'rejected', 'returned', 'ordered', 'received', 'cancelled')),
+    status text NOT NULL DEFAULT 'registered' CHECK (status IN ('registered', 'approved', 'rejected', 'returned', 'ordered', 'received', 'cancelled')),
     decided_at timestamptz,
     ordered_at timestamptz,
     received_at timestamptz,
@@ -601,7 +601,7 @@ ALTER TABLE material_purchases ADD COLUMN IF NOT EXISTS received_at timestamptz;
 ALTER TABLE material_purchases ALTER COLUMN group_name SET DEFAULT '默认归属';
 ALTER TABLE material_purchases DROP CONSTRAINT IF EXISTS material_purchases_status_check;
 UPDATE material_purchases SET status = 'registered' WHERE status = 'pending';
-ALTER TABLE material_purchases ADD CONSTRAINT material_purchases_status_check CHECK (status IN ('pending', 'registered', 'approved', 'rejected', 'returned', 'ordered', 'received', 'cancelled'));
+ALTER TABLE material_purchases ADD CONSTRAINT material_purchases_status_check CHECK (status IN ('registered', 'approved', 'rejected', 'returned', 'ordered', 'received', 'cancelled'));
 UPDATE material_purchases
 SET purchase_serial_no = 'SG' || to_char(created_at, 'YYYYMM') || '-' || lpad(row_number::text, 4, '0')
 FROM (
@@ -1160,7 +1160,7 @@ WHERE mp.requester_id = u.id
   AND (mp.requester_phone = '' OR mp.requester_email = '');
 ALTER TABLE material_purchases DROP CONSTRAINT IF EXISTS material_purchases_status_check;
 UPDATE material_purchases SET status = 'registered' WHERE status = 'pending';
-ALTER TABLE material_purchases ADD CONSTRAINT material_purchases_status_check CHECK (status IN ('pending', 'registered', 'approved', 'rejected', 'returned', 'ordered', 'received', 'cancelled'));
+ALTER TABLE material_purchases ADD CONSTRAINT material_purchases_status_check CHECK (status IN ('registered', 'approved', 'rejected', 'returned', 'ordered', 'received', 'cancelled'));
 UPDATE material_purchases
 SET purchase_serial_no = 'SG' || to_char(created_at, 'YYYYMM') || '-' || lpad(row_number::text, 4, '0')
 FROM (
