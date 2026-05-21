@@ -25,19 +25,20 @@ export function cachedBusinessData<T>(key: string, loader: () => Promise<T>, ttl
     businessDataCache.delete(key);
   }
 
-  const value = loader().catch((error) => {
-    if (businessDataCache.get(key)?.value === value) {
+  const entry: BusinessDataCacheEntry = {
+    expiresAt: now + ttlSeconds * 1000,
+    lastAccessedAt: now,
+    value: Promise.resolve(undefined),
+  };
+  entry.value = loader().catch((error) => {
+    if (businessDataCache.get(key) === entry) {
       businessDataCache.delete(key);
     }
     throw error;
   });
-  businessDataCache.set(key, {
-    expiresAt: now + ttlSeconds * 1000,
-    lastAccessedAt: now,
-    value,
-  });
+  businessDataCache.set(key, entry);
   pruneBusinessDataCache(now);
-  return value;
+  return entry.value as Promise<T>;
 }
 
 export function clearBusinessDataCache() {

@@ -1498,6 +1498,9 @@ func (r *Repository) ReviewUser(ctx context.Context, id string, input UserReview
 	if input.Phone == "" {
 		return User{}, clientError("user phone is required")
 	}
+	if !validRoleGroupName(input.Role, input.GroupName) {
+		return User{}, clientError("group leader must have a valid group")
+	}
 	targetTenant, err := r.resolveActiveTenant(ctx, input.TenantID, "")
 	if err != nil {
 		return User{}, err
@@ -1606,6 +1609,9 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 	if input.GroupName == "" {
 		input.GroupName = "未分配归属"
 	}
+	if !validRoleGroupName(input.Role, input.GroupName) {
+		return User{}, clientError("group leader must have a valid group")
+	}
 	targetTenant, err := r.resolveActiveTenant(ctx, input.TenantID, "")
 	if err != nil {
 		return User{}, err
@@ -1690,6 +1696,9 @@ func (r *Repository) CreateUser(ctx context.Context, input UserCreateInput) (Use
 	}
 	if input.Status == "deleted" {
 		return User{}, clientError("invalid user create status")
+	}
+	if !validRoleGroupName(input.Role, input.GroupName) {
+		return User{}, clientError("group leader must have a valid group")
 	}
 	if input.ActorRole != "super_admin" && input.TenantID != tenant.TenantID {
 		return User{}, clientError("only system super admin can create users for another tenant")
@@ -6033,14 +6042,14 @@ WHERE id = $1 AND material_id = $2 AND tenant_id = $3::uuid AND status = 'reserv
 
 func (r *Repository) MaterialPurchases(ctx context.Context) ([]MaterialPurchase, error) {
 	tenant := TenantFromContext(ctx)
-	rows, err := r.db.Query(ctx, fmt.Sprintf(`
-SELECT %s
+	rows, err := r.db.Query(ctx, `
+SELECT `+materialPurchaseSelectColumnsSQL+`
 FROM material_purchases mp
 LEFT JOIN materials m ON m.id = mp.material_id
 WHERE ($1::boolean OR mp.tenant_id = $2::uuid)
 ORDER BY mp.created_at DESC
 LIMIT 100
-`, materialPurchaseSelectColumns()), tenant.AllTenants, tenant.TenantID)
+`, tenant.AllTenants, tenant.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -6117,13 +6126,13 @@ func validMaterialPurchaseMonth(month string) bool {
 
 func (r *Repository) MaterialPurchase(ctx context.Context, id string) (MaterialPurchase, error) {
 	tenant := TenantFromContext(ctx)
-	return scanMaterialPurchase(r.db.QueryRow(ctx, fmt.Sprintf(`
-SELECT %s
+	return scanMaterialPurchase(r.db.QueryRow(ctx, `
+SELECT `+materialPurchaseSelectColumnsSQL+`
 FROM material_purchases mp
 LEFT JOIN materials m ON m.id = mp.material_id
 WHERE mp.id = $1
   AND ($2::boolean OR mp.tenant_id = $3::uuid)
-`, materialPurchaseSelectColumns()), id, tenant.AllTenants, tenant.TenantID))
+`, id, tenant.AllTenants, tenant.TenantID))
 }
 
 func scanMaterialPurchase(row scanner) (MaterialPurchase, error) {
@@ -6160,16 +6169,15 @@ func scanMaterialPurchase(row scanner) (MaterialPurchase, error) {
 	return item, err
 }
 
-func materialPurchaseSelectColumns() string {
-	return `mp.id::text,
-	       COALESCE(mp.purchase_serial_no, ''),
-	       EXISTS (
-	           SELECT 1
-	           FROM material_purchase_monthly_confirmations mpmc
-	           WHERE mpmc.tenant_id = mp.tenant_id
-	             AND mpmc.month = to_char(mp.created_at, 'YYYY-MM')
-	       ) AS monthly_confirmed,
-	       COALESCE(mp.material_id::text, ''),
+const materialPurchaseSelectColumnsSQL = `mp.id::text,
+       COALESCE(mp.purchase_serial_no, ''),
+       EXISTS (
+           SELECT 1
+           FROM material_purchase_monthly_confirmations mpmc
+           WHERE mpmc.tenant_id = mp.tenant_id
+             AND mpmc.month = to_char(mp.created_at, 'YYYY-MM')
+       ) AS monthly_confirmed,
+       COALESCE(mp.material_id::text, ''),
        COALESCE(NULLIF(mp.purchase_item_name, ''), NULLIF(mp.purchase_project_name, ''), m.name, ''),
        COALESCE(mp.purchasable_material_id::text, ''),
        mp.purchase_id_no,
@@ -6193,7 +6201,6 @@ func materialPurchaseSelectColumns() string {
        mp.reason,
        mp.status,
        mp.created_at`
-}
 
 func (r *Repository) materialPurchaseBySerial(ctx context.Context, serial string) (MaterialPurchase, error) {
 	tenant := TenantFromContext(ctx)
@@ -6201,8 +6208,8 @@ func (r *Repository) materialPurchaseBySerial(ctx context.Context, serial string
 	if serial == "" {
 		return MaterialPurchase{}, clientError("material purchase serial no is required")
 	}
-	item, err := scanMaterialPurchase(r.db.QueryRow(ctx, fmt.Sprintf(`
-SELECT %s
+	item, err := scanMaterialPurchase(r.db.QueryRow(ctx, `
+SELECT `+materialPurchaseSelectColumnsSQL+`
 FROM material_purchases mp
 LEFT JOIN materials m ON m.id = mp.material_id
 WHERE mp.tenant_id = $2::uuid
@@ -6211,10 +6218,10 @@ WHERE mp.tenant_id = $2::uuid
       OR lower(mp.purchase_serial_no) = lower($1)
       OR lower(mp.purchase_id_no) = lower($1)
       OR lower(mp.purchase_sequence_no) = lower($1)
-  )
+)
 ORDER BY mp.created_at DESC
 LIMIT 1
-`, materialPurchaseSelectColumns()), serial, tenant.TenantID))
+`, serial, tenant.TenantID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return MaterialPurchase{}, clientError("material purchase serial no not found")
@@ -6406,7 +6413,7 @@ WHERE id = $1 AND ($2::boolean OR tenant_id = $3::uuid)
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
-	err = tx.QueryRow(ctx, fmt.Sprintf(`
+	err = tx.QueryRow(ctx, `
 WITH inserted AS (
   INSERT INTO material_purchases (
     tenant_id, purchase_serial_no, material_id, purchasable_material_id,
@@ -6417,10 +6424,10 @@ WITH inserted AS (
   VALUES ($1, $23, NULLIF($2, '')::uuid, NULLIF($3, '')::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 'registered', now())
   RETURNING *
 )
-SELECT %s
+SELECT `+materialPurchaseSelectColumnsSQL+`
 FROM inserted mp
 LEFT JOIN materials m ON m.id = mp.material_id
-`, materialPurchaseSelectColumns()), materialTenantID, input.MaterialID, item.PurchasableMaterialID, item.PurchaseIDNo, item.PurchaseSequenceNo, item.PurchaseProjectName, item.PurchaseItemName, item.PurchaseBrand, item.PurchaseSpec, item.PurchaseUnit, item.PurchaseRemark, item.PurchaseTechnicalRequirement, item.PurchaseMinSpec, requesterID, requesterName, requesterPhone, requesterEmail, groupName, input.Quantity, input.EstimatedUnitPrice, input.Supplier, input.Reason, serialNo).Scan(
+`, materialTenantID, input.MaterialID, item.PurchasableMaterialID, item.PurchaseIDNo, item.PurchaseSequenceNo, item.PurchaseProjectName, item.PurchaseItemName, item.PurchaseBrand, item.PurchaseSpec, item.PurchaseUnit, item.PurchaseRemark, item.PurchaseTechnicalRequirement, item.PurchaseMinSpec, requesterID, requesterName, requesterPhone, requesterEmail, groupName, input.Quantity, input.EstimatedUnitPrice, input.Supplier, input.Reason, serialNo).Scan(
 		&item.ID, &item.PurchaseSerialNo, &item.MonthlyConfirmed, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt,
 	)
 	if err != nil {
@@ -6523,7 +6530,7 @@ WHERE pm.id = $1
 	}()
 	var item MaterialPurchase
 	var itemTenantID string
-	err = tx.QueryRow(ctx, fmt.Sprintf(`
+	err = tx.QueryRow(ctx, `
 WITH updated AS (
   UPDATE material_purchases
   SET purchasable_material_id = $2,
@@ -6551,13 +6558,13 @@ WITH updated AS (
         FROM material_purchase_monthly_confirmations mpmc
         WHERE mpmc.tenant_id = material_purchases.tenant_id
           AND mpmc.month = to_char(material_purchases.created_at, 'YYYY-MM')
-    )
+  )
   RETURNING *
 )
-SELECT %s, mp.tenant_id::text
+SELECT `+materialPurchaseSelectColumnsSQL+`, mp.tenant_id::text
 FROM updated mp
 LEFT JOIN materials m ON m.id = mp.material_id
-`, materialPurchaseSelectColumns()), id, purchasable.ID, purchasable.IDNo, purchasable.SequenceNo, firstNonEmpty(purchasable.ProcurementProject, purchasable.ProjectName), purchasable.ProjectName, purchasable.Brand, purchasable.Spec, purchasable.Unit, purchasable.Remark, purchasable.TechnicalRequirement, purchasable.MinSpec, input.Quantity, input.EstimatedUnitPrice, input.Supplier, input.Reason, tenant.AllTenants, tenant.TenantID, tenant.Actor.UserID, canManageMaterialsRole(tenant.Actor.Role)).Scan(
+`, id, purchasable.ID, purchasable.IDNo, purchasable.SequenceNo, firstNonEmpty(purchasable.ProcurementProject, purchasable.ProjectName), purchasable.ProjectName, purchasable.Brand, purchasable.Spec, purchasable.Unit, purchasable.Remark, purchasable.TechnicalRequirement, purchasable.MinSpec, input.Quantity, input.EstimatedUnitPrice, input.Supplier, input.Reason, tenant.AllTenants, tenant.TenantID, tenant.Actor.UserID, canManageMaterialsRole(tenant.Actor.Role)).Scan(
 		&item.ID, &item.PurchaseSerialNo, &item.MonthlyConfirmed, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &itemTenantID,
 	)
 	if err != nil {
@@ -6594,7 +6601,7 @@ func (r *Repository) MarkMaterialPurchaseOrdered(ctx context.Context, id string,
 	notifications := make([]Notification, 0, 1)
 	var item MaterialPurchase
 	var itemTenantID string
-	err = tx.QueryRow(ctx, fmt.Sprintf(`
+	err = tx.QueryRow(ctx, `
 WITH updated AS (
   UPDATE material_purchases
   SET status = 'ordered', ordered_at = now()
@@ -6602,10 +6609,10 @@ WITH updated AS (
     AND ($2::boolean OR tenant_id = $3::uuid)
   RETURNING *
 )
-SELECT %s, mp.tenant_id::text
+SELECT `+materialPurchaseSelectColumnsSQL+`, mp.tenant_id::text
 FROM updated mp
 LEFT JOIN materials m ON m.id = mp.material_id
-	`, materialPurchaseSelectColumns()), id, tenant.AllTenants, tenant.TenantID).Scan(
+	`, id, tenant.AllTenants, tenant.TenantID).Scan(
 		&item.ID, &item.PurchaseSerialNo, &item.MonthlyConfirmed, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &itemTenantID,
 	)
 	if err != nil {
@@ -6732,17 +6739,17 @@ VALUES ($1, $2, $3, $4, $5)
 `, itemTenantID, item.MaterialID, item.ID, item.Quantity, materialBatchReason("申购到货入库", defaultBatchNo)); err != nil {
 		return MaterialPurchase{}, err
 	}
-	err = tx.QueryRow(ctx, fmt.Sprintf(`
+	err = tx.QueryRow(ctx, `
 WITH updated AS (
   UPDATE material_purchases
   SET status = 'received', received_at = now()
   WHERE id = $1 AND tenant_id = $2::uuid
   RETURNING *
 )
-SELECT %s
+SELECT `+materialPurchaseSelectColumnsSQL+`
 FROM updated mp
 LEFT JOIN materials m ON m.id = mp.material_id
-	`, materialPurchaseSelectColumns()), id, itemTenantID).Scan(&item.ID, &item.PurchaseSerialNo, &item.MonthlyConfirmed, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt)
+	`, id, itemTenantID).Scan(&item.ID, &item.PurchaseSerialNo, &item.MonthlyConfirmed, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt)
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
@@ -6797,7 +6804,7 @@ func (r *Repository) CancelMaterialPurchase(ctx context.Context, id string, acto
 	notifications := make([]Notification, 0, 1)
 	var item MaterialPurchase
 	var itemTenantID string
-	err = tx.QueryRow(ctx, fmt.Sprintf(`
+	err = tx.QueryRow(ctx, `
 WITH updated AS (
   UPDATE material_purchases
   SET status = 'cancelled'
@@ -6808,13 +6815,13 @@ WITH updated AS (
         FROM material_purchase_monthly_confirmations mpmc
         WHERE mpmc.tenant_id = material_purchases.tenant_id
           AND mpmc.month = to_char(material_purchases.created_at, 'YYYY-MM')
-    )
+  )
   RETURNING *
 )
-SELECT %s, mp.tenant_id::text
+SELECT `+materialPurchaseSelectColumnsSQL+`, mp.tenant_id::text
 FROM updated mp
 LEFT JOIN materials m ON m.id = mp.material_id
-	`, materialPurchaseSelectColumns()), id, tenant.AllTenants, tenant.TenantID).Scan(
+	`, id, tenant.AllTenants, tenant.TenantID).Scan(
 		&item.ID, &item.PurchaseSerialNo, &item.MonthlyConfirmed, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &itemTenantID,
 	)
 	if err != nil {
@@ -8027,7 +8034,7 @@ func (r *Repository) updateMaterialPurchaseStatus(ctx context.Context, id string
 	}()
 	notifications := make([]Notification, 0, 1)
 	var itemTenantID string
-	err = tx.QueryRow(ctx, fmt.Sprintf(`
+	err = tx.QueryRow(ctx, `
 WITH updated AS (
   UPDATE material_purchases
   SET status = $2, decided_at = now()
@@ -8038,13 +8045,13 @@ WITH updated AS (
         FROM material_purchase_monthly_confirmations mpmc
         WHERE mpmc.tenant_id = material_purchases.tenant_id
           AND mpmc.month = to_char(material_purchases.created_at, 'YYYY-MM')
-    )
+  )
   RETURNING *
 )
-SELECT %s, mp.tenant_id::text
+SELECT `+materialPurchaseSelectColumnsSQL+`, mp.tenant_id::text
 FROM updated mp
 LEFT JOIN materials m ON m.id = mp.material_id
-	`, materialPurchaseSelectColumns()), id, status, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &item.PurchaseSerialNo, &item.MonthlyConfirmed, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &itemTenantID)
+	`, id, status, tenant.AllTenants, tenant.TenantID).Scan(&item.ID, &item.PurchaseSerialNo, &item.MonthlyConfirmed, &item.MaterialID, &item.MaterialName, &item.PurchasableMaterialID, &item.PurchaseIDNo, &item.PurchaseSequenceNo, &item.PurchaseProjectName, &item.PurchaseItemName, &item.PurchaseBrand, &item.PurchaseSpec, &item.PurchaseUnit, &item.PurchaseRemark, &item.PurchaseTechnicalRequirement, &item.PurchaseMinSpec, &item.RequesterID, &item.Requester, &item.RequesterPhone, &item.RequesterEmail, &item.GroupName, &item.Quantity, &item.EstimatedUnitPrice, &item.Supplier, &item.Reason, &item.Status, &item.CreatedAt, &itemTenantID)
 	if err != nil {
 		return MaterialPurchase{}, err
 	}
@@ -9995,6 +10002,18 @@ func validRole(role string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func validRoleGroupName(role string, groupName string) bool {
+	if role != "group_leader" {
+		return true
+	}
+	switch strings.TrimSpace(groupName) {
+	case "", "未分配归属", "未分配课题组":
+		return false
+	default:
+		return true
 	}
 }
 

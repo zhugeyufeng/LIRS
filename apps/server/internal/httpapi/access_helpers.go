@@ -49,107 +49,63 @@ func canReviewMaterialGroup(actor store.Actor, groupName string) bool {
 }
 
 func filterReservationsForActor(actor store.Actor, items []store.Reservation) []store.Reservation {
-	filtered := make([]store.Reservation, 0, len(items))
-	for _, item := range items {
-		if canAccessReservation(actor, item) {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
+	return filterItems(items, func(item store.Reservation) bool {
+		return canAccessReservation(actor, item)
+	})
 }
 
 func filterLedgerForActor(actor store.Actor, items []store.LedgerEntry) []store.LedgerEntry {
 	if canManageFinance(actor) {
 		return items
 	}
-	filtered := make([]store.LedgerEntry, 0, len(items))
-	for _, item := range items {
-		if item.UserID == actor.UserID {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
+	return filterItems(items, func(item store.LedgerEntry) bool {
+		return item.UserID == actor.UserID
+	})
 }
 
 func filterFinancialAccountsForActor(actor store.Actor, items []store.FinancialAccount) []store.FinancialAccount {
 	if canManageFinance(actor) {
 		return items
 	}
-	filtered := make([]store.FinancialAccount, 0, 1)
-	for _, item := range items {
-		if item.UserID == actor.UserID {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
+	return filterItems(items, func(item store.FinancialAccount) bool {
+		return item.UserID == actor.UserID
+	})
 }
 
 func filterMaterialRequestsForActor(actor store.Actor, items []store.MaterialRequest) []store.MaterialRequest {
 	if canManageMaterials(actor) {
 		return items
 	}
-	filtered := make([]store.MaterialRequest, 0, len(items))
-	for _, item := range items {
-		if actor.Role == "group_leader" && item.GroupName == actor.GroupName {
-			filtered = append(filtered, item)
-			continue
-		}
-		if item.RequesterID == actor.UserID {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
+	return filterItems(items, func(item store.MaterialRequest) bool {
+		return canAccessMaterialActorRow(actor, item.GroupName, item.RequesterID)
+	})
 }
 
 func filterMaterialRequestExportRowsForActor(actor store.Actor, items []store.MaterialRequestExportRow) []store.MaterialRequestExportRow {
 	if canManageMaterials(actor) {
 		return items
 	}
-	filtered := make([]store.MaterialRequestExportRow, 0, len(items))
-	for _, item := range items {
-		if actor.Role == "group_leader" && item.GroupName == actor.GroupName {
-			filtered = append(filtered, item)
-			continue
-		}
-		if item.RequesterID == actor.UserID {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
+	return filterItems(items, func(item store.MaterialRequestExportRow) bool {
+		return canAccessMaterialActorRow(actor, item.GroupName, item.RequesterID)
+	})
 }
 
 func filterMaterialPurchasesForActor(actor store.Actor, items []store.MaterialPurchase) []store.MaterialPurchase {
 	if canManageMaterials(actor) {
 		return items
 	}
-	filtered := make([]store.MaterialPurchase, 0, len(items))
-	for _, item := range items {
-		if actor.Role == "group_leader" && item.GroupName == actor.GroupName {
-			filtered = append(filtered, item)
-			continue
-		}
-		if item.RequesterID == actor.UserID {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
+	return filterItems(items, func(item store.MaterialPurchase) bool {
+		return canAccessMaterialActorRow(actor, item.GroupName, item.RequesterID)
+	})
 }
 
 func filterMaterialDamagesForActor(actor store.Actor, items []store.MaterialDamage) []store.MaterialDamage {
 	if canManageMaterials(actor) {
 		return items
 	}
-	filtered := make([]store.MaterialDamage, 0, len(items))
-	for _, item := range items {
-		if actor.Role == "group_leader" && item.GroupName == actor.GroupName {
-			filtered = append(filtered, item)
-			continue
-		}
-		if item.ReporterID == actor.UserID {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
+	return filterItems(items, func(item store.MaterialDamage) bool {
+		return canAccessMaterialActorRow(actor, item.GroupName, item.ReporterID)
+	})
 }
 
 func canAccessNotification(actor store.Actor, item store.Notification) bool {
@@ -168,13 +124,26 @@ func canAccessNotification(actor store.Actor, item store.Notification) bool {
 }
 
 func filterNotificationsForActor(actor store.Actor, items []store.Notification) []store.Notification {
-	filtered := make([]store.Notification, 0, len(items))
+	return filterItems(items, func(item store.Notification) bool {
+		return canAccessNotification(actor, item)
+	})
+}
+
+func filterItems[T any](items []T, keep func(T) bool) []T {
+	filtered := make([]T, 0, len(items))
 	for _, item := range items {
-		if canAccessNotification(actor, item) {
+		if keep(item) {
 			filtered = append(filtered, item)
 		}
 	}
 	return filtered
+}
+
+func canAccessMaterialActorRow(actor store.Actor, groupName string, ownerID string) bool {
+	if actor.Role == "group_leader" && actor.GroupName != "" && groupName == actor.GroupName {
+		return true
+	}
+	return ownerID != "" && ownerID == actor.UserID
 }
 
 func authorizeReservationReview(c *gin.Context, repo repository, actor store.Actor, id string) bool {

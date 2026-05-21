@@ -336,6 +336,22 @@ func TestMaterialPurchaseStatusActionMapsReviewActions(t *testing.T) {
 	}
 }
 
+func TestValidRoleGroupNameRequiresAssignedGroupForLeader(t *testing.T) {
+	t.Parallel()
+
+	for _, groupName := range []string{"", "未分配归属", "未分配课题组"} {
+		if validRoleGroupName("group_leader", groupName) {
+			t.Fatalf("负责人不应允许无效归属: %q", groupName)
+		}
+	}
+	if !validRoleGroupName("group_leader", "李明团队") {
+		t.Fatal("负责人应允许明确归属")
+	}
+	if !validRoleGroupName("student", "") {
+		t.Fatal("普通用户不应强制要求归属")
+	}
+}
+
 func TestMaterialWorkflowStatusLabelCoversPurchaseStatuses(t *testing.T) {
 	t.Parallel()
 
