@@ -3,7 +3,7 @@
 import { FormEvent, startTransition, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Bot, Pencil, Save } from "lucide-react";
-import { AIAssistantSettings, AIAssistantSettingsPayload, browserPatch, Tenant, User } from "@/lib/api";
+import { AIAssistantSettings, AIAssistantSettingsPayload, aiAssistantProviderDefaults, browserPatch, Tenant, User } from "@/lib/api";
 import { confirmTwice } from "@/lib/confirm";
 import { AdminDialog } from "@/components/admin-dialog";
 import { Button } from "@/components/ui/button";
@@ -23,11 +23,13 @@ export function AIAssistantSettingsForm({
   const router = useRouter();
   const isSuperAdmin = currentUser.role === "super_admin";
   const [currentSettings, setCurrentSettings] = useState(settings);
+  const [selectedProvider, setSelectedProvider] = useState(settings.provider || "openai_compatible");
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
     setCurrentSettings(settings);
+    setSelectedProvider(settings.provider || "openai_compatible");
     setMessage("");
   }, [settings, selectedTenant.id]);
 
@@ -90,7 +92,7 @@ export function AIAssistantSettingsForm({
             </div>
           </div>
           <AdminDialog
-            description="API Key 留空时保持原配置不变。API 地址使用 OpenAI 兼容格式，例如 https://api.openai.com/v1。"
+            description="支持 OpenAI 兼容接口和 DeepSeek；切换供应商时会带出默认 API 地址和模型。"
             maxWidth="max-w-4xl"
             title="修改 AI 模型设置"
             trigger={
@@ -112,13 +114,14 @@ export function AIAssistantSettingsForm({
                   </label>
                   <label className="block space-y-2">
                     <span className="text-sm font-medium">供应商</span>
-                    <select className="h-10 w-full rounded-md border bg-white px-3 text-sm" defaultValue={currentSettings.provider || "openai_compatible"} name="provider">
+                    <select className="h-10 w-full rounded-md border bg-white px-3 text-sm" name="provider" onChange={(event) => setSelectedProvider(event.currentTarget.value)} value={selectedProvider}>
                       <option value="openai_compatible">OpenAI 兼容接口</option>
+                      <option value="deepseek">DeepSeek</option>
                     </select>
                     <FieldHint value="当前版本使用 /chat/completions 兼容协议。" />
                   </label>
-                  <Field defaultValue={currentSettings.baseUrl} label="API 地址" name="baseUrl" placeholder="https://api.openai.com/v1" type="url" />
-                  <Field defaultValue={currentSettings.model} label="模型名称" name="model" placeholder="gpt-4o-mini" />
+                  <Field defaultValue={defaultBaseUrl(currentSettings, selectedProvider)} key={`${selectedProvider}:baseUrl`} label="API 地址" name="baseUrl" placeholder={apiAddressPlaceholder(selectedProvider)} type="url" />
+                  <Field defaultValue={defaultModel(currentSettings, selectedProvider)} key={`${selectedProvider}:model`} label="模型名称" name="model" placeholder={modelPlaceholder(selectedProvider)} />
                   <Field
                     hint={currentSettings.apiKeyConfigured ? "当前：已配置，留空保持不变" : "当前：未配置"}
                     label={currentSettings.apiKeyConfigured ? "API Key（留空保持不变）" : "API Key"}
@@ -193,7 +196,32 @@ function tenantScopedPath(path: string, tenantId: string) {
 }
 
 function providerLabel(value: string) {
+  if (value === "deepseek") {
+    return "DeepSeek";
+  }
   return value === "openai_compatible" ? "OpenAI 兼容接口" : value || "未配置";
+}
+
+function defaultBaseUrl(settings: AIAssistantSettings, provider: string) {
+  if ((settings.provider || "openai_compatible") === provider && settings.baseUrl) {
+    return settings.baseUrl;
+  }
+  return aiAssistantProviderDefaults(provider).baseUrl;
+}
+
+function defaultModel(settings: AIAssistantSettings, provider: string) {
+  if ((settings.provider || "openai_compatible") === provider && settings.model) {
+    return settings.model;
+  }
+  return aiAssistantProviderDefaults(provider).model;
+}
+
+function apiAddressPlaceholder(provider: string) {
+  return aiAssistantProviderDefaults(provider).baseUrl;
+}
+
+function modelPlaceholder(provider: string) {
+  return aiAssistantProviderDefaults(provider).model;
 }
 
 function Summary({ label, value }: { label: string; value: string }) {

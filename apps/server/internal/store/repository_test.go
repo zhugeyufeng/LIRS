@@ -582,6 +582,43 @@ func TestDingTalkOAuthURLUsesConfiguredRedirectURI(t *testing.T) {
 	}
 }
 
+func TestAIAssistantProviderDefaults(t *testing.T) {
+	t.Parallel()
+
+	settings := normalizeAIAssistantSettingsValue(aiAssistantSettingsValue{Provider: "deepseek"})
+	if settings.Provider != aiAssistantProviderDeepSeek {
+		t.Fatalf("供应商应保留 DeepSeek，got=%s", settings.Provider)
+	}
+	if settings.BaseURL != "https://api.deepseek.com" {
+		t.Fatalf("DeepSeek API 地址错误：got=%s", settings.BaseURL)
+	}
+	if settings.Model != "deepseek-v4-flash" {
+		t.Fatalf("DeepSeek 默认模型错误：got=%s", settings.Model)
+	}
+}
+
+func TestAIAssistantProviderSwitchRequiresNewAPIKey(t *testing.T) {
+	t.Parallel()
+
+	oldValue := normalizeAIAssistantSettingsValue(aiAssistantSettingsValue{
+		Provider: aiAssistantProviderOpenAI,
+		BaseURL:  "https://api.openai.com/v1",
+		APIKey:   "openai-key",
+		Model:    "gpt-4o-mini",
+	})
+	input := AIAssistantSettingsInput{Enabled: true, Provider: aiAssistantProviderDeepSeek}
+	input.Provider = normalizeAIAssistantProvider(input.Provider)
+	defaults := aiAssistantProviderDefault(input.Provider)
+	input.BaseURL = defaults.baseURL
+	input.Model = defaults.model
+	if input.APIKey == "" && input.Provider == oldValue.Provider && strings.TrimRight(input.BaseURL, "/") == oldValue.BaseURL {
+		input.APIKey = oldValue.APIKey
+	}
+	if input.APIKey != "" {
+		t.Fatalf("切换供应商时不能复用旧 API Key，got=%s", input.APIKey)
+	}
+}
+
 func TestDingTalkSettingsFromValueDoesNotExposeSecrets(t *testing.T) {
 	t.Parallel()
 

@@ -24,7 +24,7 @@ export default async function AdminAIAssistantSettingsPage({ searchParams }: { s
   const settings = await api.aiAssistantSettings(selectedTenantId).catch(() => createDefaultAIAssistantSettings());
 
   return (
-    <AdminShell active="settings" title="AI 模型设置" description="按机构配置 AI 助手使用的 OpenAI 兼容模型 API、模型名称、密钥、温度和系统提示词。">
+    <AdminShell active="settings" title="AI 模型设置" description="按机构配置 AI 助手使用的模型供应商、API 地址、模型名称、密钥、温度和系统提示词。">
       <AdminSettingsNav active="ai-assistant" role={currentUser.role} />
       <AIAssistantSettingsForm currentUser={currentUser} selectedTenant={selectedTenant} settings={settings} tenants={tenants} />
     </AdminShell>

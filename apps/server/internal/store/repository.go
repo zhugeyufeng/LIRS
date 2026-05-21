@@ -44,14 +44,16 @@ type Repository struct {
 var appLocation = time.FixedZone("CST", 8*3600)
 
 const (
-	defaultTenantID          = "00000000-0000-0000-0000-000000000001"
-	footerSettingsKey        = "footer"
-	copySettingsKey          = "copy"
-	graphMailSettingsKey     = "graph_mail"
-	wechatSettingsKey        = "wechat"
-	dingTalkSettingsKey      = "dingtalk"
-	accessControlSettingsKey = "access_control"
-	aiAssistantSettingsKey   = "ai_assistant"
+	defaultTenantID             = "00000000-0000-0000-0000-000000000001"
+	footerSettingsKey           = "footer"
+	copySettingsKey             = "copy"
+	graphMailSettingsKey        = "graph_mail"
+	wechatSettingsKey           = "wechat"
+	dingTalkSettingsKey         = "dingtalk"
+	accessControlSettingsKey    = "access_control"
+	aiAssistantSettingsKey      = "ai_assistant"
+	aiAssistantProviderOpenAI   = "openai_compatible"
+	aiAssistantProviderDeepSeek = "deepseek"
 )
 
 func tenantScopedDingTalkSettingsKey(tenantID string) string {
@@ -214,6 +216,11 @@ type aiAssistantSettingsValue struct {
 	SystemPrompt string  `json:"systemPrompt"`
 	Temperature  float64 `json:"temperature"`
 	MaxTokens    int     `json:"maxTokens"`
+}
+
+type aiAssistantProviderDefaults struct {
+	baseURL string
+	model   string
 }
 
 func NewRepository(db *pgxpool.Pool, redisClient *redis.Client) *Repository {
@@ -856,20 +863,23 @@ func (r *Repository) SaveAIAssistantSettings(ctx context.Context, input AIAssist
 	if err != nil {
 		return AIAssistantSettings{}, err
 	}
-	if input.APIKey == "" {
-		input.APIKey = oldValue.APIKey
-	}
 	if input.Provider == "" {
-		input.Provider = "openai_compatible"
+		input.Provider = oldValue.Provider
 	}
+	input.Provider = normalizeAIAssistantProvider(input.Provider)
+	defaults := aiAssistantProviderDefault(input.Provider)
 	if input.BaseURL == "" {
-		input.BaseURL = defaultAIAssistantSettingsValue().BaseURL
+		input.BaseURL = defaults.baseURL
 	}
 	if input.Model == "" {
-		input.Model = defaultAIAssistantSettingsValue().Model
+		input.Model = defaults.model
 	}
 	if input.SystemPrompt == "" {
 		input.SystemPrompt = defaultAIAssistantSettingsValue().SystemPrompt
+	}
+	oldValue = normalizeAIAssistantSettingsValue(oldValue)
+	if input.APIKey == "" && input.Provider == oldValue.Provider && strings.TrimRight(input.BaseURL, "/") == oldValue.BaseURL {
+		input.APIKey = oldValue.APIKey
 	}
 	if input.Temperature < 0 {
 		input.Temperature = 0
@@ -6237,30 +6247,48 @@ func accessControlSettingsFromValue(value accessControlSettingsValue, updatedBy 
 }
 
 func defaultAIAssistantSettingsValue() aiAssistantSettingsValue {
+	defaults := aiAssistantProviderDefault(aiAssistantProviderOpenAI)
 	return aiAssistantSettingsValue{
-		Provider:     "openai_compatible",
-		BaseURL:      "https://api.openai.com/v1",
-		Model:        "gpt-4o-mini",
+		Provider:     aiAssistantProviderOpenAI,
+		BaseURL:      defaults.baseURL,
+		Model:        defaults.model,
 		SystemPrompt: "你是实验室运营系统的 AI 助手。请基于系统提供的机构数据回答预约、资源、培训、样本、空间和物联网设备相关问题。回答必须使用简体中文，结论清晰，不能编造系统数据之外的信息。",
 		Temperature:  0.2,
 		MaxTokens:    1200,
 	}
 }
 
+func normalizeAIAssistantProvider(provider string) string {
+	provider = strings.TrimSpace(provider)
+	switch provider {
+	case aiAssistantProviderOpenAI, aiAssistantProviderDeepSeek:
+		return provider
+	default:
+		return aiAssistantProviderOpenAI
+	}
+}
+
+func aiAssistantProviderDefault(provider string) aiAssistantProviderDefaults {
+	switch normalizeAIAssistantProvider(provider) {
+	case aiAssistantProviderDeepSeek:
+		return aiAssistantProviderDefaults{baseURL: "https://api.deepseek.com", model: "deepseek-v4-flash"}
+	default:
+		return aiAssistantProviderDefaults{baseURL: "https://api.openai.com/v1", model: "gpt-4o-mini"}
+	}
+}
+
 func normalizeAIAssistantSettingsValue(value aiAssistantSettingsValue) aiAssistantSettingsValue {
 	defaults := defaultAIAssistantSettingsValue()
-	value.Provider = strings.TrimSpace(value.Provider)
-	if value.Provider == "" {
-		value.Provider = defaults.Provider
-	}
+	value.Provider = normalizeAIAssistantProvider(value.Provider)
+	providerDefaults := aiAssistantProviderDefault(value.Provider)
 	value.BaseURL = strings.TrimRight(strings.TrimSpace(value.BaseURL), "/")
 	if value.BaseURL == "" {
-		value.BaseURL = defaults.BaseURL
+		value.BaseURL = providerDefaults.baseURL
 	}
 	value.APIKey = strings.TrimSpace(value.APIKey)
 	value.Model = strings.TrimSpace(value.Model)
 	if value.Model == "" {
-		value.Model = defaults.Model
+		value.Model = providerDefaults.model
 	}
 	value.SystemPrompt = strings.TrimSpace(value.SystemPrompt)
 	if value.SystemPrompt == "" {

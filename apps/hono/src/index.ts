@@ -581,7 +581,7 @@ const assistantQuerySchema = z.object({
 });
 const aiAssistantSettingsSchema = z.object({
   enabled: z.boolean().optional().default(false),
-  provider: z.string().optional().default("openai_compatible"),
+  provider: z.enum(["openai_compatible", "deepseek"]).optional().default("openai_compatible"),
   baseUrl: z.string().optional().default(""),
   apiKey: z.string().optional().default(""),
   model: z.string().optional().default(""),

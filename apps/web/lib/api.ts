@@ -1507,6 +1507,21 @@ export function createDefaultAIAssistantSettings(): AIAssistantSettings {
   };
 }
 
+export function aiAssistantProviderDefaults(provider: string): Pick<AIAssistantSettings, "provider" | "baseUrl" | "model"> {
+  if (provider === "deepseek") {
+    return {
+      provider: "deepseek",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-v4-flash",
+    };
+  }
+  return {
+    provider: "openai_compatible",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4o-mini",
+  };
+}
+
 function copyEntry(key: string, label: string, value: string, scope: string, description: string): CopyEntry {
   return { key, label, value, scope, description };
 }

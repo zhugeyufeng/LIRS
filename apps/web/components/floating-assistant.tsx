@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { Bot, ChevronDown, MessageSquareText, Send, X } from "lucide-react";
+import { Bot, ChevronDown, MessageSquareText, Send } from "lucide-react";
 import { AssistantQuery, browserPost, type User } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
@@ -64,10 +64,6 @@ export function FloatingAssistant({ currentUser }: { currentUser: User }) {
           <Button className="h-8 w-8 text-white hover:bg-white/10" onClick={() => setOpen(false)} size="icon" type="button" variant="ghost">
             <ChevronDown className="h-4 w-4" aria-hidden="true" />
             <span className="sr-only">收起 AI 助手</span>
-          </Button>
-          <Button className="h-8 w-8 text-white hover:bg-white/10" onClick={() => setMessages([])} size="icon" type="button" variant="ghost">
-            <X className="h-4 w-4" aria-hidden="true" />
-            <span className="sr-only">清空当前对话</span>
           </Button>
         </div>
       </div>
