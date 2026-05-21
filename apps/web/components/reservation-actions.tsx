@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useState } from "react";
+import { startTransition, useOptimistic, useState } from "react";
 import { useRouter } from "next/navigation";
 import { browserPatch, Reservation } from "@/lib/api";
 import { AdminDialog } from "@/components/admin-dialog";
@@ -27,18 +27,25 @@ export function ReservationActions({
   const [rejectComment, setRejectComment] = useState("");
   const [cancelReason, setCancelReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [visibleStatus, setVisibleStatus] = useOptimistic(status, (_currentStatus: string, nextStatus: string) => nextStatus);
 
-  async function patch(path: string, payload?: unknown, close?: () => void) {
+  async function patch(path: string, nextStatus: string, payload?: unknown, close?: () => void) {
     setBusy(true);
-    setMessage("");
+    startTransition(() => {
+      setVisibleStatus(nextStatus);
+    });
+    setMessage(`正在更新为 ${reservationStatusLabel(nextStatus)}`);
     try {
       const reservation = await browserPatch<Reservation>(path, payload);
-      setMessage(`已更新为 ${reservation.status}`);
+      setMessage(`已更新为 ${reservationStatusLabel(reservation.status)}`);
       close?.();
       startTransition(() => {
         router.refresh();
       });
     } catch (error) {
+      startTransition(() => {
+        setVisibleStatus(status);
+      });
       setMessage(error instanceof Error ? error.message : "操作失败");
     } finally {
       setBusy(false);
@@ -47,7 +54,8 @@ export function ReservationActions({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {status === "pending" && canReview ? (
+      <span className="w-fit rounded bg-slate-100 px-2 py-1 text-xs font-bold">{reservationStatusLabel(visibleStatus)}</span>
+      {visibleStatus === "pending" && canReview ? (
         <>
           <AdminDialog
             description="填写审批意见后通过该预约。"
@@ -71,7 +79,7 @@ export function ReservationActions({
                   <span className="block break-all text-xs text-slate-500">当前预约 ID：{id}</span>
                 </label>
                 <div className="flex justify-end">
-                  <Button className="w-full sm:w-auto" disabled={busy} onClick={() => patch(`/api/reservations/${id}/approve`, { comment: approveComment }, close)} type="button">
+                  <Button className="w-full sm:w-auto" disabled={busy} onClick={() => patch(`/api/reservations/${id}/approve`, "approved", { comment: approveComment }, close)} type="button">
                     确认通过
                   </Button>
                 </div>
@@ -100,7 +108,7 @@ export function ReservationActions({
                   <span className="block break-all text-xs text-slate-500">当前预约 ID：{id}</span>
                 </label>
                 <div className="flex justify-end">
-                  <Button className="w-full sm:w-auto" disabled={busy} onClick={() => patch(`/api/reservations/${id}/reject`, { comment: rejectComment }, close)} type="button" variant="outline">
+                  <Button className="w-full sm:w-auto" disabled={busy} onClick={() => patch(`/api/reservations/${id}/reject`, "rejected", { comment: rejectComment }, close)} type="button" variant="outline">
                     确认拒绝
                   </Button>
                 </div>
@@ -109,19 +117,19 @@ export function ReservationActions({
           </AdminDialog>
         </>
       ) : null}
-      {status === "approved" && canCheckIn ? (
-        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={busy} onClick={() => patch(`/api/reservations/${id}/check-in`)} size="sm" variant="outline">
+      {visibleStatus === "approved" && canCheckIn ? (
+        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={busy} onClick={() => patch(`/api/reservations/${id}/check-in`, "in_use")} size="sm" variant="outline">
           签到
         </Button>
       ) : null}
-      {status === "in_use" && canCheckOut ? (
+      {visibleStatus === "in_use" && canCheckOut ? (
         <>
-          <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={busy} onClick={() => patch(`/api/reservations/${id}/check-out`)} size="sm">
+          <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={busy} onClick={() => patch(`/api/reservations/${id}/check-out`, "completed")} size="sm">
             签退并入账
           </Button>
         </>
       ) : null}
-      {canCancel && !canReview && (status === "pending" || status === "approved") ? (
+      {canCancel && !canReview && (visibleStatus === "pending" || visibleStatus === "approved") ? (
         <AdminDialog
           description="取消后该预约时段会释放，请填写取消原因。"
           title="取消预约"
@@ -144,7 +152,7 @@ export function ReservationActions({
                 <span className="block break-all text-xs text-slate-500">当前预约 ID：{id}</span>
               </label>
               <div className="flex justify-end">
-                <Button className="w-full sm:w-auto" disabled={busy} onClick={() => patch(`/api/reservations/${id}/cancel`, { reason: cancelReason }, close)} type="button" variant="outline">
+                <Button className="w-full sm:w-auto" disabled={busy} onClick={() => patch(`/api/reservations/${id}/cancel`, "cancelled", { reason: cancelReason }, close)} type="button" variant="outline">
                   确认取消
                 </Button>
               </div>
@@ -155,4 +163,16 @@ export function ReservationActions({
       {message ? <span className="text-xs text-slate-500">{message}</span> : null}
     </div>
   );
+}
+
+function reservationStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    pending: "待审批",
+    approved: "已通过",
+    rejected: "已拒绝",
+    in_use: "使用中",
+    completed: "已完成",
+    cancelled: "已取消",
+  };
+  return labels[status] ?? status;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, startTransition, useState } from "react";
+import { FormEvent, startTransition, useOptimistic, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PlusCircle, Save } from "lucide-react";
 import { browserPatch, browserPost, Instrument, MaintenanceOrder, MaintenancePayload } from "@/lib/api";
@@ -113,17 +113,24 @@ export function MaintenanceCompleteButton({ id, status }: { id: string; status: 
   const router = useRouter();
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState(false);
+  const [visibleStatus, setVisibleStatus] = useOptimistic(status, (_currentStatus: string, nextStatus: string) => nextStatus);
 
-  async function patch(path: string, payload?: unknown) {
+  async function patch(path: string, nextStatus: string, payload?: unknown) {
     setPending(true);
-    setMessage("");
+    startTransition(() => {
+      setVisibleStatus(nextStatus);
+    });
+    setMessage(`正在更新为：${maintenanceStatusLabel(nextStatus)}`);
     try {
       const order = await browserPatch<MaintenanceOrder>(path, payload);
-      setMessage(`已更新为：${order.status}`);
+      setMessage(`已更新为：${maintenanceStatusLabel(order.status)}`);
       startTransition(() => {
         router.refresh();
       });
     } catch (error) {
+      startTransition(() => {
+        setVisibleStatus(status);
+      });
       setMessage(error instanceof Error ? error.message : "操作失败");
     } finally {
       setPending(false);
@@ -132,22 +139,34 @@ export function MaintenanceCompleteButton({ id, status }: { id: string; status: 
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {(status === "reported" || status === "assigned") ? (
-        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/maintenance/${id}/start`)} size="sm" variant="outline">
+      <span className="w-fit rounded bg-slate-100 px-2 py-1 text-xs font-bold">{maintenanceStatusLabel(visibleStatus)}</span>
+      {(visibleStatus === "reported" || visibleStatus === "assigned") ? (
+        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/maintenance/${id}/start`, "in_progress")} size="sm" variant="outline">
           开始处理
         </Button>
       ) : null}
-      {status !== "completed" && status !== "cancelled" ? (
-        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/maintenance/${id}/complete`, { result: "维护完成，仪器恢复可用。" })} size="sm">
+      {visibleStatus !== "completed" && visibleStatus !== "cancelled" ? (
+        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/maintenance/${id}/complete`, "completed", { result: "维护完成，仪器恢复可用。" })} size="sm">
           完成
         </Button>
       ) : null}
-      {status !== "completed" && status !== "cancelled" ? (
-        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/maintenance/${id}/cancel`, { reason: "维护计划取消" })} size="sm" variant="ghost">
+      {visibleStatus !== "completed" && visibleStatus !== "cancelled" ? (
+        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/maintenance/${id}/cancel`, "cancelled", { reason: "维护计划取消" })} size="sm" variant="ghost">
           取消
         </Button>
       ) : null}
       {message ? <span className="text-xs text-slate-500">{message}</span> : null}
     </div>
   );
+}
+
+function maintenanceStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    reported: "已上报",
+    assigned: "已派工",
+    in_progress: "处理中",
+    completed: "已完成",
+    cancelled: "已取消",
+  };
+  return labels[status] ?? status;
 }

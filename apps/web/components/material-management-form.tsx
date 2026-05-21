@@ -1,6 +1,6 @@
 "use client";
 
-import { type DragEvent, FormEvent, startTransition, useEffect, useMemo, useState } from "react";
+import { type DragEvent, FormEvent, startTransition, useEffect, useMemo, useOptimistic, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Download, GripVertical, PackagePlus, Pencil, Save, SlidersHorizontal, Trash2, Upload } from "lucide-react";
 import { browserDelete, browserPatch, browserPost, Material, MaterialAlertAction, MaterialAlertActionPayload, MaterialCategory, MaterialCategoryPayload, MaterialDamage, MaterialDamagePayload, MaterialImportResult, MaterialPayload, PurchasableMaterial, StockAdjustmentPayload } from "@/lib/api";
@@ -396,10 +396,14 @@ export function MaterialDamageActions({
   const [approveComment, setApproveComment] = useState("");
   const [rejectComment, setRejectComment] = useState("");
   const [pending, setPending] = useState(false);
+  const [visibleStatus, setVisibleStatus] = useOptimistic(status, (_currentStatus: string, nextStatus: string) => nextStatus);
 
-  async function patch(path: string, payload?: unknown, close?: () => void) {
+  async function patch(path: string, nextStatus: string, payload?: unknown, close?: () => void) {
     setPending(true);
-    setMessage("");
+    startTransition(() => {
+      setVisibleStatus(nextStatus);
+    });
+    setMessage(`正在更新为 ${damageStatusLabel(nextStatus)}`);
     try {
       const item = await browserPatch<MaterialDamage>(path, payload);
       setMessage(`已更新为 ${damageStatusLabel(item.status)}`);
@@ -408,6 +412,9 @@ export function MaterialDamageActions({
         router.refresh();
       });
     } catch (error) {
+      startTransition(() => {
+        setVisibleStatus(status);
+      });
       setMessage(error instanceof Error ? error.message : "操作失败");
     } finally {
       setPending(false);
@@ -416,7 +423,8 @@ export function MaterialDamageActions({
 
   return (
     <div className="grid w-full gap-2 sm:flex sm:flex-wrap sm:items-center">
-      {status === "pending" && canReview ? (
+      <span className="w-fit rounded bg-slate-100 px-2 py-1 text-xs font-bold">{damageStatusLabel(visibleStatus)}</span>
+      {visibleStatus === "pending" && canReview ? (
         <>
           <AdminDialog
             description="通过后还需执行损毁处理，库存才会自动扣减。"
@@ -434,7 +442,7 @@ export function MaterialDamageActions({
                   <input className="h-10 w-full min-w-0 rounded-md border bg-white px-3 text-sm" onChange={(event) => setApproveComment(event.target.value)} placeholder="填写审核备注" value={approveComment} />
                 </label>
                 <div className="flex justify-end">
-                  <Button className="w-full sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-damages/${id}/approve`, { comment: approveComment }, close)} type="button">
+                  <Button className="w-full sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-damages/${id}/approve`, "approved", { comment: approveComment }, close)} type="button">
                     确认通过
                   </Button>
                 </div>
@@ -457,7 +465,7 @@ export function MaterialDamageActions({
                   <input className="h-10 w-full min-w-0 rounded-md border bg-white px-3 text-sm" onChange={(event) => setRejectComment(event.target.value)} placeholder="填写拒绝原因" value={rejectComment} />
                 </label>
                 <div className="flex justify-end">
-                  <Button className="w-full sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-damages/${id}/reject`, { comment: rejectComment }, close)} type="button" variant="outline">
+                  <Button className="w-full sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-damages/${id}/reject`, "rejected", { comment: rejectComment }, close)} type="button" variant="outline">
                     确认拒绝
                   </Button>
                 </div>
@@ -466,8 +474,8 @@ export function MaterialDamageActions({
           </AdminDialog>
         </>
       ) : null}
-      {status === "approved" && canProcess ? (
-        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-damages/${id}/process`)} size="sm">
+      {visibleStatus === "approved" && canProcess ? (
+        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-damages/${id}/process`, "processed")} size="sm">
           处理扣减
         </Button>
       ) : null}

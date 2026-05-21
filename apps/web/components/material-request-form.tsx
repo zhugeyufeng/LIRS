@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, startTransition, useState } from "react";
+import { FormEvent, startTransition, useOptimistic, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ClipboardList } from "lucide-react";
 import { browserPatch, browserPost, Material, MaterialRequest, MaterialRequestPayload } from "@/lib/api";
@@ -137,18 +137,25 @@ export function MaterialRequestActions({
   const [approveComment, setApproveComment] = useState("");
   const [rejectComment, setRejectComment] = useState("");
   const [pending, setPending] = useState(false);
+  const [visibleStatus, setVisibleStatus] = useOptimistic(status, (_currentStatus: string, nextStatus: string) => nextStatus);
 
-  async function patch(path: string, payload?: unknown, close?: () => void) {
+  async function patch(path: string, nextStatus: string, payload?: unknown, close?: () => void) {
     setPending(true);
-    setMessage("");
+    startTransition(() => {
+      setVisibleStatus(nextStatus);
+    });
+    setMessage(`正在更新为 ${materialRequestStatusLabel(nextStatus)}`);
     try {
       const item = await browserPatch<MaterialRequest>(path, payload);
-      setMessage(`已更新为 ${item.status}`);
+      setMessage(`已更新为 ${materialRequestStatusLabel(item.status)}`);
       close?.();
       startTransition(() => {
         router.refresh();
       });
     } catch (error) {
+      startTransition(() => {
+        setVisibleStatus(status);
+      });
       setMessage(error instanceof Error ? error.message : "操作失败");
     } finally {
       setPending(false);
@@ -157,7 +164,8 @@ export function MaterialRequestActions({
 
   return (
     <div className="grid w-full gap-2 sm:flex sm:flex-wrap sm:items-center">
-      {status === "pending" && canReview ? (
+      <span className="w-fit rounded bg-slate-100 px-2 py-1 text-xs font-bold">{materialRequestStatusLabel(visibleStatus)}</span>
+      {visibleStatus === "pending" && canReview ? (
         <>
           <AdminDialog
             description="填写审批意见后通过该申领单。"
@@ -181,7 +189,7 @@ export function MaterialRequestActions({
                   <span className="block break-all text-xs text-slate-500">当前申领单 ID：{id}</span>
                 </label>
                 <div className="flex justify-end">
-                  <Button className="w-full sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-requests/${id}/approve`, { comment: approveComment }, close)} type="button">
+                  <Button className="w-full sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-requests/${id}/approve`, "approved", { comment: approveComment }, close)} type="button">
                     确认通过
                   </Button>
                 </div>
@@ -210,7 +218,7 @@ export function MaterialRequestActions({
                   <span className="block break-all text-xs text-slate-500">当前申领单 ID：{id}</span>
                 </label>
                 <div className="flex justify-end">
-                  <Button className="w-full sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-requests/${id}/reject`, { comment: rejectComment }, close)} type="button" variant="outline">
+                  <Button className="w-full sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-requests/${id}/reject`, "rejected", { comment: rejectComment }, close)} type="button" variant="outline">
                     确认拒绝
                   </Button>
                 </div>
@@ -219,17 +227,28 @@ export function MaterialRequestActions({
           </AdminDialog>
         </>
       ) : null}
-      {status === "approved" && canOutbound ? (
-        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-requests/${id}/outbound`)} size="sm">
+      {visibleStatus === "approved" && canOutbound ? (
+        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-requests/${id}/outbound`, "outbound")} size="sm">
           出库
         </Button>
       ) : null}
-      {canCancel && (status === "pending" || status === "approved") ? (
-        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-requests/${id}/cancel`)} size="sm" variant="ghost">
+      {canCancel && (visibleStatus === "pending" || visibleStatus === "approved") ? (
+        <Button className="h-10 w-full sm:h-8 sm:w-auto" disabled={pending} onClick={() => patch(`/api/material-requests/${id}/cancel`, "cancelled")} size="sm" variant="ghost">
           取消
         </Button>
       ) : null}
       {message ? <span className="text-xs text-slate-500 sm:basis-full">{message}</span> : null}
     </div>
   );
+}
+
+function materialRequestStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    pending: "待审批",
+    approved: "已通过",
+    rejected: "已拒绝",
+    outbound: "已出库",
+    cancelled: "已取消",
+  };
+  return labels[status] ?? status;
 }
