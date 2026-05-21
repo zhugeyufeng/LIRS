@@ -17,7 +17,7 @@ import { AdminShell, requireAdmin } from "@/components/admin-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { canAccessAdminSection, type AdminSection } from "@/lib/permissions";
-import { reservationStatusLabel } from "@/lib/status-labels";
+import { auditActionLabel, auditTargetTypeLabel, reservationStatusLabel } from "@/lib/status-labels";
 
 export default async function AdminPage() {
   const currentUser = await requireAdmin();
@@ -141,9 +141,9 @@ async function AuditEventsCard() {
         {auditEvents.slice(0, 12).map((event) => (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 text-sm" key={event.id}>
             <div className="min-w-0">
-              <p className="font-bold">{event.action}</p>
+              <p className="font-bold">{auditActionLabel(event.action)}</p>
               <p className="mt-1 break-words text-xs text-slate-500">
-                {event.actor} / {event.targetType} / {event.targetId}
+                {event.actor} / {auditTargetTypeLabel(event.targetType)} / {event.targetId}
               </p>
             </div>
             <span className="shrink-0 text-xs text-slate-500">{formatDateTime(event.createdAt)}</span>

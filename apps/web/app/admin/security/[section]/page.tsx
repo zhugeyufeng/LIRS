@@ -4,7 +4,7 @@ import { ArrowLeft, AlertTriangle, HardDrive, ShieldCheck } from "lucide-react";
 import { AdminShell, requireAdmin } from "@/components/admin-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type AuditEvent } from "@/lib/api";
-import { alertLevelLabel } from "@/lib/status-labels";
+import { alertLevelLabel, auditActionLabel, auditTargetTypeLabel, auditValueLabel } from "@/lib/status-labels";
 
 type Section = "login-logs" | "operation-logs" | "data-audit" | "permission-audit" | "risks" | "backups" | "compliance";
 
@@ -124,9 +124,9 @@ function AuditEventRow({ event }: { event: AuditEvent }) {
     <div className="rounded-lg border p-4 text-sm">
       <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">
         <div className="min-w-0">
-          <p className="font-bold text-slate-900">{event.action}</p>
+          <p className="font-bold text-slate-900">{auditActionLabel(event.action)}</p>
           <p className="mt-1 break-words text-xs text-slate-500">
-            {event.actor} / {event.targetType} / {event.targetId}
+            {event.actor} / {auditTargetTypeLabel(event.targetType)} / {event.targetId}
           </p>
         </div>
         <span className="shrink-0 text-xs text-slate-500">{formatDateTime(event.createdAt)}</span>
@@ -143,7 +143,7 @@ function Detail({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md bg-slate-50 p-3">
       <p className="text-xs text-slate-500">{label}</p>
-      <p className="mt-2 break-words text-sm leading-6 text-slate-700">{value || "无"}</p>
+      <p className="mt-2 break-words text-sm leading-6 text-slate-700">{auditValueLabel(value)}</p>
     </div>
   );
 }
