@@ -97,7 +97,11 @@ func appToday() time.Time {
 }
 
 func appDateString() string {
-	return appNow().Format("2006-01-02")
+	return appDateStringAt(appNow())
+}
+
+func appDateStringAt(t time.Time) string {
+	return t.In(appLocation).Format("2006-01-02")
 }
 
 func appDateSQL() string {
@@ -7299,8 +7303,8 @@ func (r *Repository) MaterialAnalytics(ctx context.Context) (MaterialAnalytics, 
 	if err != nil {
 		return MaterialAnalytics{}, err
 	}
-	now := time.Now().UTC()
-	today := now.Format("2006-01-02")
+	now := appNow()
+	today := appDateStringAt(now)
 	result := MaterialAnalytics{
 		ProductTotal:         len(materials),
 		MonthlyConsumption:   make([]MaterialConsumptionPoint, 0, 12),
@@ -7348,11 +7352,11 @@ func (r *Repository) MaterialAnalytics(ctx context.Context) (MaterialAnalytics, 
 		if item.Status != "outbound" {
 			continue
 		}
-		createdDate := item.CreatedAt.UTC().Format("2006-01-02")
+		createdDate := appDateStringAt(item.CreatedAt)
 		if createdDate == today {
 			result.TodayUsageTotal += item.Quantity
 		}
-		month := item.CreatedAt.UTC().Format("2006-01")
+		month := item.CreatedAt.In(appLocation).Format("2006-01")
 		if _, ok := monthly[month]; ok {
 			monthly[month] += item.Quantity
 		}

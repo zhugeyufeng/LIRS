@@ -79,6 +79,15 @@ func TestAppDateStringUsesApplicationTimezone(t *testing.T) {
 	}
 }
 
+func TestAppDateStringAtUsesApplicationTimezone(t *testing.T) {
+	t.Parallel()
+
+	ts := time.Date(2026, 5, 20, 16, 0, 0, 0, time.UTC)
+	if got := appDateStringAt(ts); got != "2026-05-21" {
+		t.Fatalf("expected application date to advance across UTC boundary, got %s", got)
+	}
+}
+
 func TestProfileFieldChanged(t *testing.T) {
 	t.Parallel()
 
