@@ -11,11 +11,12 @@ type GroupedSlots = Record<string, Slot[]>;
 
 export default async function InstrumentCalendarPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const instrument = await api.instrument(id);
+  const [instrument, currentUser] = await Promise.all([api.instrument(id), api.currentUserOptional()]);
   const days = Math.max(1, Math.min(instrument.bookingWindowDays, 30));
   const slots = await api.slots(id, days);
   const grouped = groupSlots(slots);
   const availableCount = slots.filter((slot) => slot.status === "available").length;
+  const reserveHref = currentUser ? `/instruments/${instrument.id}/reserve` : `/login?next=${encodeURIComponent(`/instruments/${instrument.id}/reserve`)}`;
 
   return (
     <AppShell>
@@ -33,7 +34,7 @@ export default async function InstrumentCalendarPage({ params }: { params: Promi
           </p>
         </div>
         <Button asChild className="w-full sm:w-auto">
-          <Link href={`/instruments/${instrument.id}/reserve`} prefetch={false}>提交预约</Link>
+          <Link href={reserveHref} prefetch={false}>{currentUser ? "提交预约" : "登录后预约"}</Link>
         </Button>
       </div>
 

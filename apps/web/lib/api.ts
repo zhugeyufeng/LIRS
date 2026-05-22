@@ -1246,6 +1246,10 @@ function businessRequest<T>(path: string, tag: string, init?: RequestInit): Prom
   return request<T>(path, init, { businessCacheKey: tag });
 }
 
+function publicBusinessRequest<T>(path: string, tag: string, init?: RequestInit): Promise<T> {
+  return request<T>(path, init, { businessCacheKey: tag, skipAuth: true });
+}
+
 async function createBusinessDataCacheKey(path: string, init: RequestInit | undefined, authHeaders: Record<string, string>, tag: string) {
   return JSON.stringify([tag, init?.method ?? "GET", path, await hashCacheToken(authHeaders.Authorization ?? "")]);
 }
@@ -1271,9 +1275,9 @@ export const api = {
   dingTalkBinding: () => request<DingTalkBinding>("/api/me/dingtalk-binding"),
   accessControlSettings: () => businessRequest<AccessControlSettings>("/api/access-control-settings", "access-control-settings"),
   aiAssistantSettings: (tenantId?: string) => businessRequest<AIAssistantSettings>(withQuery("/api/ai-assistant-settings", { tenantId }), `ai-assistant-settings:${tenantId ?? ""}`),
-  instruments: (filters: InstrumentFilters = {}) => businessRequest<Instrument[]>(withQuery("/api/instruments", filters), "instruments"),
-  instrument: (id: string) => businessRequest<Instrument>(`/api/instruments/${id}`, "instruments"),
-  slots: (id: string, days = 7) => businessRequest<Slot[]>(`/api/instruments/${id}/slots?days=${days}`, "instrument-slots"),
+  instruments: (filters: InstrumentFilters = {}) => publicBusinessRequest<Instrument[]>(withQuery("/api/instruments", filters), "instruments"),
+  instrument: (id: string) => publicBusinessRequest<Instrument>(`/api/instruments/${id}`, "instruments"),
+  slots: (id: string, days = 7) => publicBusinessRequest<Slot[]>(`/api/instruments/${id}/slots?days=${days}`, "instrument-slots"),
   trainingCourses: () => businessRequest<TrainingCourse[]>("/api/training/courses", "training-courses"),
   trainingAuthorizations: () => businessRequest<TrainingAuthorization[]>("/api/training/authorizations", "training-authorizations"),
   trainingQuestions: () => businessRequest<TrainingQuestion[]>("/api/training/questions", "training-questions"),

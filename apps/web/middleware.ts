@@ -10,7 +10,6 @@ const protectedPrefixes = [
   "/maintenance",
   "/materials",
   "/notifications",
-  "/instruments",
   "/operations",
   "/reservations",
   "/training",
@@ -21,8 +20,18 @@ const protectedPrefixes = [
   "/settings",
 ];
 
+function isPublicInstrumentPath(pathname: string) {
+  if (pathname === "/instruments") {
+    return true;
+  }
+  return /^\/instruments\/[^/]+(?:\/calendar)?$/.test(pathname);
+}
+
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+  if (isPublicInstrumentPath(pathname)) {
+    return NextResponse.next();
+  }
   if (!protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
     return NextResponse.next();
   }

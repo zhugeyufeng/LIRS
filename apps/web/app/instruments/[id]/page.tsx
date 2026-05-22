@@ -9,8 +9,10 @@ import { instrumentStatusLabel } from "@/lib/status-labels";
 
 export default async function InstrumentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const instrument = await api.instrument(id);
+  const [instrument, currentUser] = await Promise.all([api.instrument(id), api.currentUserOptional()]);
   const previewDays = Math.max(1, Math.min(instrument.bookingWindowDays, 14));
+  const reserveHref = currentUser ? `/instruments/${instrument.id}/reserve` : `/login?next=${encodeURIComponent(`/instruments/${instrument.id}/reserve`)}`;
+  const reserveLabel = currentUser ? "预约仪器" : "登录后预约";
 
   return (
     <AppShell>
@@ -43,9 +45,9 @@ export default async function InstrumentDetailPage({ params }: { params: Promise
                     </Link>
                   </Button>
                   <Button asChild>
-                    <Link href={`/instruments/${instrument.id}/reserve`} prefetch={false}>
+                    <Link href={reserveHref} prefetch={false}>
                       <CalendarPlus className="h-4 w-4" aria-hidden="true" />
-                      预约仪器
+                      {reserveLabel}
                     </Link>
                   </Button>
                 </div>
@@ -108,9 +110,9 @@ export default async function InstrumentDetailPage({ params }: { params: Promise
                   </Link>
                 </Button>
                 <Button asChild className="w-full sm:w-auto">
-                  <Link href={`/instruments/${instrument.id}/reserve`} prefetch={false}>
+                  <Link href={reserveHref} prefetch={false}>
                     <CalendarPlus className="h-4 w-4" aria-hidden="true" />
-                    选择时段预约
+                    {currentUser ? "选择时段预约" : "登录后预约"}
                   </Link>
                 </Button>
               </div>
@@ -146,9 +148,9 @@ export default async function InstrumentDetailPage({ params }: { params: Promise
                 </Link>
               </Button>
               <Button asChild className="w-full">
-                <Link href={`/instruments/${instrument.id}/reserve`} prefetch={false}>
+                <Link href={reserveHref} prefetch={false}>
                   <CalendarPlus className="h-4 w-4" aria-hidden="true" />
-                  去预约
+                  {currentUser ? "去预约" : "登录后预约"}
                 </Link>
               </Button>
             </CardContent>
