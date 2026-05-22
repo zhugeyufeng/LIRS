@@ -30,6 +30,15 @@ func (f fakeAuthRepo) CurrentUser(context.Context, string) (store.User, error) {
 	return f.user, f.err
 }
 
+type fakeTenantRepo struct {
+	fakeAuthRepo
+	tenants []store.Tenant
+}
+
+func (f fakeTenantRepo) Tenants(context.Context) ([]store.Tenant, error) {
+	return f.tenants, nil
+}
+
 func TestRequireAnyRoleRejectsMissingToken(t *testing.T) {
 	t.Parallel()
 
@@ -106,6 +115,44 @@ func TestFilterReservationsForActorScopesRows(t *testing.T) {
 	admin := filterReservationsForActor(store.Actor{UserID: "admin", Role: "lab_admin"}, items)
 	if len(admin) != 3 {
 		t.Fatalf("admin should see all reservations, got %#v", admin)
+	}
+}
+
+func TestPublicReadContextUsesAllTenantsForAnonymousInstrumentHall(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/instruments", nil)
+	context.Request = context.Request.WithContext(store.WithTenantContext(context.Request.Context(), store.TenantContext{TenantID: anonymousTenantID}))
+
+	ctx, ok := publicReadContext(context, fakeTenantRepo{})
+	if !ok {
+		t.Fatal("匿名公开读取应允许进入")
+	}
+	tenant := store.TenantFromContext(ctx)
+	if !tenant.AllTenants {
+		t.Fatalf("匿名仪器大厅应读取全部机构，得到 %#v", tenant)
+	}
+}
+
+func TestPublicReadContextHonorsTenantID(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/instruments?tenantId=tenant-1", nil)
+	context.Request = context.Request.WithContext(store.WithTenantContext(context.Request.Context(), store.TenantContext{TenantID: anonymousTenantID}))
+
+	ctx, ok := publicReadContext(context, fakeTenantRepo{tenants: []store.Tenant{{ID: "tenant-1", Name: "机构一", Status: "active", FinanceEnabled: true}}})
+	if !ok {
+		t.Fatal("指定有效机构应允许公开读取")
+	}
+	tenant := store.TenantFromContext(ctx)
+	if tenant.AllTenants || tenant.TenantID != "tenant-1" || tenant.TenantName != "机构一" {
+		t.Fatalf("指定机构公开读取上下文错误：%#v", tenant)
 	}
 }
 

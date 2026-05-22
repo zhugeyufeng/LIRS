@@ -220,6 +220,10 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 		}
 	})
 	api.GET("/instruments", func(c *gin.Context) {
+		ctx, ok := publicReadContext(c, repo)
+		if !ok {
+			return
+		}
 		filter := store.InstrumentFilter{
 			Search:     c.Query("search"),
 			Category:   c.Query("category"),
@@ -229,14 +233,22 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			Limit:      intQuery(c, "limit", 1000),
 			Offset:     intQuery(c, "offset", 0),
 		}
-		item, err := repo.Instruments(c.Request.Context(), filter)
+		item, err := repo.Instruments(ctx, filter)
 		respond(c, item, err)
 	})
 	api.GET("/instruments/:id", func(c *gin.Context) {
-		item, err := repo.Instrument(c.Request.Context(), c.Param("id"))
+		ctx, ok := publicReadContext(c, repo)
+		if !ok {
+			return
+		}
+		item, err := repo.Instrument(ctx, c.Param("id"))
 		respond(c, item, err)
 	})
 	api.GET("/instruments/:id/slots", func(c *gin.Context) {
+		ctx, ok := publicReadContext(c, repo)
+		if !ok {
+			return
+		}
 		start := time.Now()
 		if raw := strings.TrimSpace(c.Query("start")); raw != "" {
 			parsed, err := time.Parse(time.RFC3339, raw)
@@ -246,7 +258,7 @@ func RegisterRoutes(router *gin.Engine, repo repository) {
 			}
 			start = parsed
 		}
-		item, err := repo.InstrumentSlots(c.Request.Context(), c.Param("id"), start, intQuery(c, "days", 30))
+		item, err := repo.InstrumentSlots(ctx, c.Param("id"), start, intQuery(c, "days", 30))
 		respond(c, item, err)
 	})
 	api.POST("/instruments", func(c *gin.Context) {

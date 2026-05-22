@@ -139,6 +139,45 @@ func rememberCurrentUser(c *gin.Context, user store.User) store.Actor {
 	return actor
 }
 
+func publicReadContext(c *gin.Context, repo tenantReaderRepository) (context.Context, bool) {
+	user, hasUser := optionalCurrentUser(c, repo)
+	if tenantID := strings.TrimSpace(c.Query("tenantId")); tenantID != "" {
+		if hasUser && user.Role != "super_admin" && tenantID != user.TenantID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
+			return nil, false
+		}
+		tenants, err := repo.Tenants(c.Request.Context())
+		if err != nil {
+			respond(c, nil, err)
+			return nil, false
+		}
+		for _, tenant := range tenants {
+			if tenant.ID != tenantID {
+				continue
+			}
+			if tenant.Status != "active" {
+				c.JSON(http.StatusForbidden, gin.H{"error": "tenant is disabled"})
+				return nil, false
+			}
+			return store.WithTenantContext(c.Request.Context(), store.TenantContext{
+				TenantID:       tenant.ID,
+				TenantName:     tenant.Name,
+				FinanceEnabled: tenant.FinanceEnabled,
+				AllTenants:     false,
+			}), true
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tenant not found"})
+		return nil, false
+	}
+	if hasUser {
+		return c.Request.Context(), true
+	}
+	return store.WithTenantContext(c.Request.Context(), store.TenantContext{
+		TenantID:   anonymousTenantID,
+		AllTenants: true,
+	}), true
+}
+
 func actorFromUser(user store.User) store.Actor {
 	return store.Actor{
 		UserID:         user.ID,

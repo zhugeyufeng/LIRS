@@ -1049,6 +1049,7 @@ SELECT i.id::text, i.tenant_id::text, i.name, i.category, i.department, i.group_
            SELECT count(*)::int
            FROM reservations r
            WHERE r.instrument_id = i.id AND r.status = 'completed'
+              AND ($2::boolean OR r.tenant_id = $3::uuid)
        ) AS usage_count
 FROM instruments i
 WHERE i.id = $1

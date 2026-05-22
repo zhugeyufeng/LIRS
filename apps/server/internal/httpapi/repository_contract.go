@@ -25,6 +25,11 @@ type authRepository interface {
 	CurrentUser(ctx context.Context, token string) (store.User, error)
 }
 
+type tenantReaderRepository interface {
+	authRepository
+	Tenants(ctx context.Context) ([]store.Tenant, error)
+}
+
 type systemRepository interface {
 	Health(ctx context.Context) error
 	Dashboard(ctx context.Context) (store.Dashboard, error)
